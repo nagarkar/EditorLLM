@@ -1,0 +1,35 @@
+{
+  "scriptId": "1zWDCD44AwK2VnEuVEagOnAhPZMvbtHUEO5X_AtM6NO3mYmEqNeUgzRUn",
+  "deploymentId": "AKfycbydddaGLXzrgGiAyII2OhcnKkCS8-P7pC2tkgMBag8Ss1aGjZKv7R5jGfg6zXSPvxD5Ww",
+  "projectId": "gen-lang-client-0265782387",
+  "webAppUrl": "https://script.google.com/macros/s/AKfycbzDtj8t5Ecu67a-bYftZEJV9QHIjcXE7X7tu4HhTJs9L7VzXJa37wQWK0ulVRHH0YRF9w/exec",
+  "rootDir": "dist",
+  "scriptExtensions": [
+    ".js",
+    ".gs"
+  ],
+  "htmlExtensions": [
+    ".html"
+  ],
+  "jsonExtensions": [
+    ".json"
+  ],
+  "filePushOrder": [
+    "dist/Types.js",
+    "dist/Prompts.js",
+    "dist/StringProcessor.js",
+    "dist/GeminiService.js",
+    "dist/DocOps.js",
+    "dist/CollaborationService.js",
+    "dist/BaseAgent.js",
+    "dist/ArchitectAgent.js",
+    "dist/StylistAgent.js",
+    "dist/AuditAgent.js",
+    "dist/CommentAgent.js",
+    "dist/MarkdownService.js",
+    "dist/TabMerger.js",
+    "dist/CommentProcessor.js",
+    "dist/Code.js"
+  ],
+  "skipSubdirectories": false
+}

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('sidebar_css'); ?>
+</head>
+<body>
+  <h2>⚡ EditorLLM</h2>
+
+  <!-- ── Setup ─────────────────────────────────────────── -->
+  <div id="setup-section">
+    <div class="section-label">Setup</div>
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="setupTabs()">Initialize Tabs</button>
+      <button class="btn-secondary" onclick="openApiKeyDialog()">Set API Key</button>
+    </div>
+  </div>
+
+  <!-- ── Model Configuration ───────────────────────────── -->
+  <div class="section-label">Model Configuration</div>
+  <div class="agent-card">
+    <div class="agent-desc" style="margin-bottom:8px;">
+      Fast model: comments &amp; styling.
+      Thinking model: architect &amp; audit.
+    </div>
+    <datalist id="model-suggestions"></datalist>
+    <div class="section-label" style="margin-top:4px;">Fast</div>
+    <input id="model-fast" list="model-suggestions" style="width:100%;margin-bottom:6px;padding:5px 8px;border:1px solid #bdbdbd;border-radius:4px;font-size:12px;" placeholder="e.g. gemini-2.0-flash">
+    <div class="section-label">Thinking</div>
+    <input id="model-thinking" list="model-suggestions" style="width:100%;margin-bottom:6px;padding:5px 8px;border:1px solid #bdbdbd;border-radius:4px;font-size:12px;" placeholder="e.g. gemini-2.5-pro-preview-03-25">
+    <div class="section-label">DeepSeek</div>
+    <input id="model-deepseek" list="model-suggestions" style="width:100%;margin-bottom:8px;padding:5px 8px;border:1px solid #bdbdbd;border-radius:4px;font-size:12px;" placeholder="e.g. gemini-2.0-flash-thinking-exp-01-21">
+    <div class="btn-row">
+      <button class="btn-action" onclick="refreshAvailableModels()">Refresh List</button>
+      <button class="btn-secondary" onclick="loadModelConfig()">Load Saved</button>
+      <button class="btn-primary" onclick="saveModelConfig()">Save</button>
+    </div>
+    <div class="status-box" id="model-status"></div>
+  </div>
+
+  <!-- ── Structural Architect ──────────────────────────── -->
+  <div class="section-label">Structural Architect</div>
+  <div class="agent-card">
+    <div class="agent-title">Style Mimic</div>
+    <div class="agent-desc">
+      Reads MergedContent and synthesises a StyleProfile that constrains all agents.
+    </div>
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="runArchitectExample()">Generate Example</button>
+      <button class="btn-primary" onclick="runArchitectInstructions()">Generate</button>
+    </div>
+  </div>
+
+  <!-- ── Audio Stylist ──────────────────────────────────── -->
+  <div class="section-label">Audio Stylist</div>
+  <div class="agent-card">
+    <div class="agent-title">Ear-Tune</div>
+    <div class="agent-desc">
+      Proposes rhythmic, audio-optimised rewrites for prose passages.
+    </div>
+    <div class="tab-row">
+      <span class="active-tab-label" id="ear-tune-active-tab">Active tab: —</span>
+      <button class="btn-icon" onclick="refreshActiveTab('ear-tune')" title="Refresh active tab">↻</button>
+      <button class="btn-action" onclick="runEarTune()">Ear-Tune</button>
+    </div>
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="runStylistExample()">Generate Example</button>
+      <button class="btn-primary" onclick="runStylistInstructions()">Generate</button>
+    </div>
+  </div>
+
+  <!-- ── Logical Auditor ───────────────────────────────── -->
+  <div class="section-label">Logical Auditor</div>
+  <div class="agent-card">
+    <div class="agent-title">Technical Audit</div>
+    <div class="agent-desc">
+      Verifies Chid Axiom consistency and LaTeX caption completeness.
+    </div>
+    <div class="tab-row">
+      <span class="active-tab-label" id="audit-active-tab">Active tab: —</span>
+      <button class="btn-icon" onclick="refreshActiveTab('audit')" title="Refresh active tab">↻</button>
+      <button class="btn-action" onclick="runAudit()">Audit</button>
+    </div>
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="runAuditorExample()">Generate Example</button>
+      <button class="btn-primary" onclick="runAuditorInstructions()">Generate</button>
+    </div>
+  </div>
+
+  <!-- ── Comment Agent ─────────────────────────────────── -->
+  <div class="section-label">Comment Agent</div>
+  <div class="agent-card">
+    <div class="agent-title">Dialogue Responder</div>
+    <div class="agent-desc">
+      Replies to comment threads ending with <strong>@AI</strong>.
+      Instructions are read from the <em>Comment Instructions</em> tab.
+    </div>
+    <div class="btn-row">
+      <button class="btn-green" onclick="runProcessComments()">Process @AI Comments</button>
+    </div>
+    <div class="btn-row" style="margin-top:8px;">
+      <button class="btn-secondary" onclick="runCommentExample()">Generate Example</button>
+      <button class="btn-primary" onclick="runCommentInstructions()">Generate</button>
+    </div>
+  </div>
+
+  <!-- ── Merge Tabs ─────────────────────────────────────── -->
+  <div class="section-label">Merge Tabs</div>
+  <div class="agent-card">
+    <div class="agent-title">Tab Merger</div>
+    <div class="agent-desc">
+      Merges listed tabs (comma-separated) into <em>MergedContent</em> in order.
+      Clears the destination before each run.
+    </div>
+    <textarea
+      id="merge-tab-names"
+      placeholder="Chapter 1, Chapter 2, Appendix A"
+      rows="3"
+    ></textarea>
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="loadSavedMergeNames()">Load Saved</button>
+      <button class="btn-secondary" onclick="saveMergeNames()">Save</button>
+      <button class="btn-green" id="mergeNowBtn" onclick="runMergeNow()">Merge Now</button>
+    </div>
+    <div class="merge-progress" id="merge-progress"></div>
+    <div class="status-box" id="merge-status"></div>
+  </div>
+
+  <!-- ── Global status ─────────────────────────────────── -->
+  <div class="status-box" id="status"></div>
+
+  <?!= include('sidebar_js'); ?>
+</body>
+</html>
