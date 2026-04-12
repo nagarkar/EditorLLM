@@ -11,11 +11,11 @@
 // ============================================================
 
 import { callGemini } from './helpers/gemini';
-import { INSTRUCTION_UPDATE_SCHEMA, ANNOTATION_SCHEMA, THREAD_REPLY_SCHEMA } from './helpers/schemas';
+import { INSTRUCTION_UPDATE_SCHEMA, ANNOTATION_SCHEMA, BATCH_REPLY_SCHEMA } from './helpers/schemas';
 import {
   buildAuditInstructionsPrompt,
   buildAuditAnnotatePrompt,
-  buildAuditCommentPrompt,
+  buildAuditBatchPrompt,
 } from './helpers/prompts';
 import { FIXTURES, INTEGRATION_SYSTEM_PROMPT } from './fixtures/testDocument';
 
@@ -267,7 +267,7 @@ describe('AuditAgent — W2: annotateTab (content_annotation)', () => {
 describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
 
   it('returns a reply string when auditing a selected passage', () => {
-    const userPrompt = buildAuditCommentPrompt({
+    const userPrompt = buildAuditBatchPrompt({
       styleProfile:      FIXTURES.STYLE_PROFILE,
       auditInstructions: FIXTURES.TECHNICAL_AUDIT,
       passageContext:    FIXTURES.CHAPTER_1,
@@ -277,7 +277,7 @@ describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
       userPrompt,
-      THREAD_REPLY_SCHEMA,
+      BATCH_REPLY_SCHEMA,
       { tier: TIER }
     );
 
@@ -286,7 +286,7 @@ describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
   }, TIMEOUT);
 
   it('reply ends with the AI Editorial Assistant signature', () => {
-    const userPrompt = buildAuditCommentPrompt({
+    const userPrompt = buildAuditBatchPrompt({
       styleProfile:      FIXTURES.STYLE_PROFILE,
       auditInstructions: FIXTURES.TECHNICAL_AUDIT,
       passageContext:    FIXTURES.MERGED_CONTENT,
@@ -296,7 +296,7 @@ describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
       userPrompt,
-      THREAD_REPLY_SCHEMA,
+      BATCH_REPLY_SCHEMA,
       { tier: TIER }
     );
 
@@ -304,7 +304,7 @@ describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
   }, TIMEOUT);
 
   it('does NOT return a RootUpdate or workflow_type field', () => {
-    const userPrompt = buildAuditCommentPrompt({
+    const userPrompt = buildAuditBatchPrompt({
       styleProfile:      FIXTURES.STYLE_PROFILE,
       auditInstructions: FIXTURES.TECHNICAL_AUDIT,
       passageContext:    FIXTURES.MERGED_CONTENT,
@@ -314,7 +314,7 @@ describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
       userPrompt,
-      THREAD_REPLY_SCHEMA,
+      BATCH_REPLY_SCHEMA,
       { tier: TIER }
     );
 
@@ -324,7 +324,7 @@ describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
   }, TIMEOUT);
 
   it('flags the Born-rule exponent error when selected text is the flawed formula', () => {
-    const userPrompt = buildAuditCommentPrompt({
+    const userPrompt = buildAuditBatchPrompt({
       styleProfile:      FIXTURES.STYLE_PROFILE,
       auditInstructions: FIXTURES.TECHNICAL_AUDIT,
       passageContext:    FIXTURES.CHAPTER_1,
@@ -334,7 +334,7 @@ describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
       userPrompt,
-      THREAD_REPLY_SCHEMA,
+      BATCH_REPLY_SCHEMA,
       { tier: TIER }
     );
 
@@ -343,7 +343,7 @@ describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
   }, TIMEOUT);
 
   it('gracefully handles empty audit instructions', () => {
-    const userPrompt = buildAuditCommentPrompt({
+    const userPrompt = buildAuditBatchPrompt({
       styleProfile:      FIXTURES.STYLE_PROFILE,
       auditInstructions: '',
       passageContext:    FIXTURES.MERGED_CONTENT,
@@ -353,7 +353,7 @@ describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
       userPrompt,
-      THREAD_REPLY_SCHEMA,
+      BATCH_REPLY_SCHEMA,
       { tier: TIER }
     );
 
@@ -368,7 +368,7 @@ describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
 describe('AuditAgent — error conditions', () => {
 
   it('throws a descriptive error when the API key is invalid', () => {
-    const userPrompt = buildAuditCommentPrompt({
+    const userPrompt = buildAuditBatchPrompt({
       styleProfile:      FIXTURES.STYLE_PROFILE,
       auditInstructions: FIXTURES.TECHNICAL_AUDIT,
       passageContext:    FIXTURES.MERGED_CONTENT,
@@ -377,7 +377,7 @@ describe('AuditAgent — error conditions', () => {
     });
 
     expect(() =>
-      callGemini(INTEGRATION_SYSTEM_PROMPT, userPrompt, THREAD_REPLY_SCHEMA, {
+      callGemini(INTEGRATION_SYSTEM_PROMPT, userPrompt, BATCH_REPLY_SCHEMA, {
         tier:           'fast',
         apiKeyOverride: 'INVALID_API_KEY_FOR_TESTING',
       })

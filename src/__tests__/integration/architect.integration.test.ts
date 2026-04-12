@@ -11,10 +11,10 @@
 // ============================================================
 
 import { callGemini } from './helpers/gemini';
-import { INSTRUCTION_UPDATE_SCHEMA, THREAD_REPLY_SCHEMA } from './helpers/schemas';
+import { INSTRUCTION_UPDATE_SCHEMA, BATCH_REPLY_SCHEMA } from './helpers/schemas';
 import {
   buildArchitectInstructionsPrompt,
-  buildArchitectCommentPrompt,
+  buildArchitectBatchPrompt,
 } from './helpers/prompts';
 import { FIXTURES, INTEGRATION_SYSTEM_PROMPT } from './fixtures/testDocument';
 
@@ -122,7 +122,7 @@ describe('ArchitectAgent — W2: annotateTab (not applicable)', () => {
 describe('ArchitectAgent — W3: handleCommentThread (reply-only)', () => {
 
   it('returns a reply string when analysing a selected passage', () => {
-    const userPrompt = buildArchitectCommentPrompt({
+    const userPrompt = buildArchitectBatchPrompt({
       styleProfile:  FIXTURES.STYLE_PROFILE,
       manuscript:    FIXTURES.MERGED_CONTENT,
       selectedText:  'The Chid Axiom fills this gap',
@@ -131,7 +131,7 @@ describe('ArchitectAgent — W3: handleCommentThread (reply-only)', () => {
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
       userPrompt,
-      THREAD_REPLY_SCHEMA,
+      BATCH_REPLY_SCHEMA,
       { tier: 'thinking' }
     );
 
@@ -140,7 +140,7 @@ describe('ArchitectAgent — W3: handleCommentThread (reply-only)', () => {
   }, 120000);
 
   it('reply ends with the AI Editorial Assistant signature', () => {
-    const userPrompt = buildArchitectCommentPrompt({
+    const userPrompt = buildArchitectBatchPrompt({
       styleProfile:  FIXTURES.STYLE_PROFILE,
       manuscript:    FIXTURES.MERGED_CONTENT,
       selectedText:  'consciousness is the ground',
@@ -149,7 +149,7 @@ describe('ArchitectAgent — W3: handleCommentThread (reply-only)', () => {
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
       userPrompt,
-      THREAD_REPLY_SCHEMA,
+      BATCH_REPLY_SCHEMA,
       { tier: 'thinking' }
     );
 
@@ -157,7 +157,7 @@ describe('ArchitectAgent — W3: handleCommentThread (reply-only)', () => {
   }, 120000);
 
   it('does NOT return a RootUpdate or workflow_type field', () => {
-    const userPrompt = buildArchitectCommentPrompt({
+    const userPrompt = buildArchitectBatchPrompt({
       styleProfile: FIXTURES.STYLE_PROFILE,
       manuscript:   FIXTURES.MERGED_CONTENT,
       selectedText: 'orthodox quantum mechanics',
@@ -166,7 +166,7 @@ describe('ArchitectAgent — W3: handleCommentThread (reply-only)', () => {
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
       userPrompt,
-      THREAD_REPLY_SCHEMA,
+      BATCH_REPLY_SCHEMA,
       { tier: 'thinking' }
     );
 
@@ -177,7 +177,7 @@ describe('ArchitectAgent — W3: handleCommentThread (reply-only)', () => {
   }, 120000);
 
   it('gracefully handles empty StyleProfile', () => {
-    const userPrompt = buildArchitectCommentPrompt({
+    const userPrompt = buildArchitectBatchPrompt({
       styleProfile: '',  // missing — should degrade gracefully
       manuscript:   FIXTURES.MERGED_CONTENT,
       selectedText: 'The Chid Axiom fills this gap',
@@ -186,7 +186,7 @@ describe('ArchitectAgent — W3: handleCommentThread (reply-only)', () => {
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
       userPrompt,
-      THREAD_REPLY_SCHEMA,
+      BATCH_REPLY_SCHEMA,
       { tier: 'thinking' }
     );
 
@@ -201,7 +201,7 @@ describe('ArchitectAgent — W3: handleCommentThread (reply-only)', () => {
 describe('ArchitectAgent — error conditions', () => {
 
   it('throws a descriptive error when the API key is invalid', () => {
-    const userPrompt = buildArchitectCommentPrompt({
+    const userPrompt = buildArchitectBatchPrompt({
       styleProfile: FIXTURES.STYLE_PROFILE,
       manuscript:   FIXTURES.MERGED_CONTENT,
       selectedText: 'any passage',
@@ -209,7 +209,7 @@ describe('ArchitectAgent — error conditions', () => {
     });
 
     expect(() =>
-      callGemini(INTEGRATION_SYSTEM_PROMPT, userPrompt, THREAD_REPLY_SCHEMA, {
+      callGemini(INTEGRATION_SYSTEM_PROMPT, userPrompt, BATCH_REPLY_SCHEMA, {
         tier:           'fast',
         apiKeyOverride: 'INVALID_API_KEY_FOR_TESTING',
       })

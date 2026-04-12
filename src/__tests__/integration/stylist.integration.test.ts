@@ -11,11 +11,11 @@
 // ============================================================
 
 import { callGemini } from './helpers/gemini';
-import { INSTRUCTION_UPDATE_SCHEMA, ANNOTATION_SCHEMA, THREAD_REPLY_SCHEMA } from './helpers/schemas';
+import { INSTRUCTION_UPDATE_SCHEMA, ANNOTATION_SCHEMA, BATCH_REPLY_SCHEMA } from './helpers/schemas';
 import {
   buildStylistInstructionsPrompt,
   buildStylistAnnotatePrompt,
-  buildStylistCommentPrompt,
+  buildStylistBatchPrompt,
 } from './helpers/prompts';
 import { FIXTURES, INTEGRATION_SYSTEM_PROMPT } from './fixtures/testDocument';
 
@@ -288,7 +288,7 @@ describe('StylistAgent — W2: annotateTab (content_annotation)', () => {
 describe('StylistAgent — W3: handleCommentThread (reply-only)', () => {
 
   it('returns a reply string when analysing a selected passage', () => {
-    const userPrompt = buildStylistCommentPrompt({
+    const userPrompt = buildStylistBatchPrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
       passageContext:      FIXTURES.MERGED_CONTENT,
@@ -298,7 +298,7 @@ describe('StylistAgent — W3: handleCommentThread (reply-only)', () => {
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
       userPrompt,
-      THREAD_REPLY_SCHEMA,
+      BATCH_REPLY_SCHEMA,
       { tier: TIER }
     );
 
@@ -307,7 +307,7 @@ describe('StylistAgent — W3: handleCommentThread (reply-only)', () => {
   }, TIMEOUT);
 
   it('reply ends with the AI Editorial Assistant signature', () => {
-    const userPrompt = buildStylistCommentPrompt({
+    const userPrompt = buildStylistBatchPrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
       passageContext:      FIXTURES.MERGED_CONTENT,
@@ -317,7 +317,7 @@ describe('StylistAgent — W3: handleCommentThread (reply-only)', () => {
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
       userPrompt,
-      THREAD_REPLY_SCHEMA,
+      BATCH_REPLY_SCHEMA,
       { tier: TIER }
     );
 
@@ -325,7 +325,7 @@ describe('StylistAgent — W3: handleCommentThread (reply-only)', () => {
   }, TIMEOUT);
 
   it('does NOT return a RootUpdate or workflow_type field', () => {
-    const userPrompt = buildStylistCommentPrompt({
+    const userPrompt = buildStylistBatchPrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
       passageContext:      FIXTURES.MERGED_CONTENT,
@@ -335,7 +335,7 @@ describe('StylistAgent — W3: handleCommentThread (reply-only)', () => {
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
       userPrompt,
-      THREAD_REPLY_SCHEMA,
+      BATCH_REPLY_SCHEMA,
       { tier: TIER }
     );
 
@@ -345,7 +345,7 @@ describe('StylistAgent — W3: handleCommentThread (reply-only)', () => {
   }, TIMEOUT);
 
   it('gracefully handles empty EarTune instructions', () => {
-    const userPrompt = buildStylistCommentPrompt({
+    const userPrompt = buildStylistBatchPrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: '',
       passageContext:      FIXTURES.MERGED_CONTENT,
@@ -355,7 +355,7 @@ describe('StylistAgent — W3: handleCommentThread (reply-only)', () => {
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
       userPrompt,
-      THREAD_REPLY_SCHEMA,
+      BATCH_REPLY_SCHEMA,
       { tier: TIER }
     );
 
@@ -370,7 +370,7 @@ describe('StylistAgent — W3: handleCommentThread (reply-only)', () => {
 describe('StylistAgent — error conditions', () => {
 
   it('throws a descriptive error when the API key is invalid', () => {
-    const userPrompt = buildStylistCommentPrompt({
+    const userPrompt = buildStylistBatchPrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
       passageContext:      FIXTURES.MERGED_CONTENT,
@@ -379,7 +379,7 @@ describe('StylistAgent — error conditions', () => {
     });
 
     expect(() =>
-      callGemini(INTEGRATION_SYSTEM_PROMPT, userPrompt, THREAD_REPLY_SCHEMA, {
+      callGemini(INTEGRATION_SYSTEM_PROMPT, userPrompt, BATCH_REPLY_SCHEMA, {
         tier:           TIER,
         apiKeyOverride: 'INVALID_API_KEY_FOR_TESTING',
       })
