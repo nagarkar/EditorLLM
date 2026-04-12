@@ -165,6 +165,101 @@ abstract class BaseAgent {
     };
   }
 
+  /**
+   * Standard JSON schema for batch comment-thread replies.
+   * All agents use this for handleCommentThreads() Gemini calls.
+   * Pairs with normaliseBatchReplies_() for post-processing.
+   */
+  protected batchReplySchema_(): object {
+    return {
+      type: 'object',
+      properties: {
+        responses: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              threadId: { type: 'string' },
+              reply:    { type: 'string' },
+            },
+            required: ['threadId', 'reply'],
+          },
+        },
+      },
+      required: ['responses'],
+    };
+  }
+
+  /**
+   * Validates and normalises raw Gemini batch output into ThreadReply[].
+   *
+   * Validation rules (all violations are logged and dropped, never thrown):
+   *   - drop items with missing or empty threadId / reply
+   *   - drop threadIds not present in the input chunk (hallucinations)
+   *   - drop duplicate threadIds (keep first occurrence)
+   *
+   * Missing coverage (Gemini did not reply to every input thread) is tolerated.
+   */
+  protected normaliseBatchReplies_(
+    threads: CommentThread[],
+    raw: any,
+    agentName: string
+  ): ThreadReply[] {
+    const validIds = new Set(threads.map(t => t.threadId));
+    const seen     = new Set<string>();
+    const replies: ThreadReply[] = [];
+
+    const items: Array<{ threadId: string; reply: string }> =
+      Array.isArray(raw?.responses) ? raw.responses : [];
+
+    for (const item of items) {
+      if (!item.threadId || !item.reply?.trim()) {
+        Logger.log(
+          `[${agentName}] normaliseBatchReplies_: dropping item with missing or empty threadId/reply`
+        );
+        continue;
+      }
+      if (!validIds.has(item.threadId)) {
+        Logger.log(
+          `[${agentName}] normaliseBatchReplies_: dropping hallucinated threadId=${item.threadId}`
+        );
+        continue;
+      }
+      if (seen.has(item.threadId)) {
+        Logger.log(
+          `[${agentName}] normaliseBatchReplies_: dropping duplicate threadId=${item.threadId}`
+        );
+        continue;
+      }
+      seen.add(item.threadId);
+      replies.push({ threadId: item.threadId, content: item.reply });
+    }
+
+    Logger.log(
+      `[${agentName}] normaliseBatchReplies_: ` +
+      `${replies.length} valid / ${threads.length} input threads`
+    );
+    return replies;
+  }
+
+  /**
+   * Formats an array of CommentThreads into the per-thread section of a batch
+   * prompt. Each thread is labelled with its threadId so Gemini can map replies.
+   */
+  protected formatThreadsForBatch_(threads: CommentThread[]): string {
+    return threads.map(t => {
+      const conv = t.conversation
+        .map(m => `[${m.role}] ${m.authorName}: ${m.content}`)
+        .join('\n');
+      return (
+        `[THREAD ${t.threadId}]\n` +
+        `SELECTED TEXT: ${t.selectedText}\n` +
+        `CONVERSATION:\n${conv}\n` +
+        `REQUEST: ${t.agentRequest}`
+      );
+    }).join('\n\n');
+  }
+
   // --- Abstract interface ---
 
   /** Lowercase tag strings users write in comments, e.g. ['@eartune', '@stylist'] */
@@ -179,11 +274,13 @@ abstract class BaseAgent {
   abstract readonly contextKeys: string[];
 
   /**
-   * Process a single comment thread routed to this agent.
-   * Apply any document changes via CollaborationService.processUpdate().
-   * Return the text to post as a Drive reply on that thread.
+   * Process a batch of comment threads routed to this agent.
+   * Agents own chunk sizing, subgrouping strategy, and prompt structure.
+   * Failed chunks must be caught internally and return [] rather than throw.
+   * Returns one ThreadReply per thread that received a valid response.
+   * Not every input thread needs a reply — missing coverage is tolerated.
    */
-  abstract handleCommentThread(thread: CommentThread): ThreadReply;
+  abstract handleCommentThreads(threads: CommentThread[]): ThreadReply[];
 
   /**
    * Triggers an instruction_update to refresh the agent's canonical system prompt tab.

@@ -7,50 +7,87 @@ class AuditAgent extends BaseAgent {
   readonly tags = ['@audit', '@auditor'];
   readonly contextKeys = [TAB_NAMES.STYLE_PROFILE, TAB_NAMES.TECHNICAL_AUDIT, COMMENT_ANCHOR_TAB];
 
-  handleCommentThread(thread: CommentThread): ThreadReply {
-    this.logCommentThread_(thread, 'handleCommentThread');
-    const styleProfile = this.getTabContent_(TAB_NAMES.STYLE_PROFILE);
+  private static readonly CHUNK_SIZE = 5;
+
+  handleCommentThreads(threads: CommentThread[]): ThreadReply[] {
+    const agentName = this.constructor.name;
+    Logger.log(`[${agentName}] handleCommentThreads: received ${threads.length} thread(s)`);
+
+    // Shared instruction context — same for every subgroup.
+    const styleProfile     = this.getTabContent_(TAB_NAMES.STYLE_PROFILE);
     const auditInstructions = this.getTabContent_(TAB_NAMES.TECHNICAL_AUDIT);
-    const passageContext = thread.anchorTabName
-      ? this.getTabContent_(thread.anchorTabName)
-      : thread.selectedText;
 
-    const userPrompt = `
-STYLE PROFILE:
----
-${styleProfile.slice(0, 2000)}
----
+    // Subgroup by anchorTabName so each chunk shares one passage context.
+    const subgroups = new Map<string | null, CommentThread[]>();
+    for (const thread of threads) {
+      const key = thread.anchorTabName;
+      if (!subgroups.has(key)) subgroups.set(key, []);
+      subgroups.get(key)!.push(thread);
+    }
 
-TECHNICAL AUDIT INSTRUCTIONS:
----
-${auditInstructions.slice(0, 3000)}
----
+    Logger.log(`[${agentName}] handleCommentThreads: ${subgroups.size} subgroup(s) by anchor tab`);
 
-PASSAGE CONTEXT:
----
-${passageContext.slice(0, 4000)}
----
+    const allReplies: ThreadReply[] = [];
 
-SELECTED TEXT:
----
-${thread.selectedText}
----
+    for (const [anchorTabName, subThreads] of subgroups) {
+      // Null anchor → no shared passage; agent falls back to per-thread selectedText.
+      const passageContext = anchorTabName
+        ? this.getTabContent_(anchorTabName).slice(0, 4000)
+        : '';
 
-SPECIFIC REQUEST: ${thread.agentRequest}
+      for (let i = 0; i < subThreads.length; i += AuditAgent.CHUNK_SIZE) {
+        const chunk = subThreads.slice(i, i + AuditAgent.CHUNK_SIZE);
+        const chunkNum = Math.floor(i / AuditAgent.CHUNK_SIZE) + 1;
+        Logger.log(
+          `[${agentName}] handleCommentThreads: anchor=${anchorTabName ?? '(none)'} ` +
+          `chunk ${chunkNum} size=${chunk.length}`
+        );
 
-Perform a targeted technical audit of the selected passage. Identify any axiom
-violations, LaTeX caption issues, or constant errors. Reply with your findings
-and specific corrections. End your reply with "— AI Editorial Assistant".
-`.trim();
+        try {
+          const passageSection = passageContext
+            ? `PASSAGE CONTEXT:\n---\n${passageContext}\n---\n\n`
+            : '';
 
-    const result = this.callGemini_(
-      AUDITOR_SYSTEM_PROMPT,
-      userPrompt,
-      { type: 'object', properties: { reply: { type: 'string' } }, required: ['reply'] },
-      MODEL.THINKING
-    ) as { reply: string };
+          const userPrompt = (
+            `STYLE PROFILE:\n` +
+            `---\n` +
+            `${styleProfile.slice(0, 2000)}\n` +
+            `---\n\n` +
+            `TECHNICAL AUDIT INSTRUCTIONS:\n` +
+            `---\n` +
+            `${auditInstructions.slice(0, 3000)}\n` +
+            `---\n\n` +
+            `${passageSection}` +
+            `THREADS:\n` +
+            `---\n` +
+            `${this.formatThreadsForBatch_(chunk)}\n` +
+            `---\n\n` +
+            `For each thread, perform a targeted technical audit of the selected passage.\n` +
+            `Identify any axiom violations, LaTeX caption issues, or constant errors.\n` +
+            `End each reply with "— AI Editorial Assistant".\n` +
+            `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
+            `one per thread you are replying to.`
+          ).trim();
 
-    return { threadId: thread.threadId, content: result.reply };
+          const raw = this.callGemini_(
+            AUDITOR_SYSTEM_PROMPT,
+            userPrompt,
+            this.batchReplySchema_(),
+            MODEL.THINKING
+          );
+          const replies = this.normaliseBatchReplies_(chunk, raw, agentName);
+          allReplies.push(...replies);
+        } catch (e: any) {
+          Logger.log(
+            `[${agentName}] handleCommentThreads: anchor=${anchorTabName ?? '(none)'} ` +
+            `chunk ${chunkNum} failed — ${e.message}`
+          );
+        }
+      }
+    }
+
+    Logger.log(`[${agentName}] handleCommentThreads: returning ${allReplies.length} reply/replies`);
+    return allReplies;
   }
 
   /**

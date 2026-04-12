@@ -7,42 +7,58 @@ class ArchitectAgent extends BaseAgent {
   readonly tags = ['@architect'];
   readonly contextKeys = [TAB_NAMES.MERGED_CONTENT, TAB_NAMES.STYLE_PROFILE];
 
-  handleCommentThread(thread: CommentThread): ThreadReply {
-    this.logCommentThread_(thread, 'handleCommentThread');
-    const manuscript = this.getTabContent_(TAB_NAMES.MERGED_CONTENT);
+  private static readonly CHUNK_SIZE = 5;
+
+  handleCommentThreads(threads: CommentThread[]): ThreadReply[] {
+    const agentName = this.constructor.name;
+    Logger.log(`[${agentName}] handleCommentThreads: received ${threads.length} thread(s)`);
+
+    // Shared context is the same for every thread — read once, reuse across chunks.
+    const manuscript  = this.getTabContent_(TAB_NAMES.MERGED_CONTENT);
     const styleProfile = this.getTabContent_(TAB_NAMES.STYLE_PROFILE);
 
-    const userPrompt = `
-STYLE PROFILE:
----
-${styleProfile.slice(0, 2000)}
----
+    const allReplies: ThreadReply[] = [];
 
-MANUSCRIPT CONTEXT:
----
-${manuscript.slice(0, 20000)}
----
+    for (let i = 0; i < threads.length; i += ArchitectAgent.CHUNK_SIZE) {
+      const chunk = threads.slice(i, i + ArchitectAgent.CHUNK_SIZE);
+      const chunkNum = Math.floor(i / ArchitectAgent.CHUNK_SIZE) + 1;
+      Logger.log(`[${agentName}] handleCommentThreads: chunk ${chunkNum} size=${chunk.length}`);
 
-SELECTED PASSAGE:
----
-${thread.selectedText}
----
+      try {
+        const userPrompt = (
+          `STYLE PROFILE:\n` +
+          `---\n` +
+          `${styleProfile.slice(0, 2000)}\n` +
+          `---\n\n` +
+          `MANUSCRIPT CONTEXT:\n` +
+          `---\n` +
+          `${manuscript.slice(0, 20000)}\n` +
+          `---\n\n` +
+          `THREADS:\n` +
+          `---\n` +
+          `${this.formatThreadsForBatch_(chunk)}\n` +
+          `---\n\n` +
+          `For each thread, analyse the selected passage for structural, motif, or voice concerns\n` +
+          `relative to the manuscript and StyleProfile. End each reply with "— AI Editorial Assistant".\n` +
+          `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
+          `one per thread you are replying to.`
+        ).trim();
 
-ARCHITECTURAL REQUEST: ${thread.agentRequest}
+        const raw = this.callGemini_(
+          ARCHITECT_SYSTEM_PROMPT,
+          userPrompt,
+          this.batchReplySchema_(),
+          MODEL.THINKING
+        );
+        const replies = this.normaliseBatchReplies_(chunk, raw, agentName);
+        allReplies.push(...replies);
+      } catch (e: any) {
+        Logger.log(`[${agentName}] handleCommentThreads: chunk ${chunkNum} failed — ${e.message}`);
+      }
+    }
 
-Analyse the selected passage for structural, motif, or voice concerns relative to
-the manuscript and StyleProfile. Reply with concise findings and any recommended
-action the author should take. End your reply with "— AI Editorial Assistant".
-`.trim();
-
-    const result = this.callGemini_(
-      ARCHITECT_SYSTEM_PROMPT,
-      userPrompt,
-      { type: 'object', properties: { reply: { type: 'string' } }, required: ['reply'] },
-      MODEL.THINKING
-    ) as { reply: string };
-
-    return { threadId: thread.threadId, content: result.reply };
+    Logger.log(`[${agentName}] handleCommentThreads: returning ${allReplies.length} reply/replies`);
+    return allReplies;
   }
 
   /**

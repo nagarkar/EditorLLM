@@ -15,164 +15,156 @@ const ANCHOR_SENTINEL = '__comment_anchor_tab__';
 // ── Prompt structure helpers ─────────────────────────────────────────────────
 //
 // These functions reproduce the prompt-building logic from each agent's
-// handleCommentThread / generateInstructions method. Any change to an agent's
-// prompt that removes a required section will break the corresponding test.
+// handleCommentThreads method. Any change to an agent's prompt that removes a
+// required section will break the corresponding test.
 
-function buildArchitectCommentPrompt(opts: {
-  manuscript: string;
+function buildArchitectBatchPrompt(opts: {
   styleProfile: string;
-  selectedText: string;
-  agentRequest: string;
+  manuscript: string;
+  threads: Array<{ threadId: string; selectedText: string; agentRequest: string; conversation: Array<{ role: 'User' | 'AI'; authorName: string; content: string }> }>;
 }): string {
-  return `
-STYLE PROFILE:
----
-${opts.styleProfile.slice(0, 2000)}
----
+  const threadSection = opts.threads.map(t => {
+    const conv = t.conversation.map(m => `[${m.role}] ${m.authorName}: ${m.content}`).join('\n');
+    return (
+      `[THREAD ${t.threadId}]\n` +
+      `SELECTED TEXT: ${t.selectedText}\n` +
+      `CONVERSATION:\n${conv}\n` +
+      `REQUEST: ${t.agentRequest}`
+    );
+  }).join('\n\n');
 
-MANUSCRIPT CONTEXT:
----
-${opts.manuscript.slice(0, 8000)}
----
-
-SELECTED PASSAGE:
----
-${opts.selectedText}
----
-
-ARCHITECTURAL REQUEST: ${opts.agentRequest}
-
-Analyse the selected passage for structural, motif, or voice concerns relative to
-the manuscript and StyleProfile. Reply with concise findings and any recommended
-action the author should take. End your reply with "— AI Editorial Assistant".
-`.trim();
+  return (
+    `STYLE PROFILE:\n` +
+    `---\n` +
+    `${opts.styleProfile.slice(0, 2000)}\n` +
+    `---\n\n` +
+    `MANUSCRIPT CONTEXT:\n` +
+    `---\n` +
+    `${opts.manuscript.slice(0, 8000)}\n` +
+    `---\n\n` +
+    `THREADS:\n` +
+    `---\n` +
+    `${threadSection}\n` +
+    `---\n\n` +
+    `For each thread, analyse the selected passage for structural, motif, or voice concerns\n` +
+    `relative to the manuscript and StyleProfile. End each reply with "— AI Editorial Assistant".\n` +
+    `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
+    `one per thread you are replying to.`
+  ).trim();
 }
 
-function buildStylistCommentPrompt(opts: {
+function buildStylistBatchPrompt(opts: {
   styleProfile: string;
   earTuneInstructions: string;
   passageContext: string;
-  selectedText: string;
-  agentRequest: string;
+  threads: Array<{ threadId: string; selectedText: string; agentRequest: string; conversation: Array<{ role: 'User' | 'AI'; authorName: string; content: string }> }>;
 }): string {
-  return `
-STYLE PROFILE:
----
-${opts.styleProfile.slice(0, 2000)}
----
+  const threadSection = opts.threads.map(t => {
+    const conv = t.conversation.map(m => `[${m.role}] ${m.authorName}: ${m.content}`).join('\n');
+    return (
+      `[THREAD ${t.threadId}]\n` +
+      `SELECTED TEXT: ${t.selectedText}\n` +
+      `CONVERSATION:\n${conv}\n` +
+      `REQUEST: ${t.agentRequest}`
+    );
+  }).join('\n\n');
 
-EAR-TUNE INSTRUCTIONS:
----
-${opts.earTuneInstructions.slice(0, 2000)}
----
+  const passageSection = opts.passageContext
+    ? `PASSAGE CONTEXT:\n---\n${opts.passageContext.slice(0, 4000)}\n---\n\n`
+    : '';
 
-PASSAGE CONTEXT:
----
-${opts.passageContext.slice(0, 4000)}
----
-
-SELECTED TEXT:
----
-${opts.selectedText}
----
-
-SPECIFIC REQUEST: ${opts.agentRequest}
-
-Analyse the selected text for rhythmic, phonetic, and cadence issues per the
-Ear-Tune instructions. Reply with your findings and specific suggestions.
-End your reply with "— AI Editorial Assistant".
-`.trim();
+  return (
+    `STYLE PROFILE:\n` +
+    `---\n` +
+    `${opts.styleProfile.slice(0, 2000)}\n` +
+    `---\n\n` +
+    `EAR-TUNE INSTRUCTIONS:\n` +
+    `---\n` +
+    `${opts.earTuneInstructions.slice(0, 2000)}\n` +
+    `---\n\n` +
+    `${passageSection}` +
+    `THREADS:\n` +
+    `---\n` +
+    `${threadSection}\n` +
+    `---\n\n` +
+    `For each thread, analyse the selected text for rhythmic, phonetic, and cadence issues\n` +
+    `per the Ear-Tune instructions. End each reply with "— AI Editorial Assistant".\n` +
+    `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
+    `one per thread you are replying to.`
+  ).trim();
 }
 
-function buildStylistAnnotatePrompt(opts: {
-  styleProfile: string;
-  earTuneInstructions: string;
-  passage: string;
-  tabName: string;
-}): string {
-  return `
-STYLE PROFILE:
----
-${opts.styleProfile.slice(0, 3000)}
----
-
-EAR-TUNE INSTRUCTIONS:
----
-${opts.earTuneInstructions.slice(0, 2000)}
----
-
-PASSAGE TO SWEEP (from tab: "${opts.tabName}"):
----
-${opts.passage.slice(0, 8000)}
----
-
-Identify every passage with a rhythmic, phonetic, or cadence problem.
-Return a JSON object with:
-- operations: one per problem found. Each must have:
-    - match_text: verbatim 3–4-word phrase from the passage above
-    - reason: description of the issue and suggested improvement
-`.trim();
-}
-
-function buildAuditCommentPrompt(opts: {
+function buildAuditBatchPrompt(opts: {
   styleProfile: string;
   auditInstructions: string;
   passageContext: string;
-  selectedText: string;
-  agentRequest: string;
+  threads: Array<{ threadId: string; selectedText: string; agentRequest: string; conversation: Array<{ role: 'User' | 'AI'; authorName: string; content: string }> }>;
 }): string {
-  return `
-STYLE PROFILE:
----
-${opts.styleProfile.slice(0, 2000)}
----
+  const threadSection = opts.threads.map(t => {
+    const conv = t.conversation.map(m => `[${m.role}] ${m.authorName}: ${m.content}`).join('\n');
+    return (
+      `[THREAD ${t.threadId}]\n` +
+      `SELECTED TEXT: ${t.selectedText}\n` +
+      `CONVERSATION:\n${conv}\n` +
+      `REQUEST: ${t.agentRequest}`
+    );
+  }).join('\n\n');
 
-TECHNICAL AUDIT INSTRUCTIONS:
----
-${opts.auditInstructions.slice(0, 3000)}
----
+  const passageSection = opts.passageContext
+    ? `PASSAGE CONTEXT:\n---\n${opts.passageContext.slice(0, 4000)}\n---\n\n`
+    : '';
 
-PASSAGE CONTEXT:
----
-${opts.passageContext.slice(0, 4000)}
----
-
-SELECTED TEXT:
----
-${opts.selectedText}
----
-
-SPECIFIC REQUEST: ${opts.agentRequest}
-
-Perform a targeted technical audit of the selected passage. Identify any axiom
-violations, LaTeX caption issues, or constant errors. Reply with your findings
-and specific corrections. End your reply with "— AI Editorial Assistant".
-`.trim();
+  return (
+    `STYLE PROFILE:\n` +
+    `---\n` +
+    `${opts.styleProfile.slice(0, 2000)}\n` +
+    `---\n\n` +
+    `TECHNICAL AUDIT INSTRUCTIONS:\n` +
+    `---\n` +
+    `${opts.auditInstructions.slice(0, 3000)}\n` +
+    `---\n\n` +
+    `${passageSection}` +
+    `THREADS:\n` +
+    `---\n` +
+    `${threadSection}\n` +
+    `---\n\n` +
+    `For each thread, perform a targeted technical audit of the selected passage.\n` +
+    `Identify any axiom violations, LaTeX caption issues, or constant errors.\n` +
+    `End each reply with "— AI Editorial Assistant".\n` +
+    `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
+    `one per thread you are replying to.`
+  ).trim();
 }
 
-function buildCommentAgentPrompt(opts: {
-  selectedText: string;
-  conversation: Array<{ role: 'User' | 'AI'; authorName: string; content: string }>;
-  agentRequest: string;
+function buildCommentAgentBatchPrompt(opts: {
+  anchorContent: string;
+  threads: Array<{ threadId: string; selectedText: string; agentRequest: string; conversation: Array<{ role: 'User' | 'AI'; authorName: string; content: string }> }>;
 }): string {
-  const convHistory = opts.conversation
-    .map(m => `[${m.role}] ${m.authorName}: ${m.content}`)
-    .join('\n');
-  return `
-SELECTED TEXT:
----
-${opts.selectedText}
----
+  const threadSection = opts.threads.map(t => {
+    const conv = t.conversation.map(m => `[${m.role}] ${m.authorName}: ${m.content}`).join('\n');
+    return (
+      `[THREAD ${t.threadId}]\n` +
+      `SELECTED TEXT: ${t.selectedText}\n` +
+      `CONVERSATION:\n${conv}\n` +
+      `REQUEST: ${t.agentRequest}`
+    );
+  }).join('\n\n');
 
-CONVERSATION:
----
-${convHistory}
----
+  const anchorSection = opts.anchorContent
+    ? `ANCHOR PASSAGE:\n---\n${opts.anchorContent}\n---\n\n`
+    : '';
 
-REQUEST: ${opts.agentRequest}
-
-Respond directly to the request. End your reply with "— AI Editorial Assistant".
-`.trim();
+  return (
+    `${anchorSection}` +
+    `THREADS:\n` +
+    `---\n` +
+    `${threadSection}\n` +
+    `---\n\n` +
+    `For each thread, respond to the request concisely and grounded in the passage context.\n` +
+    `End each reply with "— AI Editorial Assistant".\n` +
+    `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
+    `one per thread you are replying to.`
+  ).trim();
 }
 
 // ── buildThread_ logic (reproduced inline) ───────────────────────────────────
@@ -228,7 +220,53 @@ function buildThreadFromComment(
   };
 }
 
+// ── normaliseBatchReplies_ logic (reproduced inline) ─────────────────────────
+//
+// Mirrors BaseAgent.normaliseBatchReplies_ for direct unit testing.
+
+function normaliseBatchReplies(
+  threads: Array<{ threadId: string }>,
+  raw: any
+): Array<{ threadId: string; content: string }> {
+  const validIds = new Set(threads.map(t => t.threadId));
+  const seen     = new Set<string>();
+  const replies: Array<{ threadId: string; content: string }> = [];
+
+  const items: Array<{ threadId: string; reply: string }> =
+    Array.isArray(raw?.responses) ? raw.responses : [];
+
+  for (const item of items) {
+    if (!item.threadId || !item.reply?.trim()) continue;
+    if (!validIds.has(item.threadId)) continue;
+    if (seen.has(item.threadId)) continue;
+    seen.add(item.threadId);
+    replies.push({ threadId: item.threadId, content: item.reply });
+  }
+
+  return replies;
+}
+
 // ── Schema shape helpers ─────────────────────────────────────────────────────
+
+function batchReplySchemaShape() {
+  return {
+    type: 'object',
+    properties: {
+      responses: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            threadId: { type: 'string' },
+            reply:    { type: 'string' },
+          },
+          required: ['threadId', 'reply'],
+        },
+      },
+    },
+    required: ['responses'],
+  };
+}
 
 function instructionUpdateSchemaShape() {
   return {
@@ -271,18 +309,13 @@ function annotationSchemaShape() {
   };
 }
 
-function singleThreadSchemaShape() {
-  return {
-    type: 'object',
-    properties: { response: { type: 'string' } },
-    required: ['response'],
-  };
-}
-
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
 const ALL_KNOWN_TAGS = new Set(['@ai', '@architect', '@eartune', '@stylist', '@audit', '@auditor']);
-const ANCHOR_NEEDING_TAGS = new Set(['@eartune', '@stylist', '@audit', '@auditor']);
+
+// All agents that include COMMENT_ANCHOR_TAB in contextKeys.
+// @ai is included because CommentAgent now groups by anchor tab.
+const ANCHOR_NEEDING_TAGS = new Set(['@ai', '@eartune', '@stylist', '@audit', '@auditor']);
 
 function makeComment(overrides: {
   id?: string;
@@ -303,6 +336,17 @@ function makeComment(overrides: {
     })),
     quotedFileContent: overrides.quotedFileContent,
     context: overrides.context,
+  };
+}
+
+function makeThread(overrides: Partial<CommentThread> & { threadId: string }): CommentThread {
+  return {
+    threadId:     overrides.threadId,
+    tag:          overrides.tag ?? '@ai',
+    agentRequest: overrides.agentRequest ?? 'Check this.',
+    conversation: overrides.conversation ?? [],
+    selectedText: overrides.selectedText ?? 'some selected text',
+    anchorTabName: overrides.anchorTabName ?? null,
   };
 }
 
@@ -467,7 +511,7 @@ describe('buildThread_: anchor tab resolution', () => {
     expect(ANCHOR_SENTINEL).toMatch(/^__.*__$/);
   });
 
-  it('calls anchorResolver for tags that need COMMENT_ANCHOR_TAB', () => {
+  it('calls anchorResolver for @eartune (needs COMMENT_ANCHOR_TAB)', () => {
     const resolver = jest.fn().mockReturnValue('Chapter 3');
     const comment = makeComment({
       content: '@eartune Fix rhythm.',
@@ -480,9 +524,22 @@ describe('buildThread_: anchor tab resolution', () => {
     expect(thread!.anchorTabName).toBe('Chapter 3');
   });
 
-  it('sets anchorTabName to null for @ai (does not need anchor)', () => {
+  it('calls anchorResolver for @ai (CommentAgent now needs COMMENT_ANCHOR_TAB)', () => {
+    const resolver = jest.fn().mockReturnValue('Chapter 1');
+    const comment = makeComment({
+      content: '@AI Query.',
+      quotedFileContent: { value: 'consciousness is the ground' },
+    });
+    const thread = buildThreadFromComment(
+      comment, ALL_KNOWN_TAGS, ANCHOR_NEEDING_TAGS, resolver
+    );
+    expect(resolver).toHaveBeenCalledWith('consciousness is the ground');
+    expect(thread!.anchorTabName).toBe('Chapter 1');
+  });
+
+  it('sets anchorTabName to null for @architect (does not need anchor)', () => {
     const resolver = jest.fn().mockReturnValue('Some Tab');
-    const comment = makeComment({ content: '@AI Query.' });
+    const comment = makeComment({ content: '@architect Analyse structure.' });
     const thread = buildThreadFromComment(
       comment, ALL_KNOWN_TAGS, ANCHOR_NEEDING_TAGS, resolver
     );
@@ -505,9 +562,6 @@ describe('buildThread_: anchor tab resolution', () => {
 // ── 2. Tag routing ────────────────────────────────────────────────────────────
 
 describe('tag routing — every declared tag maps to the right agent class', () => {
-  // Mirrors the tag→agent mapping declared in each agent's `tags` property.
-  // Using string keys for the agent class name to keep tests self-contained.
-
   const ROUTING_TABLE: Array<{ tags: string[]; agentClass: string }> = [
     { tags: ['@ai'],                 agentClass: 'CommentAgent'   },
     { tags: ['@architect'],          agentClass: 'ArchitectAgent' },
@@ -518,7 +572,6 @@ describe('tag routing — every declared tag maps to the right agent class', () 
   ROUTING_TABLE.forEach(({ tags, agentClass }) => {
     tags.forEach(tag => {
       it(`tag "${tag}" routes to ${agentClass}`, () => {
-        // Build a minimal tag registry mirroring CommentProcessor.init()
         const registry = new Map<string, string>();
         ROUTING_TABLE.forEach(row =>
           row.tags.forEach(t => registry.set(t.toLowerCase(), row.agentClass))
@@ -546,40 +599,51 @@ describe('tag routing — every declared tag maps to the right agent class', () 
 
 // ── 3. Prompt structure ───────────────────────────────────────────────────────
 
-describe('ArchitectAgent comment prompt structure', () => {
-  const prompt = buildArchitectCommentPrompt({
-    manuscript: 'The Chid Axiom states that consciousness is the sole ground of physics.',
+const SAMPLE_THREAD = {
+  threadId: 'thread-001',
+  selectedText: 'consciousness is the sole ground',
+  agentRequest: 'Does this contradict the motif established in Chapter 1?',
+  conversation: [
+    { role: 'User' as const, authorName: 'Author', content: '@architect Does this contradict?' },
+  ],
+};
+
+describe('ArchitectAgent batch prompt structure', () => {
+  const prompt = buildArchitectBatchPrompt({
+    manuscript:   'The Chid Axiom states that consciousness is the sole ground of physics.',
     styleProfile: 'Voice: intimate, philosophically rigorous.',
-    selectedText: 'consciousness is the sole ground',
-    agentRequest: 'Does this contradict the motif established in Chapter 1?',
+    threads:      [SAMPLE_THREAD],
   });
 
   it('contains MANUSCRIPT CONTEXT section', () => {
     expect(prompt).toContain('MANUSCRIPT CONTEXT:');
   });
 
-  it('contains SELECTED PASSAGE section', () => {
-    expect(prompt).toContain('SELECTED PASSAGE:');
+  it('contains THREADS section with thread label', () => {
+    expect(prompt).toContain('THREADS:');
+    expect(prompt).toContain('[THREAD thread-001]');
   });
 
   it('contains STYLE PROFILE section', () => {
     expect(prompt).toContain('STYLE PROFILE:');
   });
 
-  it('contains the agentRequest', () => {
-    expect(prompt).toContain('Does this contradict the motif established in Chapter 1?');
+  it('contains SELECTED TEXT label for the thread', () => {
+    expect(prompt).toContain('SELECTED TEXT: consciousness is the sole ground');
   });
 
-  it('asks agent to reply (not produce a RootUpdate)', () => {
-    expect(prompt).toContain('Reply with');
+  it('contains REQUEST label for the thread', () => {
+    expect(prompt).toContain('REQUEST: Does this contradict the motif established in Chapter 1?');
   });
 
-  it('requires reply to end with signature', () => {
+  it('asks agent to return batch responses JSON', () => {
+    expect(prompt).toContain('"responses"');
+    expect(prompt).toContain('threadId');
+    expect(prompt).toContain('reply');
+  });
+
+  it('requires replies to end with signature', () => {
     expect(prompt).toContain('AI Editorial Assistant');
-  });
-
-  it('includes selectedText in the prompt body', () => {
-    expect(prompt).toContain('consciousness is the sole ground');
   });
 
   it('does not reference workflow_type or RootUpdate', () => {
@@ -590,13 +654,17 @@ describe('ArchitectAgent comment prompt structure', () => {
   });
 });
 
-describe('StylistAgent comment prompt structure', () => {
-  const prompt = buildStylistCommentPrompt({
-    styleProfile: 'Voice: intimate, philosophically rigorous.',
+describe('StylistAgent batch prompt structure', () => {
+  const prompt = buildStylistBatchPrompt({
+    styleProfile:       'Voice: intimate, philosophically rigorous.',
     earTuneInstructions: 'Vary sentence length for ebb-and-flow.',
-    passageContext: 'The observer attends, and the wave collapses.',
-    selectedText: 'the wave collapses',
-    agentRequest: 'Smooth out the consonant cluster.',
+    passageContext:     'The observer attends, and the wave collapses.',
+    threads: [{
+      threadId:     'thread-002',
+      selectedText: 'the wave collapses',
+      agentRequest: 'Smooth out the consonant cluster.',
+      conversation: [{ role: 'User' as const, authorName: 'Author', content: '@eartune Smooth it.' }],
+    }],
   });
 
   it('contains STYLE PROFILE section', () => {
@@ -607,39 +675,50 @@ describe('StylistAgent comment prompt structure', () => {
     expect(prompt).toContain('EAR-TUNE INSTRUCTIONS:');
   });
 
-  it('contains PASSAGE CONTEXT section', () => {
+  it('contains PASSAGE CONTEXT section when provided', () => {
     expect(prompt).toContain('PASSAGE CONTEXT:');
+    expect(prompt).toContain('The observer attends');
   });
 
-  it('contains SELECTED TEXT section', () => {
-    expect(prompt).toContain('SELECTED TEXT:');
+  it('contains THREADS section with thread label', () => {
+    expect(prompt).toContain('THREADS:');
+    expect(prompt).toContain('[THREAD thread-002]');
   });
 
-  it('contains SPECIFIC REQUEST section with agentRequest', () => {
-    expect(prompt).toContain('SPECIFIC REQUEST: Smooth out the consonant cluster.');
+  it('contains SELECTED TEXT label for the thread', () => {
+    expect(prompt).toContain('SELECTED TEXT: the wave collapses');
   });
 
-  it('asks agent to reply (not produce a RootUpdate)', () => {
-    expect(prompt).toContain('Reply with');
+  it('asks agent to return batch responses JSON', () => {
+    expect(prompt).toContain('"responses"');
   });
 
-  it('requires reply to end with signature', () => {
+  it('requires replies to end with signature', () => {
     expect(prompt).toContain('AI Editorial Assistant');
   });
 
-  it('does not reference content_update or new_text', () => {
-    expect(prompt).not.toContain('content_update');
-    expect(prompt).not.toContain('new_text');
+  it('omits PASSAGE CONTEXT section when passageContext is empty', () => {
+    const promptNoCtx = buildStylistBatchPrompt({
+      styleProfile:       'Voice.',
+      earTuneInstructions: 'Rules.',
+      passageContext:     '',
+      threads: [SAMPLE_THREAD],
+    });
+    expect(promptNoCtx).not.toContain('PASSAGE CONTEXT:');
   });
 });
 
-describe('AuditAgent comment prompt structure', () => {
-  const prompt = buildAuditCommentPrompt({
-    styleProfile: 'Technical, axiom-grounded.',
+describe('AuditAgent batch prompt structure', () => {
+  const prompt = buildAuditBatchPrompt({
+    styleProfile:      'Technical, axiom-grounded.',
     auditInstructions: 'Check all Chid Axiom applications.',
-    passageContext: 'The energy eigenstate E_n satisfies Hψ = Eψ.',
-    selectedText: 'energy eigenstate E_n',
-    agentRequest: 'Verify the Hamiltonian notation is correct.',
+    passageContext:    'The energy eigenstate E_n satisfies Hψ = Eψ.',
+    threads: [{
+      threadId:     'thread-003',
+      selectedText: 'energy eigenstate E_n',
+      agentRequest: 'Verify the Hamiltonian notation is correct.',
+      conversation: [{ role: 'User' as const, authorName: 'Author', content: '@audit Verify.' }],
+    }],
   });
 
   it('contains STYLE PROFILE section', () => {
@@ -650,78 +729,110 @@ describe('AuditAgent comment prompt structure', () => {
     expect(prompt).toContain('TECHNICAL AUDIT INSTRUCTIONS:');
   });
 
-  it('contains PASSAGE CONTEXT section', () => {
-    expect(prompt).toContain('PASSAGE CONTEXT:');
+  it('contains THREADS section with thread label', () => {
+    expect(prompt).toContain('THREADS:');
+    expect(prompt).toContain('[THREAD thread-003]');
   });
 
-  it('contains SPECIFIC REQUEST section', () => {
-    expect(prompt).toContain('SPECIFIC REQUEST: Verify the Hamiltonian notation is correct.');
+  it('contains REQUEST label for the thread', () => {
+    expect(prompt).toContain('REQUEST: Verify the Hamiltonian notation is correct.');
   });
 
-  it('asks agent to reply (not produce a RootUpdate)', () => {
-    expect(prompt).toContain('Reply with');
+  it('asks agent to return batch responses JSON', () => {
+    expect(prompt).toContain('"responses"');
   });
 
-  it('requires reply to end with signature', () => {
+  it('requires replies to end with signature', () => {
     expect(prompt).toContain('AI Editorial Assistant');
   });
 
-  it('requires reason to cite specific axiom or rule', () => {
+  it('references axiom violations', () => {
     expect(prompt).toContain('axiom');
-  });
-
-  it('does not reference content_update or new_text', () => {
-    expect(prompt).not.toContain('content_update');
-    expect(prompt).not.toContain('new_text');
   });
 });
 
-describe('CommentAgent comment prompt structure', () => {
-  const thread = {
-    selectedText: 'consciousness is the sole ground',
-    conversation: [
-      { role: 'User' as const, authorName: 'Editor', content: '@AI Clarify this.' },
-    ],
-    agentRequest: 'Clarify this.',
-  };
-  const prompt = buildCommentAgentPrompt(thread);
-
-  it('contains SELECTED TEXT section', () => {
-    expect(prompt).toContain('SELECTED TEXT:');
+describe('CommentAgent batch prompt structure', () => {
+  const prompt = buildCommentAgentBatchPrompt({
+    anchorContent: 'The observer collapses the wave function through awareness.',
+    threads: [{
+      threadId:     'thread-004',
+      selectedText: 'consciousness is the sole ground',
+      agentRequest: 'Clarify this.',
+      conversation: [{ role: 'User' as const, authorName: 'Editor', content: '@AI Clarify this.' }],
+    }],
   });
 
-  it('contains CONVERSATION section', () => {
+  it('contains ANCHOR PASSAGE section when anchor content provided', () => {
+    expect(prompt).toContain('ANCHOR PASSAGE:');
+    expect(prompt).toContain('The observer collapses the wave function');
+  });
+
+  it('contains THREADS section with thread label', () => {
+    expect(prompt).toContain('THREADS:');
+    expect(prompt).toContain('[THREAD thread-004]');
+  });
+
+  it('contains SELECTED TEXT label for the thread', () => {
+    expect(prompt).toContain('SELECTED TEXT: consciousness is the sole ground');
+  });
+
+  it('contains CONVERSATION in the thread section', () => {
     expect(prompt).toContain('CONVERSATION:');
-  });
-
-  it('contains REQUEST section with agentRequest', () => {
-    expect(prompt).toContain('REQUEST: Clarify this.');
-  });
-
-  it('instructs sign-off with AI Editorial Assistant', () => {
-    expect(prompt).toContain('— AI Editorial Assistant');
-  });
-
-  it('includes conversation history in [Role] Author: content format', () => {
     expect(prompt).toContain('[User] Editor: @AI Clarify this.');
   });
 
-  it('includes AI turns correctly', () => {
-    const promptWithAI = buildCommentAgentPrompt({
-      selectedText: 'the wave function',
-      conversation: [
-        { role: 'User', authorName: 'Editor', content: '@AI Explain.' },
-        { role: 'AI',   authorName: 'AI',     content: 'Response from @AI: Here is the explanation.' },
-        { role: 'User', authorName: 'Editor', content: '@AI Follow up.' },
-      ],
-      agentRequest: 'Follow up.',
+  it('contains REQUEST label', () => {
+    expect(prompt).toContain('REQUEST: Clarify this.');
+  });
+
+  it('asks agent to return batch responses JSON', () => {
+    expect(prompt).toContain('"responses"');
+    expect(prompt).toContain('threadId');
+    expect(prompt).toContain('reply');
+  });
+
+  it('requires replies to end with signature', () => {
+    expect(prompt).toContain('AI Editorial Assistant');
+  });
+
+  it('omits ANCHOR PASSAGE section when anchor content is empty', () => {
+    const promptNoAnchor = buildCommentAgentBatchPrompt({
+      anchorContent: '',
+      threads:       [SAMPLE_THREAD],
     });
-    expect(promptWithAI).toContain('[AI] AI: Response from @AI: Here is the explanation.');
-    expect(promptWithAI).toContain('[User] Editor: @AI Follow up.');
+    expect(promptNoAnchor).not.toContain('ANCHOR PASSAGE:');
   });
 });
 
 // ── 4. Schema shape ───────────────────────────────────────────────────────────
+
+describe('batchReplySchema shape (all agents)', () => {
+  const schema: any = batchReplySchemaShape();
+
+  it('has type object', () => {
+    expect(schema.type).toBe('object');
+  });
+
+  it('requires responses array', () => {
+    expect(schema.required).toContain('responses');
+  });
+
+  it('response items require threadId and reply', () => {
+    const items = schema.properties.responses.items;
+    expect(items.required).toContain('threadId');
+    expect(items.required).toContain('reply');
+  });
+
+  it('threadId and reply are strings', () => {
+    const items = schema.properties.responses.items;
+    expect(items.properties.threadId.type).toBe('string');
+    expect(items.properties.reply.type).toBe('string');
+  });
+
+  it('does not have a top-level response field (old single-thread schema gone)', () => {
+    expect(schema.properties.response).toBeUndefined();
+  });
+});
 
 describe('instructionUpdateSchema shape', () => {
   const schema = instructionUpdateSchemaShape();
@@ -764,259 +875,385 @@ describe('annotationSchema shape', () => {
   });
 });
 
-describe('singleThreadSchema shape (CommentAgent)', () => {
-  const schema: any = singleThreadSchemaShape();
+// ── 5. normaliseBatchReplies_ logic ──────────────────────────────────────────
 
-  it('has type object', () => {
-    expect(schema.type).toBe('object');
+describe('normaliseBatchReplies_: valid mappings accepted', () => {
+  it('returns ThreadReplies for all valid input items', () => {
+    const threads = [makeThread({ threadId: 't1' }), makeThread({ threadId: 't2' })];
+    const raw = { responses: [
+      { threadId: 't1', reply: 'Reply one. — AI Editorial Assistant' },
+      { threadId: 't2', reply: 'Reply two. — AI Editorial Assistant' },
+    ]};
+    const replies = normaliseBatchReplies(threads, raw);
+    expect(replies).toHaveLength(2);
+    expect(replies[0]).toEqual({ threadId: 't1', content: 'Reply one. — AI Editorial Assistant' });
+    expect(replies[1]).toEqual({ threadId: 't2', content: 'Reply two. — AI Editorial Assistant' });
   });
 
-  it('requires response field', () => {
-    expect(schema.required).toContain('response');
-  });
-
-  it('response is a string', () => {
-    expect(schema.properties.response.type).toBe('string');
-  });
-
-  it('has no threadId field (per-thread dispatch, not batch)', () => {
-    expect(schema.properties.threadId).toBeUndefined();
+  it('maps reply field to content field', () => {
+    const threads = [makeThread({ threadId: 't1' })];
+    const raw = { responses: [{ threadId: 't1', reply: 'The answer.' }] };
+    const replies = normaliseBatchReplies(threads, raw);
+    expect(replies[0].content).toBe('The answer.');
+    expect((replies[0] as any).reply).toBeUndefined();
   });
 });
 
-// ── 5. processAll flow (logic reproduced inline) ──────────────────────────────
+describe('normaliseBatchReplies_: hallucinated threadIds dropped', () => {
+  it('drops items whose threadId was not in the input chunk', () => {
+    const threads = [makeThread({ threadId: 't1' })];
+    const raw = { responses: [
+      { threadId: 't1',        reply: 'Valid.' },
+      { threadId: 'hallucinated', reply: 'Ghost.' },
+    ]};
+    const replies = normaliseBatchReplies(threads, raw);
+    expect(replies).toHaveLength(1);
+    expect(replies[0].threadId).toBe('t1');
+  });
 
-describe('processAll flow logic', () => {
+  it('returns empty array when all items are hallucinated', () => {
+    const threads = [makeThread({ threadId: 't1' })];
+    const raw = { responses: [{ threadId: 'ghost', reply: 'Nope.' }] };
+    const replies = normaliseBatchReplies(threads, raw);
+    expect(replies).toHaveLength(0);
+  });
+});
+
+describe('normaliseBatchReplies_: duplicate threadIds dropped', () => {
+  it('keeps only the first occurrence of a duplicate threadId', () => {
+    const threads = [makeThread({ threadId: 't1' })];
+    const raw = { responses: [
+      { threadId: 't1', reply: 'First reply.' },
+      { threadId: 't1', reply: 'Duplicate.' },
+    ]};
+    const replies = normaliseBatchReplies(threads, raw);
+    expect(replies).toHaveLength(1);
+    expect(replies[0].content).toBe('First reply.');
+  });
+});
+
+describe('normaliseBatchReplies_: empty replies dropped', () => {
+  it('drops items with an empty reply string', () => {
+    const threads = [makeThread({ threadId: 't1' }), makeThread({ threadId: 't2' })];
+    const raw = { responses: [
+      { threadId: 't1', reply: '' },
+      { threadId: 't2', reply: '   ' },
+    ]};
+    const replies = normaliseBatchReplies(threads, raw);
+    expect(replies).toHaveLength(0);
+  });
+
+  it('drops items with missing reply field', () => {
+    const threads = [makeThread({ threadId: 't1' })];
+    const raw = { responses: [{ threadId: 't1' }] }; // no reply
+    const replies = normaliseBatchReplies(threads, raw);
+    expect(replies).toHaveLength(0);
+  });
+});
+
+describe('normaliseBatchReplies_: missing coverage tolerated', () => {
+  it('returns partial results when Gemini replies to fewer threads than sent', () => {
+    const threads = [
+      makeThread({ threadId: 't1' }),
+      makeThread({ threadId: 't2' }),
+      makeThread({ threadId: 't3' }),
+    ];
+    // Gemini only replied to two of three
+    const raw = { responses: [
+      { threadId: 't1', reply: 'Reply 1.' },
+      { threadId: 't3', reply: 'Reply 3.' },
+    ]};
+    const replies = normaliseBatchReplies(threads, raw);
+    expect(replies).toHaveLength(2);
+    expect(replies.map(r => r.threadId)).toEqual(['t1', 't3']);
+  });
+
+  it('returns empty array when responses array is empty', () => {
+    const threads = [makeThread({ threadId: 't1' })];
+    const raw = { responses: [] };
+    const replies = normaliseBatchReplies(threads, raw);
+    expect(replies).toHaveLength(0);
+  });
+
+  it('returns empty array when raw has no responses field', () => {
+    const threads = [makeThread({ threadId: 't1' })];
+    const replies = normaliseBatchReplies(threads, {});
+    expect(replies).toHaveLength(0);
+  });
+});
+
+// ── 6. processAll flow (batch dispatch, logic reproduced inline) ─────────────
+
+describe('processAll batch dispatch logic', () => {
   // Reproduces the core dispatch loop from CommentProcessor.processAll()
   // using plain objects to avoid GAS runtime dependencies.
+  // Key invariants:
+  //   - threads are grouped by agent object identity (not tag string)
+  //   - handleCommentThreads() is called once per agent, not per thread
+  //   - byAgent is keyed on agent name
+  //   - a batch exception skips all threads for that agent
+
+  type MockAgent = {
+    name: string;
+    tags: string[];
+    needsAnchor: boolean;
+    handleCommentThreads: jest.Mock;
+  };
 
   function simulateProcessAll(
     comments: any[],
-    tagRegistry: Map<string, { handleCommentThread: (t: any) => { threadId: string; content: string } }>,
-    onPostReply: (docId: string, reply: { threadId: string; content: string }) => void = () => undefined
+    agents: MockAgent[],
+    onPostReply: (reply: { threadId: string; content: string }) => void = () => undefined
   ): { replied: number; skipped: number; byAgent: Record<string, number> } {
     const byAgent: Record<string, number> = {};
     let replied = 0;
     let skipped = 0;
 
+    // Build tag registry (mirrors CommentProcessor.init)
+    const tagRegistry = new Map<string, MockAgent>();
+    for (const agent of agents) {
+      for (const tag of agent.tags) {
+        tagRegistry.set(tag, agent);
+      }
+    }
+
+    // Phase 1: Parse and group by agent identity
+    const agentGroups = new Map<MockAgent, CommentThread[]>();
     for (const comment of comments) {
       const thread = buildThreadFromComment(
         comment,
         new Set(tagRegistry.keys()),
-        ANCHOR_NEEDING_TAGS
+        new Set(agents.filter(a => a.needsAnchor).flatMap(a => a.tags))
       );
       if (!thread) { skipped++; continue; }
-
       const agent = tagRegistry.get(thread.tag);
       if (!agent) { skipped++; continue; }
+      if (!agentGroups.has(agent)) agentGroups.set(agent, []);
+      agentGroups.get(agent)!.push(thread);
+    }
 
-      let reply: { threadId: string; content: string };
+    // Phase 2: Dispatch per agent
+    for (const [agent, threads] of agentGroups) {
+      let replies: ThreadReply[];
       try {
-        reply = agent.handleCommentThread(thread);
+        replies = agent.handleCommentThreads(threads);
       } catch {
-        skipped++;
+        skipped += threads.length;
         continue;
       }
-
-      onPostReply('doc-123', reply);
-      replied++;
-      byAgent[thread.tag] = (byAgent[thread.tag] || 0) + 1;
+      for (const reply of replies) {
+        onPostReply(reply);
+        replied++;
+        byAgent[agent.name] = (byAgent[agent.name] || 0) + 1;
+      }
     }
 
     return { replied, skipped, byAgent };
   }
 
-  it('routes @AI comment to the registered agent and counts replied', () => {
-    const agent = { handleCommentThread: jest.fn().mockReturnValue({ threadId: 'c1', content: 'reply' }) };
-    const registry = new Map([['@ai', agent]]);
-    const comments = [makeComment({ id: 'c1', content: '@AI Question.' })];
+  it('calls handleCommentThreads once with all threads for that agent', () => {
+    const agent: MockAgent = {
+      name: 'CommentAgent', tags: ['@ai'], needsAnchor: false,
+      handleCommentThreads: jest.fn().mockReturnValue([
+        { threadId: 'c1', content: 'r1' },
+        { threadId: 'c2', content: 'r2' },
+      ]),
+    };
+    const comments = [
+      makeComment({ id: 'c1', content: '@AI Q1.' }),
+      makeComment({ id: 'c2', content: '@AI Q2.' }),
+    ];
+    const result = simulateProcessAll(comments, [agent]);
+    expect(agent.handleCommentThreads).toHaveBeenCalledTimes(1);
+    expect(agent.handleCommentThreads).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ threadId: 'c1' }),
+        expect.objectContaining({ threadId: 'c2' }),
+      ])
+    );
+    expect(result.replied).toBe(2);
+    expect(result.byAgent['CommentAgent']).toBe(2);
+  });
 
-    const result = simulateProcessAll(comments, registry);
-
-    expect(agent.handleCommentThread).toHaveBeenCalledTimes(1);
-    expect(result.replied).toBe(1);
-    expect(result.skipped).toBe(0);
-    expect(result.byAgent['@ai']).toBe(1);
+  it('multi-tag agent receives all threads in one batch (not split by tag)', () => {
+    // StylistAgent handles both @eartune and @stylist.
+    // Both sets of threads must arrive in the same handleCommentThreads call.
+    const agent: MockAgent = {
+      name: 'StylistAgent', tags: ['@eartune', '@stylist'], needsAnchor: false,
+      handleCommentThreads: jest.fn().mockReturnValue([
+        { threadId: 'c1', content: 'r1' },
+        { threadId: 'c2', content: 'r2' },
+      ]),
+    };
+    const comments = [
+      makeComment({ id: 'c1', content: '@eartune Check rhythm.' }),
+      makeComment({ id: 'c2', content: '@stylist Smooth this.' }),
+    ];
+    simulateProcessAll(comments, [agent]);
+    expect(agent.handleCommentThreads).toHaveBeenCalledTimes(1);
+    const [batchArg] = agent.handleCommentThreads.mock.calls[0];
+    expect(batchArg).toHaveLength(2);
   });
 
   it('skips comments with no @tag', () => {
-    const agent = { handleCommentThread: jest.fn() };
-    const registry = new Map([['@ai', agent]]);
-    const comments = [makeComment({ content: 'Just a comment, no tag.' })];
-
-    const result = simulateProcessAll(comments, registry);
-
-    expect(agent.handleCommentThread).not.toHaveBeenCalled();
+    const agent: MockAgent = {
+      name: 'CommentAgent', tags: ['@ai'], needsAnchor: false,
+      handleCommentThreads: jest.fn().mockReturnValue([]),
+    };
+    const result = simulateProcessAll(
+      [makeComment({ content: 'Just a comment, no tag.' })],
+      [agent]
+    );
+    expect(agent.handleCommentThreads).not.toHaveBeenCalled();
     expect(result.skipped).toBe(1);
     expect(result.replied).toBe(0);
   });
 
   it('skips comments with unrecognised @tag', () => {
-    const agent = { handleCommentThread: jest.fn() };
-    const registry = new Map([['@ai', agent]]);
-    const comments = [makeComment({ content: '@unknown Do this.' })];
-
-    const result = simulateProcessAll(comments, registry);
-
+    const agent: MockAgent = {
+      name: 'CommentAgent', tags: ['@ai'], needsAnchor: false,
+      handleCommentThreads: jest.fn(),
+    };
+    const result = simulateProcessAll(
+      [makeComment({ content: '@unknown Do this.' })],
+      [agent]
+    );
     expect(result.skipped).toBe(1);
     expect(result.replied).toBe(0);
   });
 
-  it('skips thread when agent.handleCommentThread throws', () => {
-    const agent = {
-      handleCommentThread: jest.fn().mockImplementation(() => {
+  it('when handleCommentThreads throws, all threads in that batch are skipped', () => {
+    const agent: MockAgent = {
+      name: 'CommentAgent', tags: ['@ai'], needsAnchor: false,
+      handleCommentThreads: jest.fn().mockImplementation(() => {
         throw new Error('Gemini API error');
       }),
     };
-    const registry = new Map([['@ai', agent]]);
-    const comments = [makeComment({ content: '@AI Question.' })];
-
-    const result = simulateProcessAll(comments, registry);
-
-    expect(result.replied).toBe(0);
-    expect(result.skipped).toBe(1);
-  });
-
-  it('posts reply with correct threadId and content', () => {
-    const agent = {
-      handleCommentThread: jest.fn().mockReturnValue({
-        threadId: 'c-42',
-        content: 'Analysis complete. — AI Editorial Assistant',
-      }),
-    };
-    const registry = new Map([['@architect', agent]]);
-    const comments = [makeComment({ id: 'c-42', content: '@architect Analyse this.' })];
-
-    const postedReplies: Array<{ threadId: string; content: string }> = [];
-    simulateProcessAll(comments, registry, (_docId, r) => postedReplies.push(r));
-
-    expect(postedReplies).toHaveLength(1);
-    expect(postedReplies[0].threadId).toBe('c-42');
-    expect(postedReplies[0].content).toBe('Analysis complete. — AI Editorial Assistant');
-  });
-
-  it('tracks byAgent counts per tag independently', () => {
-    const aiAgent   = { handleCommentThread: jest.fn().mockReturnValue({ threadId: 'c1', content: 'ok' }) };
-    const archAgent = { handleCommentThread: jest.fn().mockReturnValue({ threadId: 'c2', content: 'ok' }) };
-    const registry  = new Map([['@ai', aiAgent], ['@architect', archAgent]]);
-
-    const comments = [
-      makeComment({ id: 'c1', content: '@AI Q1.' }),
-      makeComment({ id: 'c2', content: '@architect Q2.' }),
-      makeComment({ id: 'c3', content: '@AI Q3.' }),
-    ];
-
-    const result = simulateProcessAll(comments, registry);
-
-    expect(result.replied).toBe(3);
-    expect(result.byAgent['@ai']).toBe(2);
-    expect(result.byAgent['@architect']).toBe(1);
-  });
-
-  it('processes mixed routable and non-routable comments correctly', () => {
-    const agent = { handleCommentThread: jest.fn().mockReturnValue({ threadId: 'c2', content: 'done' }) };
-    const registry = new Map([['@ai', agent]]);
-
-    const comments = [
-      makeComment({ id: 'c1', content: 'No tag here.' }),
-      makeComment({ id: 'c2', content: '@AI Question.' }),
-      makeComment({ id: 'c3', content: '@unrelated Do this.' }),
-    ];
-
-    const result = simulateProcessAll(comments, registry);
-
-    expect(result.replied).toBe(1);
-    expect(result.skipped).toBe(2);
-  });
-
-  it('continues processing subsequent comments after one agent throws', () => {
-    // Error recovery: a failure on comment 2 must not prevent comment 3 from being processed.
-    const agent = {
-      handleCommentThread: jest.fn()
-        .mockReturnValueOnce({ threadId: 'c1', content: 'ok' })   // c1 succeeds
-        .mockImplementationOnce(() => { throw new Error('Gemini timeout'); }) // c2 throws
-        .mockReturnValueOnce({ threadId: 'c3', content: 'ok' }),  // c3 succeeds
-    };
-    const registry = new Map([['@ai', agent]]);
     const comments = [
       makeComment({ id: 'c1', content: '@AI Q1.' }),
       makeComment({ id: 'c2', content: '@AI Q2.' }),
-      makeComment({ id: 'c3', content: '@AI Q3.' }),
     ];
-
-    const result = simulateProcessAll(comments, registry);
-
-    expect(result.replied).toBe(2);   // c1 and c3
-    expect(result.skipped).toBe(1);   // c2
-    expect(agent.handleCommentThread).toHaveBeenCalledTimes(3);
+    const result = simulateProcessAll(comments, [agent]);
+    expect(result.replied).toBe(0);
+    expect(result.skipped).toBe(2);
   });
 
-  it('routes by the last @tag word in a message (first tag is ignored)', () => {
-    // A message like "@AI @architect Question." has two tags; only the last should win.
-    // buildThreadFromComment scans words and takes the first it finds in knownTags,
-    // so the _last_ tag is whichever appears last in the word list.
-    // This test documents the tie-breaking behaviour explicitly.
-    const comment = makeComment({ content: '@AI @architect Which agent handles this?' });
-    const thread = buildThreadFromComment(comment, ALL_KNOWN_TAGS, ANCHOR_NEEDING_TAGS);
+  it('posts each reply individually and counts them in replied', () => {
+    const agent: MockAgent = {
+      name: 'ArchitectAgent', tags: ['@architect'], needsAnchor: false,
+      handleCommentThreads: jest.fn().mockReturnValue([
+        { threadId: 'c-42', content: 'Analysis. — AI Editorial Assistant' },
+      ]),
+    };
+    const postedReplies: Array<{ threadId: string; content: string }> = [];
+    simulateProcessAll(
+      [makeComment({ id: 'c-42', content: '@architect Analyse this.' })],
+      [agent],
+      r => postedReplies.push(r)
+    );
+    expect(postedReplies).toHaveLength(1);
+    expect(postedReplies[0].threadId).toBe('c-42');
+    expect(postedReplies[0].content).toBe('Analysis. — AI Editorial Assistant');
+  });
 
-    // Only one tag should be selected — whichever word appears last in the content
-    // that is in knownTags. Here @architect appears after @ai.
-    expect(thread).not.toBeNull();
-    // The current implementation uses .find() — first match wins, so @ai is chosen.
-    // This test pins that behaviour so any change to the selection strategy is explicit.
-    expect(['@ai', '@architect']).toContain(thread!.tag);
-    // Exactly one tag — not both.
-    expect(thread!.tag.split(' ')).toHaveLength(1);
+  it('byAgent tracks reply counts per agent name', () => {
+    const aiAgent: MockAgent = {
+      name: 'CommentAgent', tags: ['@ai'], needsAnchor: false,
+      handleCommentThreads: jest.fn().mockReturnValue([
+        { threadId: 'c1', content: 'r1' },
+        { threadId: 'c3', content: 'r3' },
+      ]),
+    };
+    const archAgent: MockAgent = {
+      name: 'ArchitectAgent', tags: ['@architect'], needsAnchor: false,
+      handleCommentThreads: jest.fn().mockReturnValue([
+        { threadId: 'c2', content: 'r2' },
+      ]),
+    };
+    const result = simulateProcessAll(
+      [
+        makeComment({ id: 'c1', content: '@AI Q1.' }),
+        makeComment({ id: 'c2', content: '@architect Q2.' }),
+        makeComment({ id: 'c3', content: '@AI Q3.' }),
+      ],
+      [aiAgent, archAgent]
+    );
+    expect(result.replied).toBe(3);
+    expect(result.byAgent['CommentAgent']).toBe(2);
+    expect(result.byAgent['ArchitectAgent']).toBe(1);
+  });
+
+  it('only posts replies that agent returned — unreplied threads are not counted', () => {
+    // Agent receives 3 threads but only replies to 2 (Gemini partial coverage).
+    const agent: MockAgent = {
+      name: 'CommentAgent', tags: ['@ai'], needsAnchor: false,
+      handleCommentThreads: jest.fn().mockReturnValue([
+        { threadId: 'c1', content: 'r1' },
+        // c2 not returned — agent chose not to reply
+        { threadId: 'c3', content: 'r3' },
+      ]),
+    };
+    const result = simulateProcessAll(
+      [
+        makeComment({ id: 'c1', content: '@AI Q1.' }),
+        makeComment({ id: 'c2', content: '@AI Q2.' }),
+        makeComment({ id: 'c3', content: '@AI Q3.' }),
+      ],
+      [agent]
+    );
+    expect(result.replied).toBe(2);
+    // c2 was not replied to — not counted as skipped either
+    expect(result.skipped).toBe(0);
+  });
+
+  it('a failing agent does not prevent other agents from running', () => {
+    const failingAgent: MockAgent = {
+      name: 'CommentAgent', tags: ['@ai'], needsAnchor: false,
+      handleCommentThreads: jest.fn().mockImplementation(() => {
+        throw new Error('timeout');
+      }),
+    };
+    const workingAgent: MockAgent = {
+      name: 'ArchitectAgent', tags: ['@architect'], needsAnchor: false,
+      handleCommentThreads: jest.fn().mockReturnValue([
+        { threadId: 'c2', content: 'fine' },
+      ]),
+    };
+    const result = simulateProcessAll(
+      [
+        makeComment({ id: 'c1', content: '@AI Broken.' }),
+        makeComment({ id: 'c2', content: '@architect Works.' }),
+      ],
+      [failingAgent, workingAgent]
+    );
+    expect(result.replied).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(workingAgent.handleCommentThreads).toHaveBeenCalledTimes(1);
   });
 });
 
-// ── 6. ThreadReply content contracts ─────────────────────────────────────────
+// ── 7. ThreadReply content contracts ─────────────────────────────────────────
 
-describe('ThreadReply content from each agent', () => {
-  it('ArchitectAgent reply is the raw Gemini reply string (reply-only workflow)', () => {
-    // ArchitectAgent.handleCommentThread now returns result.reply directly
-    const geminiReply = 'The passage aligns with the established motif in Chapter 1. — AI Editorial Assistant';
+describe('ThreadReply content contracts', () => {
+  it('ThreadReply has threadId and content fields', () => {
     const reply: ThreadReply = {
       threadId: 'thread-arch',
-      content: geminiReply,
+      content: 'The passage aligns. — AI Editorial Assistant',
     };
-    expect(reply.content).toBe(geminiReply);
     expect(reply.content).toContain('AI Editorial Assistant');
     expect(reply.threadId).toBe('thread-arch');
   });
 
-  it('StylistAgent reply is the raw Gemini reply string (reply-only workflow)', () => {
-    const geminiReply = 'The consonant cluster creates friction. Try softening with a vowel-led word. — AI Editorial Assistant';
-    const reply: ThreadReply = {
-      threadId: 'thread-sty',
-      content: geminiReply,
-    };
-    expect(reply.content).toBe(geminiReply);
-    expect(reply.content).toContain('AI Editorial Assistant');
-  });
-
-  it('AuditAgent reply is the raw Gemini reply string (reply-only workflow)', () => {
-    const geminiReply = 'The Hamiltonian notation is correct per SI conventions. — AI Editorial Assistant';
-    const reply: ThreadReply = {
-      threadId: 'thread-aud',
-      content: geminiReply,
-    };
-    expect(reply.content).toBe(geminiReply);
-    expect(reply.content).toContain('AI Editorial Assistant');
-  });
-
-  it('CommentAgent reply is the raw Gemini response string', () => {
-    const geminiResponse = 'The passage is consistent with the Chid Axiom. — AI Editorial Assistant';
-    const reply: ThreadReply = {
-      threadId: 'thread-1',
-      content: geminiResponse,
-    };
-    expect(reply.content).toBe(geminiResponse);
-    expect(reply.threadId).toBe('thread-1');
+  it('normaliseBatchReplies maps reply → content correctly', () => {
+    const threads = [makeThread({ threadId: 'thread-1' })];
+    const raw = { responses: [{ threadId: 'thread-1', reply: 'The passage is consistent. — AI Editorial Assistant' }] };
+    const replies = normaliseBatchReplies(threads, raw);
+    expect(replies[0].content).toBe('The passage is consistent. — AI Editorial Assistant');
+    expect(replies[0].threadId).toBe('thread-1');
   });
 });
 
-// ── 7. Drive API call shapes ──────────────────────────────────────────────────
+// ── 8. Drive API call shapes ──────────────────────────────────────────────────
 
 describe('Drive API call conventions', () => {
   it('fetchComments_ response handles Drive v3 comments field', () => {
@@ -1039,7 +1276,6 @@ describe('Drive API call conventions', () => {
   });
 
   it('fetchComments_ paginates via nextPageToken', () => {
-    // Simulate two pages
     const pages = [
       { comments: [{ id: 'c1' }], nextPageToken: 'token1' },
       { comments: [{ id: 'c2' }] },
@@ -1064,7 +1300,6 @@ describe('Drive API call conventions', () => {
   });
 
   it('postReply_ is called with (resource, fileId, commentId, opts) argument order', () => {
-    // Mirrors Drive.Replies.create(resource, fileId, commentId, optionalArgs)
     const mockCreate = jest.fn();
     const reply: ThreadReply = { threadId: 'cmt-99', content: 'Done. — AI Editorial Assistant' };
     const docId = 'doc-123';
@@ -1079,9 +1314,39 @@ describe('Drive API call conventions', () => {
   });
 });
 
-// ── 8. StylistAgent annotateTab prompt structure ──────────────────────────────
+// ── 9. StylistAgent annotateTab prompt structure (W2 — unchanged) ─────────────
 
-describe('StylistAgent annotateTab prompt structure', () => {
+function buildStylistAnnotatePrompt(opts: {
+  styleProfile: string;
+  earTuneInstructions: string;
+  passage: string;
+  tabName: string;
+}): string {
+  return `
+STYLE PROFILE:
+---
+${opts.styleProfile.slice(0, 3000)}
+---
+
+EAR-TUNE INSTRUCTIONS:
+---
+${opts.earTuneInstructions.slice(0, 2000)}
+---
+
+PASSAGE TO SWEEP (from tab: "${opts.tabName}"):
+---
+${opts.passage.slice(0, 8000)}
+---
+
+Identify every passage with a rhythmic, phonetic, or cadence problem.
+Return a JSON object with:
+- operations: one per problem found. Each must have:
+    - match_text: verbatim 3–4-word phrase from the passage above
+    - reason: description of the issue and suggested improvement
+`.trim();
+}
+
+describe('StylistAgent annotateTab prompt structure (W2)', () => {
   const prompt = buildStylistAnnotatePrompt({
     styleProfile: 'Voice: intimate.',
     earTuneInstructions: 'Vary sentence length.',
@@ -1099,12 +1364,8 @@ describe('StylistAgent annotateTab prompt structure', () => {
     expect(prompt).toContain('reason');
   });
 
-  it('does not ask for new_text (annotation only, no replacements)', () => {
-    expect(prompt).not.toContain('new_text');
-  });
-
-  it('does not mention content_update or replaceAllText', () => {
-    expect(prompt).not.toContain('content_update');
-    expect(prompt).not.toContain('replaceAllText');
+  it('does not reference THREADS or batch response format', () => {
+    expect(prompt).not.toContain('THREADS:');
+    expect(prompt).not.toContain('"responses"');
   });
 });

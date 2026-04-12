@@ -7,51 +7,81 @@
 class CommentAgent extends BaseAgent {
 
   readonly tags = ['@ai'];
-  readonly contextKeys = [TAB_NAMES.MERGED_CONTENT, TAB_NAMES.COMMENT_INSTRUCTIONS];
 
-  // --- Schema ---
+  /**
+   * CommentAgent groups threads by the tab they are anchored in.
+   * COMMENT_ANCHOR_TAB causes CommentProcessor to resolve anchorTabName per
+   * thread; the agent then uses that tab's content as shared context per chunk.
+   */
+  readonly contextKeys = [COMMENT_ANCHOR_TAB, TAB_NAMES.COMMENT_INSTRUCTIONS];
 
-  private singleThreadSchema_(): object {
-    return {
-      type: 'object',
-      properties: { response: { type: 'string' } },
-      required: ['response'],
-    };
-  }
+  private static readonly CHUNK_SIZE = 10;
 
-  // --- Comment thread handler ---
+  // --- Comment thread batch handler ---
 
-  handleCommentThread(thread: CommentThread): ThreadReply {
-    this.logCommentThread_(thread, 'handleCommentThread');
+  handleCommentThreads(threads: CommentThread[]): ThreadReply[] {
+    const agentName = this.constructor.name;
+    Logger.log(`[${agentName}] handleCommentThreads: received ${threads.length} thread(s)`);
+
     const instructions = this.getTabContent_(TAB_NAMES.COMMENT_INSTRUCTIONS).trim();
     const systemPrompt = instructions || COMMENT_AGENT_SYSTEM_PROMPT;
 
-    const convHistory = thread.conversation
-      .map(m => `[${m.role}] ${m.authorName}: ${m.content}`)
-      .join('\n');
+    // Subgroup by anchorTabName so each chunk shares one passage context.
+    const subgroups = new Map<string | null, CommentThread[]>();
+    for (const thread of threads) {
+      const key = thread.anchorTabName;
+      if (!subgroups.has(key)) subgroups.set(key, []);
+      subgroups.get(key)!.push(thread);
+    }
 
-    const userPrompt = `
-SELECTED TEXT:
----
-${thread.selectedText}
----
+    Logger.log(`[${agentName}] handleCommentThreads: ${subgroups.size} subgroup(s) by anchor tab`);
 
-CONVERSATION:
----
-${convHistory}
----
+    const allReplies: ThreadReply[] = [];
 
-REQUEST: ${thread.agentRequest}
+    for (const [anchorTabName, subThreads] of subgroups) {
+      const anchorContent = anchorTabName
+        ? this.getTabContent_(anchorTabName).slice(0, 4000)
+        : '';
 
-Respond directly to the request. End your reply with "— AI Editorial Assistant".
-`.trim();
+      for (let i = 0; i < subThreads.length; i += CommentAgent.CHUNK_SIZE) {
+        const chunk = subThreads.slice(i, i + CommentAgent.CHUNK_SIZE);
+        const chunkNum = Math.floor(i / CommentAgent.CHUNK_SIZE) + 1;
+        Logger.log(
+          `[${agentName}] handleCommentThreads: anchor=${anchorTabName ?? '(none)'} ` +
+          `chunk ${chunkNum} size=${chunk.length}`
+        );
 
-    const result = this.callGemini_(systemPrompt, userPrompt, this.singleThreadSchema_(), MODEL.FAST) as { response: string };
+        try {
+          const userPrompt = this.buildBatchPrompt_(anchorContent, chunk);
+          const raw = this.callGemini_(systemPrompt, userPrompt, this.batchReplySchema_(), MODEL.FAST);
+          const replies = this.normaliseBatchReplies_(chunk, raw, agentName);
+          allReplies.push(...replies);
+        } catch (e: any) {
+          Logger.log(`[${agentName}] handleCommentThreads: chunk ${chunkNum} failed — ${e.message}`);
+        }
+      }
+    }
 
-    return {
-      threadId: thread.threadId,
-      content: result.response,
-    };
+    Logger.log(`[${agentName}] handleCommentThreads: returning ${allReplies.length} reply/replies`);
+    return allReplies;
+  }
+
+  private buildBatchPrompt_(anchorContent: string, threads: CommentThread[]): string {
+    const anchorSection = anchorContent
+      ? `ANCHOR PASSAGE:\n---\n${anchorContent}\n---\n\n`
+      : '';
+
+    return (
+      `${anchorSection}` +
+      `THREADS:\n` +
+      `---\n` +
+      `${this.formatThreadsForBatch_(threads)}\n` +
+      `---\n\n` +
+      `For each thread, respond to the request concisely and grounded in the passage context.\n` +
+      `End each reply with "— AI Editorial Assistant".\n` +
+      `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
+      `one per thread you are replying to.`
+    ).trim();
   }
 
   // --- Instruction management ---

@@ -2,13 +2,34 @@
 // Prompt builders for integration tests.
 //
 // These reproduce the exact user-prompt strings from each agent's
-// handleCommentThread / annotateTab / generateInstructions methods.
+// handleCommentThreads / annotateTab / generateInstructions methods.
 //
 // MAINTENANCE CONTRACT: If any agent prompt changes in production,
 // the corresponding builder here must be updated to match.
 // A divergence means integration tests are no longer testing the
 // real agent prompts.
 // ============================================================
+
+// ── Shared thread formatter ───────────────────────────────────────────────────
+
+export interface TestThread {
+  threadId:     string;
+  selectedText: string;
+  agentRequest: string;
+  conversation: Array<{ role: 'User' | 'AI'; authorName: string; content: string }>;
+}
+
+function formatThreadsForBatch(threads: TestThread[]): string {
+  return threads.map(t => {
+    const conv = t.conversation.map(m => `[${m.role}] ${m.authorName}: ${m.content}`).join('\n');
+    return (
+      `[THREAD ${t.threadId}]\n` +
+      `SELECTED TEXT: ${t.selectedText}\n` +
+      `CONVERSATION:\n${conv}\n` +
+      `REQUEST: ${t.agentRequest}`
+    );
+  }).join('\n\n');
+}
 
 // ── ArchitectAgent ────────────────────────────────────────────────────────────
 
@@ -38,40 +59,35 @@ Return a JSON object with:
 `.trim();
 }
 
-export function buildArchitectCommentPrompt(opts: {
+export function buildArchitectBatchPrompt(opts: {
   styleProfile: string;
-  manuscript: string;
-  selectedText: string;
-  agentRequest: string;
+  manuscript:   string;
+  threads:      TestThread[];
 }): string {
-  return `
-STYLE PROFILE:
----
-${opts.styleProfile.slice(0, 2000)}
----
-
-MANUSCRIPT CONTEXT:
----
-${opts.manuscript.slice(0, 8000)}
----
-
-SELECTED PASSAGE:
----
-${opts.selectedText}
----
-
-ARCHITECTURAL REQUEST: ${opts.agentRequest}
-
-Analyse the selected passage for structural, motif, or voice concerns relative to
-the manuscript and StyleProfile. Reply with concise findings and any recommended
-action the author should take. End your reply with "— AI Editorial Assistant".
-`.trim();
+  return (
+    `STYLE PROFILE:\n` +
+    `---\n` +
+    `${opts.styleProfile.slice(0, 2000)}\n` +
+    `---\n\n` +
+    `MANUSCRIPT CONTEXT:\n` +
+    `---\n` +
+    `${opts.manuscript.slice(0, 20000)}\n` +
+    `---\n\n` +
+    `THREADS:\n` +
+    `---\n` +
+    `${formatThreadsForBatch(opts.threads)}\n` +
+    `---\n\n` +
+    `For each thread, analyse the selected passage for structural, motif, or voice concerns\n` +
+    `relative to the manuscript and StyleProfile. End each reply with "— AI Editorial Assistant".\n` +
+    `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
+    `one per thread you are replying to.`
+  ).trim();
 }
 
 // ── StylistAgent ──────────────────────────────────────────────────────────────
 
 export function buildStylistInstructionsPrompt(opts: {
-  styleProfile: string;
+  styleProfile:    string;
   existingEarTune: string;
 }): string {
   return `
@@ -104,10 +120,10 @@ Return a JSON object with:
 }
 
 export function buildStylistAnnotatePrompt(opts: {
-  styleProfile: string;
+  styleProfile:        string;
   earTuneInstructions: string;
-  passage: string;
-  tabName: string;
+  passage:             string;
+  tabName:             string;
 }): string {
   return `
 STYLE PROFILE:
@@ -133,48 +149,43 @@ Return a JSON object with:
 `.trim();
 }
 
-export function buildStylistCommentPrompt(opts: {
-  styleProfile: string;
+export function buildStylistBatchPrompt(opts: {
+  styleProfile:        string;
   earTuneInstructions: string;
-  passageContext: string;
-  selectedText: string;
-  agentRequest: string;
+  passageContext:      string;
+  threads:             TestThread[];
 }): string {
-  return `
-STYLE PROFILE:
----
-${opts.styleProfile.slice(0, 2000)}
----
+  const passageSection = opts.passageContext
+    ? `PASSAGE CONTEXT:\n---\n${opts.passageContext.slice(0, 4000)}\n---\n\n`
+    : '';
 
-EAR-TUNE INSTRUCTIONS:
----
-${opts.earTuneInstructions.slice(0, 2000)}
----
-
-PASSAGE CONTEXT:
----
-${opts.passageContext.slice(0, 4000)}
----
-
-SELECTED TEXT:
----
-${opts.selectedText}
----
-
-SPECIFIC REQUEST: ${opts.agentRequest}
-
-Analyse the selected text for rhythmic, phonetic, and cadence issues per the
-Ear-Tune instructions. Reply with your findings and specific suggestions.
-End your reply with "— AI Editorial Assistant".
-`.trim();
+  return (
+    `STYLE PROFILE:\n` +
+    `---\n` +
+    `${opts.styleProfile.slice(0, 2000)}\n` +
+    `---\n\n` +
+    `EAR-TUNE INSTRUCTIONS:\n` +
+    `---\n` +
+    `${opts.earTuneInstructions.slice(0, 2000)}\n` +
+    `---\n\n` +
+    `${passageSection}` +
+    `THREADS:\n` +
+    `---\n` +
+    `${formatThreadsForBatch(opts.threads)}\n` +
+    `---\n\n` +
+    `For each thread, analyse the selected text for rhythmic, phonetic, and cadence issues\n` +
+    `per the Ear-Tune instructions. End each reply with "— AI Editorial Assistant".\n` +
+    `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
+    `one per thread you are replying to.`
+  ).trim();
 }
 
 // ── AuditAgent ────────────────────────────────────────────────────────────────
 
 export function buildAuditInstructionsPrompt(opts: {
-  styleProfile: string;
+  styleProfile:  string;
   existingAudit: string;
-  manuscript: string;
+  manuscript:    string;
 }): string {
   return `
 STYLE PROFILE:
@@ -213,10 +224,10 @@ Return a JSON object with:
 }
 
 export function buildAuditAnnotatePrompt(opts: {
-  styleProfile: string;
+  styleProfile:      string;
   auditInstructions: string;
-  passage: string;
-  tabName: string;
+  passage:           string;
+  tabName:           string;
 }): string {
   return `
 STYLE PROFILE:
@@ -245,46 +256,42 @@ Return a JSON object with:
 `.trim();
 }
 
-export function buildAuditCommentPrompt(opts: {
-  styleProfile: string;
+export function buildAuditBatchPrompt(opts: {
+  styleProfile:      string;
   auditInstructions: string;
-  passageContext: string;
-  selectedText: string;
-  agentRequest: string;
+  passageContext:    string;
+  threads:           TestThread[];
 }): string {
-  return `
-STYLE PROFILE:
----
-${opts.styleProfile.slice(0, 2000)}
----
+  const passageSection = opts.passageContext
+    ? `PASSAGE CONTEXT:\n---\n${opts.passageContext.slice(0, 4000)}\n---\n\n`
+    : '';
 
-TECHNICAL AUDIT INSTRUCTIONS:
----
-${opts.auditInstructions.slice(0, 3000)}
----
-
-PASSAGE CONTEXT:
----
-${opts.passageContext.slice(0, 4000)}
----
-
-SELECTED TEXT:
----
-${opts.selectedText}
----
-
-SPECIFIC REQUEST: ${opts.agentRequest}
-
-Perform a targeted technical audit of the selected passage. Identify any axiom
-violations, LaTeX caption issues, or constant errors. Reply with your findings
-and specific corrections. End your reply with "— AI Editorial Assistant".
-`.trim();
+  return (
+    `STYLE PROFILE:\n` +
+    `---\n` +
+    `${opts.styleProfile.slice(0, 2000)}\n` +
+    `---\n\n` +
+    `TECHNICAL AUDIT INSTRUCTIONS:\n` +
+    `---\n` +
+    `${opts.auditInstructions.slice(0, 3000)}\n` +
+    `---\n\n` +
+    `${passageSection}` +
+    `THREADS:\n` +
+    `---\n` +
+    `${formatThreadsForBatch(opts.threads)}\n` +
+    `---\n\n` +
+    `For each thread, perform a targeted technical audit of the selected passage.\n` +
+    `Identify any axiom violations, LaTeX caption issues, or constant errors.\n` +
+    `End each reply with "— AI Editorial Assistant".\n` +
+    `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
+    `one per thread you are replying to.`
+  ).trim();
 }
 
 // ── CommentAgent ──────────────────────────────────────────────────────────────
 
 export function buildCommentAgentInstructionsPrompt(opts: {
-  styleProfile: string;
+  styleProfile:         string;
   existingInstructions: string;
 }): string {
   return `
@@ -317,27 +324,23 @@ Return a JSON object with:
 `.trim();
 }
 
-export function buildCommentAgentThreadPrompt(opts: {
-  selectedText: string;
-  conversation: Array<{ role: 'User' | 'AI'; authorName: string; content: string }>;
-  agentRequest: string;
+export function buildCommentAgentBatchPrompt(opts: {
+  anchorContent: string;
+  threads:       TestThread[];
 }): string {
-  const convHistory = opts.conversation
-    .map(m => `[${m.role}] ${m.authorName}: ${m.content}`)
-    .join('\n');
-  return `
-SELECTED TEXT:
----
-${opts.selectedText}
----
+  const anchorSection = opts.anchorContent
+    ? `ANCHOR PASSAGE:\n---\n${opts.anchorContent}\n---\n\n`
+    : '';
 
-CONVERSATION:
----
-${convHistory}
----
-
-REQUEST: ${opts.agentRequest}
-
-Respond directly to the request. End your reply with "— AI Editorial Assistant".
-`.trim();
+  return (
+    `${anchorSection}` +
+    `THREADS:\n` +
+    `---\n` +
+    `${formatThreadsForBatch(opts.threads)}\n` +
+    `---\n\n` +
+    `For each thread, respond to the request concisely and grounded in the passage context.\n` +
+    `End each reply with "— AI Editorial Assistant".\n` +
+    `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
+    `one per thread you are replying to.`
+  ).trim();
 }

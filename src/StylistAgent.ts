@@ -7,51 +7,86 @@ class StylistAgent extends BaseAgent {
   readonly tags = ['@eartune', '@stylist'];
   readonly contextKeys = [TAB_NAMES.STYLE_PROFILE, TAB_NAMES.EAR_TUNE, COMMENT_ANCHOR_TAB];
 
-  handleCommentThread(thread: CommentThread): ThreadReply {
-    this.logCommentThread_(thread, 'handleCommentThread');
+  private static readonly CHUNK_SIZE = 10;
 
+  handleCommentThreads(threads: CommentThread[]): ThreadReply[] {
+    const agentName = this.constructor.name;
+    Logger.log(`[${agentName}] handleCommentThreads: received ${threads.length} thread(s)`);
+
+    // Shared instruction context — same for every subgroup.
     const styleProfile = this.getTabContent_(TAB_NAMES.STYLE_PROFILE);
-    const earTuneInstructions = this.getTabContent_(TAB_NAMES.EAR_TUNE);
-    const passageContext = thread.anchorTabName
-      ? this.getTabContent_(thread.anchorTabName)
-      : thread.selectedText;
+    const earTune      = this.getTabContent_(TAB_NAMES.EAR_TUNE);
 
-    const userPrompt = `
-STYLE PROFILE:
----
-${styleProfile.slice(0, 2000)}
----
+    // Subgroup by anchorTabName so each chunk shares one passage context.
+    const subgroups = new Map<string | null, CommentThread[]>();
+    for (const thread of threads) {
+      const key = thread.anchorTabName;
+      if (!subgroups.has(key)) subgroups.set(key, []);
+      subgroups.get(key)!.push(thread);
+    }
 
-EAR-TUNE INSTRUCTIONS:
----
-${earTuneInstructions.slice(0, 2000)}
----
+    Logger.log(`[${agentName}] handleCommentThreads: ${subgroups.size} subgroup(s) by anchor tab`);
 
-PASSAGE CONTEXT:
----
-${passageContext.slice(0, 4000)}
----
+    const allReplies: ThreadReply[] = [];
 
-SELECTED TEXT:
----
-${thread.selectedText}
----
+    for (const [anchorTabName, subThreads] of subgroups) {
+      // Null anchor → no shared passage; agent falls back to per-thread selectedText.
+      const passageContext = anchorTabName
+        ? this.getTabContent_(anchorTabName).slice(0, 4000)
+        : '';
 
-SPECIFIC REQUEST: ${thread.agentRequest}
+      for (let i = 0; i < subThreads.length; i += StylistAgent.CHUNK_SIZE) {
+        const chunk = subThreads.slice(i, i + StylistAgent.CHUNK_SIZE);
+        const chunkNum = Math.floor(i / StylistAgent.CHUNK_SIZE) + 1;
+        Logger.log(
+          `[${agentName}] handleCommentThreads: anchor=${anchorTabName ?? '(none)'} ` +
+          `chunk ${chunkNum} size=${chunk.length}`
+        );
 
-Analyse the selected text for rhythmic, phonetic, and cadence issues per the
-Ear-Tune instructions. Reply with your findings and specific suggestions.
-End your reply with "— AI Editorial Assistant".
-`.trim();
+        try {
+          const passageSection = passageContext
+            ? `PASSAGE CONTEXT:\n---\n${passageContext}\n---\n\n`
+            : '';
 
-    const result = this.callGemini_(
-      STYLIST_SYSTEM_PROMPT,
-      userPrompt,
-      { type: 'object', properties: { reply: { type: 'string' } }, required: ['reply'] },
-      MODEL.FAST
-    ) as { reply: string };
+          const userPrompt = (
+            `STYLE PROFILE:\n` +
+            `---\n` +
+            `${styleProfile.slice(0, 2000)}\n` +
+            `---\n\n` +
+            `EAR-TUNE INSTRUCTIONS:\n` +
+            `---\n` +
+            `${earTune.slice(0, 2000)}\n` +
+            `---\n\n` +
+            `${passageSection}` +
+            `THREADS:\n` +
+            `---\n` +
+            `${this.formatThreadsForBatch_(chunk)}\n` +
+            `---\n\n` +
+            `For each thread, analyse the selected text for rhythmic, phonetic, and cadence issues\n` +
+            `per the Ear-Tune instructions. End each reply with "— AI Editorial Assistant".\n` +
+            `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
+            `one per thread you are replying to.`
+          ).trim();
 
-    return { threadId: thread.threadId, content: result.reply };
+          const raw = this.callGemini_(
+            STYLIST_SYSTEM_PROMPT,
+            userPrompt,
+            this.batchReplySchema_(),
+            MODEL.FAST
+          );
+          const replies = this.normaliseBatchReplies_(chunk, raw, agentName);
+          allReplies.push(...replies);
+        } catch (e: any) {
+          Logger.log(
+            `[${agentName}] handleCommentThreads: anchor=${anchorTabName ?? '(none)'} ` +
+            `chunk ${chunkNum} failed — ${e.message}`
+          );
+        }
+      }
+    }
+
+    Logger.log(`[${agentName}] handleCommentThreads: returning ${allReplies.length} reply/replies`);
+    return allReplies;
   }
 
   /**

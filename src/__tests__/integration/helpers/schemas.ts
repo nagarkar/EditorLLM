@@ -1,7 +1,7 @@
 // ============================================================
 // JSON schema shapes for integration tests.
 // These mirror the schemas in BaseAgent.instructionUpdateSchema_(),
-// BaseAgent.annotationSchema_(), and the per-agent inline schemas.
+// BaseAgent.annotationSchema_(), and BaseAgent.batchReplySchema_().
 // If the production schemas change, update these to match.
 // ============================================================
 
@@ -45,22 +45,24 @@ export const ANNOTATION_SCHEMA = {
 } as const;
 
 /**
- * Schema for W3 (handleCommentThread) on Architect, Stylist, and Audit agents.
- * Returns { reply: string }.
+ * Standard schema for W3 (handleCommentThreads) on all agents.
+ * Returns { responses: [{threadId, reply}, ...] }.
+ * Pairs with BaseAgent.normaliseBatchReplies_() for post-processing.
  */
-export const THREAD_REPLY_SCHEMA = {
+export const BATCH_REPLY_SCHEMA = {
   type: 'object',
-  properties: { reply: { type: 'string' } },
-  required: ['reply'],
-} as const;
-
-/**
- * Schema for W3 (handleCommentThread) on CommentAgent only.
- * Returns { response: string } — note the different field name.
- * This intentional difference is documented in agents.test.ts (singleThreadSchema shape).
- */
-export const COMMENT_RESPONSE_SCHEMA = {
-  type: 'object',
-  properties: { response: { type: 'string' } },
-  required: ['response'],
+  properties: {
+    responses: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          threadId: { type: 'string' },
+          reply:    { type: 'string' },
+        },
+        required: ['threadId', 'reply'],
+      },
+    },
+  },
+  required: ['responses'],
 } as const;

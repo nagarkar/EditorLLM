@@ -2,7 +2,7 @@
 // CommentProcessor.ts — Orchestrates multi-agent comment routing.
 // Owns all Drive API interaction, thread parsing, tag-based routing,
 // pre-flight validation, and reply posting.
-// Agents own their AI processing via handleCommentThread().
+// Agents own their AI processing via handleCommentThreads().
 // ============================================================
 
 const CommentProcessor = (() => {
@@ -214,21 +214,26 @@ const CommentProcessor = (() => {
   // ── Pre-flight validation ────────────────────────────────────────────────────
 
   /**
-   * Advisory-only: logs a warning for each contextKey the agent declares but
-   * cannot satisfy. Never throws — missing context is handled gracefully by
-   * agents returning empty strings from getTabContent_().
+   * Advisory-only: logs warnings for missing tabs once per agent group.
+   * Never throws — missing context is handled gracefully by agents returning
+   * empty strings from getTabContent_().
+   *
+   * For named tabs: checked once (same for all threads in the group).
+   * For COMMENT_ANCHOR_TAB: logs the count of threads with no resolved anchor.
    */
-  function validateRequiredTabs_(agent: BaseAgent, thread: CommentThread): void {
+  function validateRequiredTabs_(agent: BaseAgent, threads: CommentThread[]): void {
     for (const key of agent.contextKeys) {
       if (key === COMMENT_ANCHOR_TAB) {
-        if (thread.anchorTabName === null) {
+        const nullCount = threads.filter(t => t.anchorTabName === null).length;
+        if (nullCount > 0) {
           Logger.log(
-            `[CommentProcessor] validateRequiredTabs_: COMMENT_ANCHOR_TAB not resolved for thread ${thread.threadId} — agent will use selectedText as fallback`
+            `[CommentProcessor] validateRequiredTabs_: ${nullCount}/${threads.length} thread(s) for ` +
+            `${agent.constructor.name} have no resolved anchor tab — agent will use selectedText as fallback`
           );
         }
       } else if (!DocOps.tabExists(key)) {
         Logger.log(
-          `[CommentProcessor] validateRequiredTabs_: required tab "${key}" missing for ${thread.tag} (thread ${thread.threadId})`
+          `[CommentProcessor] validateRequiredTabs_: required tab "${key}" missing for ${agent.constructor.name}`
         );
       }
     }
@@ -252,6 +257,12 @@ const CommentProcessor = (() => {
     const comments = fetchComments_(docId);
     Logger.log(`[CommentProcessor] processAll: ${comments.length} comment(s) to process`);
 
+    // ── Phase 1: Parse all threads and group by agent instance ───────────────
+    // Using Map<BaseAgent, CommentThread[]> keyed on object identity so
+    // multi-tag agents (e.g. StylistAgent with @eartune and @stylist) receive
+    // all their threads in a single batch.
+    const agentGroups = new Map<BaseAgent, CommentThread[]>();
+
     for (const comment of comments) {
       const commentId = comment.id || comment.commentId || '(unknown)';
 
@@ -269,29 +280,47 @@ const CommentProcessor = (() => {
         continue;
       }
 
-      validateRequiredTabs_(agent, thread);
+      if (!agentGroups.has(agent)) {
+        agentGroups.set(agent, []);
+      }
+      agentGroups.get(agent)!.push(thread);
+    }
 
+    // ── Phase 2: Dispatch each agent group as a single batch ─────────────────
+    for (const [agent, threads] of agentGroups) {
+      const agentName = agent.constructor.name;
       Logger.log(
-        `[CommentProcessor] processAll: dispatching thread ${thread.threadId} to ${agent.constructor.name}`
+        `[CommentProcessor] processAll: dispatching ${threads.length} thread(s) to ${agentName}`
       );
 
-      let reply: ThreadReply;
+      // Validate required tabs once per agent group (not per thread).
+      validateRequiredTabs_(agent, threads);
+
+      let replies: ThreadReply[];
       try {
-        reply = agent.handleCommentThread(thread);
+        replies = agent.handleCommentThreads(threads);
       } catch (e: any) {
         Logger.log(
-          `[CommentProcessor] processAll: ${agent.constructor.name} threw on thread ${thread.threadId} — ${e.message}`
+          `[CommentProcessor] processAll: ${agentName} threw on batch of ${threads.length} thread(s) — ${e.message}`
         );
-        skipped++;
+        skipped += threads.length;
         continue;
       }
 
-      const posted = postReply_(docId, reply);
-      if (posted) {
-        replied++;
-        byAgent[thread.tag] = (byAgent[thread.tag] || 0) + 1;
-      } else {
-        skipped++;
+      Logger.log(
+        `[CommentProcessor] processAll: ${agentName} returned ${replies.length} reply/replies ` +
+        `for ${threads.length} thread(s)`
+      );
+
+      // Post each reply individually; Drive side-effects stay simple.
+      for (const reply of replies) {
+        const posted = postReply_(docId, reply);
+        if (posted) {
+          replied++;
+          byAgent[agentName] = (byAgent[agentName] || 0) + 1;
+        } else {
+          skipped++;
+        }
       }
     }
 
