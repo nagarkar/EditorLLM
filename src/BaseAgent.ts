@@ -52,6 +52,20 @@ and the worldview expressed in the source text.
 - **No External Metaphors:** Never introduce ideas, metaphors, or concepts that are not already present in the MergedContent source material.
 - **Ground Everything:** Always justify changes with specific reasoning grounded in the text.
 - **Strict Schema:** Your JSON output must exactly match the provided schema.
+
+## Comment Length Constraint
+Google Drive comments have a hard limit of approximately 4 096 characters per
+entry. Each annotation comment is formatted as:
+  [AgentName] "match_text": <your reason>: <bookmark URL>
+The prefix, quoted match text, and bookmark URL together consume roughly
+200 characters, leaving **at most ~3 900 characters** for your reason text.
+
+- **Annotation reasons (W2):** Keep each \`reason\` field under **400 characters**.
+  Be specific but concise — one crisp sentence identifying the issue and the
+  suggested fix is ideal.
+- **Comment-thread replies (W3):** Keep each \`reply\` field under **3 500 characters**.
+  If a thorough answer needs more space, summarise the key point first and
+  invite the author to ask follow-up questions.
 `.trim();
 
   // --- Per-instance cache ---

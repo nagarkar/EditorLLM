@@ -29,7 +29,8 @@ const CollaborationService = (() => {
   // --- Highlighting ---
 
   function highlightRangeElement_(
-    rangeEl: GoogleAppsScript.Document.RangeElement
+    rangeEl: GoogleAppsScript.Document.RangeElement,
+    color: string
   ): void {
     const el = rangeEl.getElement();
     if (el.getType() !== DocumentApp.ElementType.TEXT) return;
@@ -37,30 +38,44 @@ const CollaborationService = (() => {
     const textEl = el.asText();
     const start = rangeEl.getStartOffset();
     const end = rangeEl.getEndOffsetInclusive();
-    const color = PropertiesService.getUserProperties().getProperty('HIGHLIGHT_COLOR') || HIGHLIGHT_COLOR;
     textEl.setBackgroundColor(start, end, color);
     textEl.setBold(start, end, true);
   }
 
   // --- Comment via Drive API ---
 
+  /** Drive API practical character limit per comment/reply. */
+  const MAX_COMMENT_CHARS = 3900;
+
   /**
    * Adds a Drive comment anchored to the given tab.
    * Every agent comment is prefixed with AGENT_COMMENT_PREFIX so it can be
    * distinguished from user comments when clearing annotations.
+   * Content is hard-clamped to MAX_COMMENT_CHARS to avoid Drive API errors.
    */
   function addTabComment_(
     tabId: string,
     commentBody: string,
     matchText: string,
     agentPrefix: string,
-    bookmarkUrl: string
+    bookmarkUrl: string,
+    docId: string
   ): void {
-    const docId = DocumentApp.getActiveDocument().getId();
 
-    const finalContent = bookmarkUrl
+    let finalContent = bookmarkUrl
       ? `${agentPrefix} "${matchText}": ${commentBody}: ${bookmarkUrl}`
       : `${agentPrefix} "${matchText}": ${commentBody}`;
+
+    if (finalContent.length > MAX_COMMENT_CHARS) {
+      const suffix = bookmarkUrl ? `… [truncated]: ${bookmarkUrl}` : '… [truncated]';
+      finalContent = finalContent.slice(0, MAX_COMMENT_CHARS - suffix.length) + suffix;
+      Tracer.warn(
+        `CollaborationService: comment truncated to ${MAX_COMMENT_CHARS} chars — ` +
+        `original was ${(bookmarkUrl
+          ? `${agentPrefix} "${matchText}": ${commentBody}: ${bookmarkUrl}`
+          : `${agentPrefix} "${matchText}": ${commentBody}`).length} chars`
+      );
+    }
 
     try {
       Drive.Comments.create(
@@ -177,6 +192,92 @@ const CollaborationService = (() => {
     Tracer.info(`[CollaborationService] clearAgentAnnotations_: deleted ${deleted} comment(s)`);
   }
 
+  /**
+   * Bulk variant: fetches Drive comments ONCE for the whole document, then
+   * partitions and deletes across all requested tabIds in a single pass.
+   * Use this instead of calling clearAgentAnnotations_ in a per-tab loop —
+   * it reduces Drive.Comments.list() calls from O(tabs) to O(1).
+   */
+  function clearAgentAnnotationsBulk_(tabIds: string[], agentPrefix: string | string[]): void {
+    if (tabIds.length === 0) return;
+    const docId = DocumentApp.getActiveDocument().getId();
+    const tabIdSet = new Set(tabIds);
+    Tracer.info(
+      `[CollaborationService] clearAgentAnnotationsBulk_: ` +
+      `single Drive pass across ${tabIds.length} tab(s)`
+    );
+
+    let pageToken: string | undefined;
+    const commentsToDelete: string[] = [];
+    const bookmarksToRemove: string[] = [];
+
+    do {
+      const resp = (Drive.Comments as any).list(docId, {
+        maxResults: 100,
+        pageToken: pageToken,
+        includeDeleted: false,
+        fields: 'nextPageToken,comments',
+      }) as any;
+
+      for (const comment of resp.comments ?? []) {
+        const content = comment.content ?? '';
+
+        const matchPrefix = Array.isArray(agentPrefix)
+          ? agentPrefix.some(p => content.startsWith(p))
+          : content.startsWith(agentPrefix);
+        if (!matchPrefix) continue;
+
+        // Resolve tab from bookmark URL first (always present on new comments),
+        // fall back to anchor for legacy comments written before bookmark URLs.
+        const tabFromBookmark = content.match(/[?&]tab=([^#&\s]+)/);
+        let commentTabId: string | undefined;
+        if (tabFromBookmark) {
+          commentTabId = tabFromBookmark[1];
+        } else {
+          try {
+            const anchor = JSON.parse(comment.anchor ?? '{}');
+            commentTabId = anchor?.a?.[0]?.lt?.tb?.id;
+          } catch (_) { /* unparseable anchor — skip */ }
+        }
+
+        if (!commentTabId || !tabIdSet.has(commentTabId)) continue;
+
+        commentsToDelete.push(comment.id);
+        const bm = content.match(/#bookmark=([\w.-]+)/);
+        if (bm?.[1]) bookmarksToRemove.push(bm[1]);
+      }
+
+      pageToken = resp.nextPageToken;
+    } while (pageToken);
+
+    Tracer.info(
+      `[CollaborationService] clearAgentAnnotationsBulk_: ` +
+      `found ${commentsToDelete.length} comment(s) to delete`
+    );
+
+    const actDoc = DocumentApp.getActiveDocument();
+    for (const bId of bookmarksToRemove) {
+      try {
+        const bookmark = actDoc.getBookmark(bId);
+        if (bookmark) bookmark.remove();
+      } catch (e) {
+        Tracer.warn(`[CollaborationService] clearAgentAnnotationsBulk_: failed to remove bookmark ${bId} — ${e}`);
+      }
+    }
+
+    let deleted = 0;
+    for (const cId of commentsToDelete) {
+      try {
+        (Drive.Comments as any).remove(docId, cId);
+        deleted++;
+      } catch (e) {
+        Tracer.error(`[CollaborationService] clearAgentAnnotationsBulk_: failed to delete ${cId} — ${e}`);
+      }
+    }
+
+    Tracer.info(`[CollaborationService] clearAgentAnnotationsBulk_: deleted ${deleted} comment(s)`);
+  }
+
   // --- Clear highlight formatting ---
 
   /**
@@ -211,18 +312,19 @@ const CollaborationService = (() => {
 
         const text = child.asText();
         const len = text.getText().length;
-        let i = 0;
-        while (i < len) {
-          if (text.getBackgroundColor(i) === color) {
-            // Find the contiguous run with this highlight color
-            let end = i;
-            while (end + 1 < len && text.getBackgroundColor(end + 1) === color) end++;
-            text.setBackgroundColor(i, end, null);
-            text.setBold(i, end, false);
+        if (len === 0) continue;
+
+        // getTextAttributeIndices() returns the character offsets where any
+        // text attribute changes — one call gives us all run boundaries.
+        // This collapses O(chars) getBackgroundColor calls to O(runs).
+        const indices: number[] = (text as any).getTextAttributeIndices();
+        for (let k = 0; k < indices.length; k++) {
+          const runStart = indices[k];
+          const runEnd = k + 1 < indices.length ? indices[k + 1] - 1 : len - 1;
+          if (text.getBackgroundColor(runStart) === color) {
+            text.setBackgroundColor(runStart, runEnd, null);
+            text.setBold(runStart, runEnd, false);
             cleared++;
-            i = end + 1;
-          } else {
-            i++;
           }
         }
       }
@@ -240,7 +342,9 @@ const CollaborationService = (() => {
     docTab: GoogleAppsScript.Document.DocumentTab,
     op: Operation,
     tabId: string,
-    agentPrefix: string
+    agentPrefix: string,
+    docId: string,
+    highlightColor: string
   ): void {
     const body = docTab.getBody();
     const rangeEl = findTextOrFallback_(body, op.match_text);
@@ -253,15 +357,14 @@ const CollaborationService = (() => {
     try {
       const pos = docTab.newPosition(rangeEl.getElement(), rangeEl.getStartOffset());
       const bookmark = docTab.addBookmark(pos);
-      const docId = DocumentApp.getActiveDocument().getId();
       bookmarkUrl = `https://docs.google.com/document/d/${docId}/edit?tab=${tabId}#bookmark=${bookmark.getId()}`;
     } catch (e) {
       Tracer.warn(`CollaborationService: failed to add bookmark - ${e}`);
     }
 
-    highlightRangeElement_(rangeEl);
+    highlightRangeElement_(rangeEl, highlightColor);
 
-    addTabComment_(tabId, op.reason, op.match_text, agentPrefix, bookmarkUrl);
+    addTabComment_(tabId, op.reason, op.match_text, agentPrefix, bookmarkUrl, docId);
   }
 
   // --- Workflow handlers ---
@@ -303,6 +406,10 @@ const CollaborationService = (() => {
     const targetTabId = DocOps.getTabIdByName(update.target_tab!);
     if (!targetTabId) throw new Error(`content_annotation: tab ID not found for "${update.target_tab}"`);
 
+    // Hoist once — avoids a DocumentApp + PropertiesService round-trip per operation.
+    const docId = DocumentApp.getActiveDocument().getId();
+    const highlightColor = PropertiesService.getUserProperties().getProperty('HIGHLIGHT_COLOR') || HIGHLIGHT_COLOR;
+
     const agentPrefix = update.agent_name || '[Agent]';
     clearAgentAnnotations_(targetTabId, agentPrefix);
     clearTabHighlights_(update.target_tab!);
@@ -312,7 +419,7 @@ const CollaborationService = (() => {
     const ops = [...(update.operations ?? [])].reverse();
     const commentSummary: string[] = [];
     for (const op of ops) {
-      annotateOperation_(targetDocTab, op, targetTabId, agentPrefix);
+      annotateOperation_(targetDocTab, op, targetTabId, agentPrefix, docId, highlightColor);
       commentSummary.push(`"${op.match_text}" → ${op.reason}`);
     }
     Tracer.info(
@@ -335,5 +442,10 @@ const CollaborationService = (() => {
     }
   }
 
-  return { processUpdate, clearAgentAnnotations: clearAgentAnnotations_, clearTabHighlights: clearTabHighlights_ };
+  return {
+    processUpdate,
+    clearAgentAnnotations: clearAgentAnnotations_,
+    clearAgentAnnotationsBulk: clearAgentAnnotationsBulk_,
+    clearTabHighlights: clearTabHighlights_,
+  };
 })();

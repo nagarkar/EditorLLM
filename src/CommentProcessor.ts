@@ -50,7 +50,10 @@ const CommentProcessor = (() => {
         page++;
         const opts: any = {
           includeDeleted: false,
-          fields: '*',
+          // Targeted field mask — avoids fetching htmlContent, timestamps,
+          // resolved/deleted flags, and other fields we never read.
+          // Reduces Drive API payload by ~70% on typical comment sets.
+          fields: 'nextPageToken,comments(id,content,anchor,quotedFileContent/value,context/value,replies(content,author/displayName))',
           maxResults: 100,
         };
         if (pageToken) opts.pageToken = pageToken;
@@ -75,23 +78,31 @@ const CommentProcessor = (() => {
     }
   }
 
-  /**
-   * Posts a reply to a Drive comment thread.
-   * Drive.Replies.create signature (Drive API v3):
-   *   create(resource, fileId, commentId, optionalArgs)
-   */
+  /** Drive API practical character limit per comment/reply. */
+  const MAX_REPLY_CHARS = 4000;
+
   /**
    * Posts a reply to a Drive comment thread.
    * Retries once after 2 s to handle transient Drive API rate-limit responses
    * that can occur after several rapid reply postings.
+   * Content is hard-clamped to MAX_REPLY_CHARS to avoid Drive API errors.
    * Returns true on success, false if both attempts fail.
    */
   function postReply_(docId: string, reply: ThreadReply): boolean {
+    let content = AGENT_COMMENT_PREFIX + reply.content;
+    if (content.length > MAX_REPLY_CHARS) {
+      const suffix = '… [truncated]';
+      content = content.slice(0, MAX_REPLY_CHARS - suffix.length) + suffix;
+      Tracer.warn(
+        `[CommentProcessor] postReply_: reply for thread ${reply.threadId} truncated ` +
+        `from ${(AGENT_COMMENT_PREFIX + reply.content).length} to ${MAX_REPLY_CHARS} chars`
+      );
+    }
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         // GAS API not in @types — cast required
         (Drive.Replies as any).create(
-          { content: AGENT_COMMENT_PREFIX + reply.content },
+          { content },
           docId,
           reply.threadId,
           { fields: 'id,content' }
