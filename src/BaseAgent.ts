@@ -38,6 +38,22 @@ abstract class BaseAgent {
     }
   }
 
+  // --- Shared Prompts & Formats ---
+
+  protected static readonly SYSTEM_PREAMBLE = `
+# EditorLLM Context
+
+You are operating inside EditorLLM, an AI-augmented workspace for
+high-fidelity book editing. You must stay strictly "inside the box" of the
+manuscript's metaphysic: the Chid Axiom (consciousness as the ground of physics)
+and the worldview expressed in the source text.
+
+## Core Rules
+- **No External Metaphors:** Never introduce ideas, metaphors, or concepts that are not already present in the MergedContent source material.
+- **Ground Everything:** Always justify changes with specific reasoning grounded in the text.
+- **Strict Schema:** Your JSON output must exactly match the provided schema.
+`.trim();
+
   // --- Per-instance cache ---
 
   protected cache_: { [tabName: string]: string } = {};
@@ -46,7 +62,7 @@ abstract class BaseAgent {
     if (this.cache_[tabName] !== undefined) return this.cache_[tabName];
     const content = DocOps.getTabContent(tabName);
     if (!content.trim()) {
-      Logger.log(`[${this.constructor.name}] getTabContent_: tab "${tabName}" is empty or missing`);
+      Tracer.warn(`[${this.constructor.name}] getTabContent_: tab "${tabName}" is empty or missing`);
     }
     this.cache_[tabName] = content;
     return content;
@@ -64,7 +80,7 @@ abstract class BaseAgent {
     if (this.cache_[cacheKey] !== undefined) return this.cache_[cacheKey];
     const content = MarkdownService.tabToMarkdown(tabName);
     if (!content.trim()) {
-      Logger.log(`[${this.constructor.name}] getTabMarkdown_: tab "${tabName}" is empty or missing`);
+      Tracer.warn(`[${this.constructor.name}] getTabMarkdown_: tab "${tabName}" is empty or missing`);
     }
     this.cache_[cacheKey] = content;
     return content;
@@ -86,16 +102,16 @@ abstract class BaseAgent {
     const modelOverride = this.modelConfig_[tier as keyof ModelConfig];
     const sysPrev = systemPrompt.slice(0, 100).replace(/\n/g, ' ');
     const usrPrev = userPrompt.slice(0, 200).replace(/\n/g, ' ');
-    Logger.log(`[${name}] Gemini call  tier=${tier}${modelOverride ? ` model=${modelOverride}` : ''}`);
-    Logger.log(`[${name}]   system: "${sysPrev}"`);
-    Logger.log(`[${name}]   user:   "${usrPrev}…"`);
+    Tracer.info(`[${name}] Gemini call  tier=${tier}${modelOverride ? ` model=${modelOverride}` : ''}`);
+    Tracer.info(`[${name}]   system: "${sysPrev}"`);
+    Tracer.info(`[${name}]   user:   "${usrPrev}…"`);
     const t0 = Date.now();
     try {
       const result = GeminiService.generateJson(systemPrompt, userPrompt, schema, tier, modelOverride);
-      Logger.log(`[${name}] Gemini done  ${Date.now() - t0}ms`);
+      Tracer.info(`[${name}] Gemini done  ${Date.now() - t0}ms`);
       return result;
     } catch (e: any) {
-      Logger.log(`[${name}] Gemini FAILED ${Date.now() - t0}ms — ${e.message}`);
+      Tracer.error(`[${name}] Gemini FAILED ${Date.now() - t0}ms — ${e.message}`);
       throw e;
     }
   }
@@ -106,10 +122,10 @@ abstract class BaseAgent {
     const name = this.constructor.name;
     const sel = thread.selectedText.slice(0, 80).replace(/\n/g, ' ');
     const req = thread.agentRequest.slice(0, 120).replace(/\n/g, ' ');
-    Logger.log(`[${name}] ${method}: thread=${thread.threadId} tag=${thread.tag}`);
-    Logger.log(`[${name}]   anchor=${thread.anchorTabName ?? '(none)'}`);
-    Logger.log(`[${name}]   selected="${sel}"`);
-    Logger.log(`[${name}]   request="${req}"`);
+    Tracer.info(`[${name}] ${method}: thread=${thread.threadId} tag=${thread.tag}`);
+    Tracer.info(`[${name}]   anchor=${thread.anchorTabName ?? '(none)'}`);
+    Tracer.info(`[${name}]   selected="${sel}"`);
+    Tracer.info(`[${name}]   request="${req}"`);
   }
 
   // --- JSON schemas for Gemini calls ---
@@ -124,19 +140,8 @@ abstract class BaseAgent {
       type: 'object',
       properties: {
         proposed_full_text: { type: 'string' },
-        operations: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              match_text: { type: 'string' },
-              reason: { type: 'string' },
-            },
-            required: ['match_text', 'reason'],
-          },
-        },
       },
-      required: ['proposed_full_text', 'operations'],
+      required: ['proposed_full_text'],
     };
   }
 
@@ -180,7 +185,7 @@ abstract class BaseAgent {
             type: 'object',
             properties: {
               threadId: { type: 'string' },
-              reply:    { type: 'string' },
+              reply: { type: 'string' },
             },
             required: ['threadId', 'reply'],
           },
@@ -206,7 +211,7 @@ abstract class BaseAgent {
     agentName: string
   ): ThreadReply[] {
     const validIds = new Set(threads.map(t => t.threadId));
-    const seen     = new Set<string>();
+    const seen = new Set<string>();
     const replies: ThreadReply[] = [];
 
     const items: Array<{ threadId: string; reply: string }> =
@@ -214,19 +219,19 @@ abstract class BaseAgent {
 
     for (const item of items) {
       if (!item.threadId || !item.reply?.trim()) {
-        Logger.log(
+        Tracer.warn(
           `[${agentName}] normaliseBatchReplies_: dropping item with missing or empty threadId/reply`
         );
         continue;
       }
       if (!validIds.has(item.threadId)) {
-        Logger.log(
+        Tracer.warn(
           `[${agentName}] normaliseBatchReplies_: dropping hallucinated threadId=${item.threadId}`
         );
         continue;
       }
       if (seen.has(item.threadId)) {
-        Logger.log(
+        Tracer.warn(
           `[${agentName}] normaliseBatchReplies_: dropping duplicate threadId=${item.threadId}`
         );
         continue;
@@ -235,7 +240,7 @@ abstract class BaseAgent {
       replies.push({ threadId: item.threadId, content: item.reply });
     }
 
-    Logger.log(
+    Tracer.info(
       `[${agentName}] normaliseBatchReplies_: ` +
       `${replies.length} valid / ${threads.length} input threads`
     );
@@ -249,20 +254,49 @@ abstract class BaseAgent {
   protected formatThreadsForBatch_(threads: CommentThread[]): string {
     return threads.map(t => {
       const conv = t.conversation
-        .map(m => `[${m.role}] ${m.authorName}: ${m.content}`)
-        .join('\n');
+        .map(m => `**[${m.role}] ${m.authorName}:** ${m.content}`)
+        .join('\\n');
       return (
-        `[THREAD ${t.threadId}]\n` +
-        `SELECTED TEXT: ${t.selectedText}\n` +
-        `CONVERSATION:\n${conv}\n` +
-        `REQUEST: ${t.agentRequest}`
+        `### Thread: ${t.threadId}\\n` +
+        `**Selected Text:** ${t.selectedText}\\n\\n` +
+        `**Conversation:**\\n${conv}\\n\\n` +
+        `**Request:** ${t.agentRequest}`
       );
-    }).join('\n\n');
+    }).join('\\n\\n');
+  }
+
+  /**
+   * Constructs a standard Markdown prompt formatted with matching dividers,
+   * keeping output consistent structured for all workflows.
+   */
+  protected buildStandardPrompt(
+    sections: Record<string, string | undefined | null>,
+    instructions: string
+  ): string {
+    const formattedParts = Object.entries(sections)
+      .filter(([_, content]) => !!content) // drop empty context sections
+      .map(([title, content]) => `## ${title}\\n\\n${content}\\n`);
+
+    return [...formattedParts, `\\n## Instructions\\n\\n${instructions}`].join('\\n').trim();
+  }
+
+  // --- Prompt Builder Overrides ---
+
+  generateInstructionPrompt(opts: any): string {
+    throw new Error(`[${this.constructor.name}] generateInstructionPrompt not implemented.`);
+  }
+
+  generateTabAnnotationPrompt(opts: any): string {
+    throw new Error(`[${this.constructor.name}] generateTabAnnotationPrompt not implemented.`);
+  }
+
+  generateCommentResponsesPrompt(opts: any): string {
+    throw new Error(`[${this.constructor.name}] generateCommentResponsesPrompt not implemented.`);
   }
 
   // --- Abstract interface ---
 
-  /** Lowercase tag strings users write in comments, e.g. ['@eartune', '@stylist'] */
+  /** Lowercase tag strings users write in comments, e.g. ['@eartune', '@eartune'] */
   abstract readonly tags: string[];
 
   /**
@@ -286,11 +320,17 @@ abstract class BaseAgent {
    * Triggers an instruction_update to refresh the agent's canonical system prompt tab.
    * Routes the result through CollaborationService → Scratch tab.
    */
-  abstract generateInstructions(): void;
+  protected generateInstructions(): void {
+    Tracer.info(`[${this.constructor.name}] generateInstructions: starting — ensureStandardTabs`);
+    DocOps.ensureStandardTabs();
+  }
 
   /**
    * Populates the relevant tabs with high-quality reference/example content.
    * Used by the "Generate Example" button in the Configure dialog.
    */
-  abstract generateExample(): void;
+  protected generateExample(): void {
+    Tracer.info(`[${this.constructor.name}] generateExample: starting — ensureStandardTabs`);
+    DocOps.ensureStandardTabs();
+  }
 }

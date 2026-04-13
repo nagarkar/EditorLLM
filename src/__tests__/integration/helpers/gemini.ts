@@ -23,6 +23,64 @@ const DEFAULT_MODELS: Record<string, string> = {
   deepseek: 'gemini-2.0-flash-thinking-exp-01-21',
 };
 
+// ── JSON extraction helpers ────────────────────────────────────────────────
+
+/**
+ * Attempts to extract and parse JSON from a string that may be wrapped in
+ * markdown code fences, contain BOM markers, or include other non-JSON noise.
+ *
+ * Strategy (in order):
+ *   1. Direct JSON.parse after trimming whitespace/BOM
+ *   2. Strip markdown code fences (```json ... ``` or ``` ... ```) and retry
+ *   3. Extract first top-level { ... } via brace-matching and retry
+ *
+ * Throws if all strategies fail.
+ */
+function extractJson(raw: string): any {
+  // 1. Trim whitespace and BOM
+  const trimmed = raw.replace(/^\uFEFF/, '').trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // continue to next strategy
+  }
+
+  // 2. Strip markdown code fences
+  const fenceMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)```\s*$/);
+  if (fenceMatch) {
+    try {
+      return JSON.parse(fenceMatch[1].trim());
+    } catch {
+      // continue
+    }
+  }
+
+  // 3. Brace-matching: find the first top-level { ... }
+  const braceStart = trimmed.indexOf('{');
+  if (braceStart >= 0) {
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = braceStart; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (escape) { escape = false; continue; }
+      if (ch === '\\' && inString) { escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === '{') depth++;
+      if (ch === '}') { depth--; if (depth === 0) {
+        try {
+          return JSON.parse(trimmed.slice(braceStart, i + 1));
+        } catch {
+          break;
+        }
+      }}
+    }
+  }
+
+  throw new Error(`Unable to extract JSON: ${raw.slice(0, 300)}`);
+}
+
 export interface GeminiCallOptions {
   /** Defaults to 'fast'. Use 'thinking' for tests that need extended reasoning. */
   tier?: 'fast' | 'thinking' | 'deepseek';
@@ -34,6 +92,8 @@ export interface GeminiCallOptions {
   model?: string;
   /** Override the API key — used to test invalid-key error handling. */
   apiKeyOverride?: string;
+  /** @internal retry counter to prevent infinite retry loops on JSON parsing. */
+  _retryCount?: number;
 }
 
 /**
@@ -52,10 +112,11 @@ export function callGemini(
   schema: object,
   opts: GeminiCallOptions = {}
 ): any {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { XMLHttpRequest } = require('xmlhttprequest');
 
+  const MAX_RETRIES = 2;
   const tier = opts.tier ?? 'fast';
+  const retryCount = opts._retryCount ?? 0;
   const apiKey = opts.apiKeyOverride ?? INTEGRATION_CONFIG.geminiApiKey;
   const model =
     opts.model ??
@@ -95,14 +156,22 @@ export function callGemini(
     );
   }
 
-  const text: string | undefined = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+  // Skip thought parts; find the first text part that is not a thinking trace
+  // (mirrors production GeminiService.callApi_ behaviour).
+  const parts: any[] = parsed?.candidates?.[0]?.content?.parts ?? [];
+  const textPart = parts.find((p: any) => !p.thought && p.text);
+  const text: string | undefined = textPart?.text;
   if (!text) {
     throw new Error(`No text content in Gemini response: ${raw.slice(0, 300)}`);
   }
 
   try {
-    return JSON.parse(text);
+    return extractJson(text);
   } catch {
+    if (retryCount < MAX_RETRIES) {
+      console.warn(`[integration] Retrying callGemini due to malformed JSON (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
+      return callGemini(systemPrompt, userPrompt, schema, { ...opts, _retryCount: retryCount + 1 });
+    }
     throw new Error(`Gemini returned non-JSON text content: ${text.slice(0, 300)}`);
   }
 }

@@ -1,13 +1,14 @@
 // ============================================================
 // Prompt builders for integration tests.
 //
-// These reproduce the exact user-prompt strings from each agent's
-// handleCommentThreads / annotateTab / generateInstructions methods.
+// Canonical implementation: src/PromptBuilders.ts (global PromptBuilders).
+// Production agents call those functions; this file should stay in lockstep.
 //
-// MAINTENANCE CONTRACT: If any agent prompt changes in production,
-// the corresponding builder here must be updated to match.
-// A divergence means integration tests are no longer testing the
-// real agent prompts.
+// TODO: Load dist/PromptBuilders.js in integration setup and delegate these
+// exports to global.PromptBuilders.* to remove duplication entirely.
+//
+// MAINTENANCE CONTRACT: If PromptBuilders.ts changes, update this file or
+// switch to delegation — integration tests must match production strings.
 // ============================================================
 
 // ── Shared thread formatter ───────────────────────────────────────────────────
@@ -42,7 +43,7 @@ MANUSCRIPT (excerpt):
 ${opts.manuscript.slice(0, 20000)}
 ---
 
-Analyse the writing style above and produce a comprehensive StyleProfile.
+## Instructions\n\nAnalyse the writing style above and produce a comprehensive StyleProfile.
 Return a JSON object with:
 - proposed_full_text: your full StyleProfile document — MUST be valid
   GitHub-Flavored Markdown with the following structure:
@@ -77,16 +78,16 @@ export function buildArchitectBatchPrompt(opts: {
     `---\n` +
     `${formatThreadsForBatch(opts.threads)}\n` +
     `---\n\n` +
-    `For each thread, analyse the selected passage for structural, motif, or voice concerns\n` +
+    `## Instructions\n\nFor each thread, analyse the selected passage for structural, motif, or voice concerns\n` +
     `relative to the manuscript and StyleProfile. End each reply with "— AI Editorial Assistant".\n` +
     `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
     `one per thread you are replying to.`
   ).trim();
 }
 
-// ── StylistAgent ──────────────────────────────────────────────────────────────
+// ── EarTuneAgent ──────────────────────────────────────────────────────────────
 
-export function buildStylistInstructionsPrompt(opts: {
+export function buildEarTuneInstructionsPrompt(opts: {
   styleProfile:    string;
   existingEarTune: string;
 }): string {
@@ -101,7 +102,7 @@ CURRENT EAR-TUNE INSTRUCTIONS (if any):
 ${opts.existingEarTune.slice(0, 2000)}
 ---
 
-Generate an updated EarTune system prompt that:
+## Instructions\n\nGenerate an updated EarTune system prompt that:
 1. Incorporates the rhythm and cadence patterns from the StyleProfile.
 2. Provides specific rules for consonant flow, syllabic stress, and sentence-length
    variation suitable for this manuscript.
@@ -119,7 +120,7 @@ Return a JSON object with:
 `.trim();
 }
 
-export function buildStylistAnnotatePrompt(opts: {
+export function buildEarTuneAnnotatePrompt(opts: {
   styleProfile:        string;
   earTuneInstructions: string;
   passage:             string;
@@ -141,7 +142,7 @@ PASSAGE TO SWEEP (from tab: "${opts.tabName}"):
 ${opts.passage.slice(0, 8000)}
 ---
 
-Identify every passage with a rhythmic, phonetic, or cadence problem.
+## Instructions\n\nIdentify every passage with a rhythmic, phonetic, or cadence problem.
 Return a JSON object with:
 - operations: one per problem found. Each must have:
     - match_text: verbatim 3–4-word phrase from the passage above
@@ -149,14 +150,14 @@ Return a JSON object with:
 `.trim();
 }
 
-export function buildStylistBatchPrompt(opts: {
+export function buildEarTuneBatchPrompt(opts: {
   styleProfile:        string;
   earTuneInstructions: string;
   passageContext:      string;
   threads:             TestThread[];
 }): string {
   const passageSection = opts.passageContext
-    ? `PASSAGE CONTEXT:\n---\n${opts.passageContext.slice(0, 4000)}\n---\n\n`
+    ? `## Passage Context\n\n${opts.passageContext.slice(0, 4000)}\n\n\n`
     : '';
 
   return (
@@ -173,7 +174,7 @@ export function buildStylistBatchPrompt(opts: {
     `---\n` +
     `${formatThreadsForBatch(opts.threads)}\n` +
     `---\n\n` +
-    `For each thread, analyse the selected text for rhythmic, phonetic, and cadence issues\n` +
+    `## Instructions\n\nFor each thread, analyse the selected text for rhythmic, phonetic, and cadence issues\n` +
     `per the Ear-Tune instructions. End each reply with "— AI Editorial Assistant".\n` +
     `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
     `one per thread you are replying to.`
@@ -203,7 +204,7 @@ MANUSCRIPT SAMPLE (for axiom extraction):
 ${opts.manuscript.slice(0, 6000)}
 ---
 
-Generate a comprehensive TechnicalAudit system prompt that:
+## Instructions\n\nGenerate a comprehensive TechnicalAudit system prompt that:
 1. Lists all Chid Axioms and physical principles as stated in the manuscript.
 2. Defines LaTeX caption requirements for this document.
 3. Specifies the unit system and physical constants in use.
@@ -245,7 +246,7 @@ PASSAGE TO AUDIT (from tab: "${opts.tabName}"):
 ${opts.passage.slice(0, 8000)}
 ---
 
-Perform a full technical audit. Check every claim against the Chid Axiom,
+## Instructions\n\nPerform a full technical audit. Check every claim against the Chid Axiom,
 all equations for valid LaTeX captions, and all physical constants for
 correct SI values and units.
 
@@ -263,7 +264,7 @@ export function buildAuditBatchPrompt(opts: {
   threads:           TestThread[];
 }): string {
   const passageSection = opts.passageContext
-    ? `PASSAGE CONTEXT:\n---\n${opts.passageContext.slice(0, 4000)}\n---\n\n`
+    ? `## Passage Context\n\n${opts.passageContext.slice(0, 4000)}\n\n\n`
     : '';
 
   return (
@@ -280,7 +281,7 @@ export function buildAuditBatchPrompt(opts: {
     `---\n` +
     `${formatThreadsForBatch(opts.threads)}\n` +
     `---\n\n` +
-    `For each thread, perform a targeted technical audit of the selected passage.\n` +
+    `## Instructions\n\nFor each thread, perform a targeted technical audit of the selected passage.\n` +
     `Identify any axiom violations, LaTeX caption issues, or constant errors.\n` +
     `End each reply with "— AI Editorial Assistant".\n` +
     `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
@@ -305,7 +306,7 @@ CURRENT COMMENT INSTRUCTIONS (if any):
 ${opts.existingInstructions.slice(0, 2000)}
 ---
 
-Generate an updated Comment Instructions system prompt that guides the AI to
+## Instructions\n\nGenerate an updated Comment Instructions system prompt that guides the AI to
 respond to in-document "@AI" comment threads in a voice consistent with this
 manuscript's StyleProfile.
 
@@ -329,7 +330,7 @@ export function buildCommentAgentBatchPrompt(opts: {
   threads:       TestThread[];
 }): string {
   const anchorSection = opts.anchorContent
-    ? `ANCHOR PASSAGE:\n---\n${opts.anchorContent}\n---\n\n`
+    ? `## Anchor Passage\n\n${opts.anchorContent}\n\n\n`
     : '';
 
   return (
@@ -338,7 +339,7 @@ export function buildCommentAgentBatchPrompt(opts: {
     `---\n` +
     `${formatThreadsForBatch(opts.threads)}\n` +
     `---\n\n` +
-    `For each thread, respond to the request concisely and grounded in the passage context.\n` +
+    `## Instructions\n\nFor each thread, respond to the request concisely and grounded in the passage context.\n` +
     `End each reply with "— AI Editorial Assistant".\n` +
     `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
     `one per thread you are replying to.`

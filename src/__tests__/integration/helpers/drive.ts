@@ -274,3 +274,44 @@ export function insertTextIntoTab(
     requests: [{ insertText: { text, location: { index: 1, tabId } } }],
   });
 }
+
+// ── Docs REST API — tab content reader ───────────────────────────────────────
+
+/**
+ * Reads the plain-text content of a named tab via the Docs REST API.
+ * Returns the concatenation of all structural element text content.
+ * Returns '' if the tab is not found.
+ */
+export function getTabContent(docId: string, tabTitle: string, token: string): string {
+  // Fetch full document with tab content
+  const url = `${DOCS_BASE}/documents/${docId}?includeTabsContent=true`;
+  const doc = callApi('GET', url, token);
+
+  // Find tab by title (recursive)
+  function findTab(tabs: any[]): any | null {
+    for (const t of tabs ?? []) {
+      if (t?.tabProperties?.title === tabTitle) return t;
+      const child = findTab(t?.childTabs ?? []);
+      if (child) return child;
+    }
+    return null;
+  }
+
+  const tab = findTab(doc?.tabs ?? []);
+  if (!tab) return '';
+
+  // Extract text from body structural elements
+  const body = tab?.documentTab?.body;
+  if (!body?.content) return '';
+
+  let text = '';
+  for (const element of body.content) {
+    if (element.paragraph?.elements) {
+      for (const el of element.paragraph.elements) {
+        if (el.textRun?.content) text += el.textRun.content;
+      }
+    }
+  }
+  return text.trim();
+}
+

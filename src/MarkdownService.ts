@@ -29,7 +29,7 @@ const MarkdownService = (() => {
   function tabToMarkdown(tabName: string): string {
     const docTab = DocOps.getTabByName(tabName);
     if (!docTab) {
-      Logger.log(`[MarkdownService] tabToMarkdown: tab "${tabName}" not found`);
+      Tracer.warn(`[MarkdownService] tabToMarkdown: tab "${tabName}" not found`);
       return '';
     }
     return bodyToMarkdown_(docTab.getBody());
@@ -330,8 +330,14 @@ const MarkdownService = (() => {
   function markdownToTab(markdown: string, tabName: string, parentTabName?: string): void {
     const docTab = DocOps.getOrCreateTab(tabName, parentTabName);
     const body = docTab.getBody();
-    body.clear();
+    
+    // SAFE CLEAR: Avoids the "Can't remove the last paragraph" GAS bug
+    DocOps.clearBodySafely(body);
+    
     writeMarkdownToBody_(markdown, body);
+
+    // Ensure text is legible against the tab's background color
+    applyAdaptiveFontColor_(body);
   }
 
   function writeMarkdownToBody_(markdown: string, body: GoogleAppsScript.Document.Body): void {
@@ -459,8 +465,13 @@ const MarkdownService = (() => {
     if (isFirst && body.getNumChildren() > 0) {
       const first = body.getChild(0);
       if (first.getType() === DocumentApp.ElementType.PARAGRAPH) {
-        (first as GoogleAppsScript.Document.Paragraph).setText(text);
-        return first as GoogleAppsScript.Document.Paragraph;
+        const para = first as GoogleAppsScript.Document.Paragraph;
+        if (text === '') {
+          para.clear();
+        } else {
+          para.setText(text);
+        }
+        return para;
       }
     }
     return body.appendParagraph(text);
@@ -514,7 +525,11 @@ const MarkdownService = (() => {
 
     // Set plain text first
     const plainText = runs.map(r => r.text).join('');
-    element.setText(plainText);
+    if (plainText === '') {
+      element.clear();
+    } else {
+      element.setText(plainText);
+    }
 
     // Apply formatting to each run
     let offset = 0;
@@ -669,18 +684,74 @@ const MarkdownService = (() => {
     return { nesting: Math.floor(m[1].length / 2), content: m[2] };
   }
 
+  // ════════════════════════════════════════════════════════════
+  // Adaptive font color — picks black or white for contrast
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * Returns '#000000' or '#FFFFFF' — whichever provides better contrast
+   * against the given hex background color.
+   *
+   * Uses the W3C relative luminance formula (sRGB → linear → weighted sum)
+   * with the standard 0.179 threshold recommended for WCAG 2.0.
+   */
+  function contrastFontColor_(bgHex: string): string {
+    const hex = bgHex.replace(/^#/, '');
+    if (hex.length !== 6) return '#000000';
+
+    const r = parseInt(hex.substring(0, 2), 16) / 255;
+    const g = parseInt(hex.substring(2, 4), 16) / 255;
+    const b = parseInt(hex.substring(4, 6), 16) / 255;
+
+    // sRGB → linear
+    const rLin = r <= 0.03928 ? r / 12.92 : Math.pow((r + 0.055) / 1.055, 2.4);
+    const gLin = g <= 0.03928 ? g / 12.92 : Math.pow((g + 0.055) / 1.055, 2.4);
+    const bLin = b <= 0.03928 ? b / 12.92 : Math.pow((b + 0.055) / 1.055, 2.4);
+
+    const luminance = 0.2126 * rLin + 0.7152 * gLin + 0.0722 * bLin;
+    return luminance > 0.179 ? '#000000' : '#FFFFFF';
+  }
+
+  /**
+   * Reads the body's background color and sets all text elements to the
+   * contrasting font color (black on light backgrounds, white on dark).
+   * No-op if the background is null/transparent (defaults to white → black font).
+   */
+  function applyAdaptiveFontColor_(body: GoogleAppsScript.Document.Body): void {
+    const bg = body.getAttributes()[DocumentApp.Attribute.BACKGROUND_COLOR] as string | null;
+    const fontColor = bg ? contrastFontColor_(bg) : '#000000';
+
+    // Only bother if we're switching to white — black is the default
+    if (fontColor === '#000000') return;
+
+    const numChildren = body.getNumChildren();
+    for (let i = 0; i < numChildren; i++) {
+      const child = body.getChild(i);
+      const childAny = child as any;
+      if (typeof childAny.editAsText === 'function') {
+        const textEl = childAny.editAsText();
+        const len = textEl.getText().length;
+        if (len > 0) {
+          textEl.setForegroundColor(0, len - 1, fontColor);
+        }
+      }
+    }
+  }
+
   /**
    * Writes markdown directly to an existing Body element.
    * Exposed for testing so tests can pass a mock Body without needing DocOps/tabs.
    */
   function writeMarkdownToBody(markdown: string, body: GoogleAppsScript.Document.Body): void {
-    body.clear();
+    // SAFE CLEAR
+    DocOps.clearBodySafely(body);
     writeMarkdownToBody_(markdown, body);
   }
 
   return {
     tabToMarkdown,
     markdownToTab,
+    contrastFontColor: contrastFontColor_,
     parseInlineRuns,
     isTableLine,
     isTableSeparator,

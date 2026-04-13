@@ -1,8 +1,8 @@
-# Audio Stylist (Ear-Tune)
+# Audio EarTune (Ear-Tune)
 
 ## What It Does
 
-The Audio Stylist optimises prose for spoken-word clarity and rhythmic listenability. It proposes rewrites that:
+The Audio EarTune optimises prose for spoken-word clarity and rhythmic listenability. It proposes rewrites that:
 
 - Eliminate tongue-twisting consonant clusters.
 - Ensure sentences land on stressed syllables.
@@ -18,11 +18,11 @@ All edits are constrained by the StyleProfile, so the author's voice is maintain
 This is the primary editing action:
 
 1. Navigate to the tab you want to optimise (e.g., a chapter tab).
-2. Open the sidebar and find the **Audio Stylist** section.
+2. Open the sidebar and find the **Audio EarTune** section.
 3. The sidebar shows "Active tab: Chapter 1" (or whichever tab you're on). Click the **↻** button to refresh if it shows the wrong tab.
 4. Click **Ear-Tune**.
 
-The Stylist will:
+The EarTune will:
 - Read the active tab's content.
 - Read the StyleProfile and EarTune instructions for context.
 - Propose rhythmic rewrites via the Gemini API.
@@ -37,15 +37,15 @@ Click **Generate Example** to write sample EarTune instructions to the EarTune t
 
 Click **Generate** to regenerate the EarTune system prompt:
 
-1. The Stylist reads the current StyleProfile.
+1. The EarTune reads the current StyleProfile.
 2. It produces updated EarTune instructions that incorporate the rhythm and cadence patterns specific to your manuscript.
 3. The result is written to an **EarTune Scratch** review tab.
 
 Review and accept or edit the instructions before the next Ear-Tune run.
 
-## Comment Routing: `@eartune` or `@stylist`
+## Comment Routing: `@eartune` or `@eartune`
 
-You can invoke the Stylist from a comment:
+You can invoke the EarTune from a comment:
 
 1. Select a passage.
 2. Add a comment:
@@ -54,11 +54,11 @@ You can invoke the Stylist from a comment:
    ```
    or:
    ```
-   @stylist This paragraph reads too monotonously — add rhythm variation.
+   @eartune This paragraph reads too monotonously — add rhythm variation.
    ```
 3. Click **Process @AI Comments**.
 
-The Stylist will:
+The EarTune will:
 - Read the StyleProfile and EarTune instructions.
 - If possible, identify which tab contains the selected passage (anchor tab resolution).
 - Build a prompt targeting the specific passage with your instruction.
@@ -67,7 +67,7 @@ The Stylist will:
 ## When to Run
 
 - **After finalising content** — run Ear-Tune on each chapter tab once the prose is stable.
-- **After StyleProfile changes** — regenerate EarTune instructions so the Stylist reflects your updated style.
+- **After StyleProfile changes** — regenerate EarTune instructions so the EarTune reflects your updated style.
 - **On selected passages via comments** — for targeted rhythmic fixes.
 
 ## What It Reads

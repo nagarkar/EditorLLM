@@ -6,8 +6,8 @@
 // the corresponding inline copy here must be updated to match.
 //
 // Constants mirrored from Types.ts (compile-time checked via TypeScript globals):
-const HIGHLIGHT_COLOR_UNIT = '#FFD966';        // mirrors HIGHLIGHT_COLOR
-const AGENT_PREFIX_UNIT    = '[EditorLLM] ';   // mirrors AGENT_COMMENT_PREFIX
+const HIGHLIGHT_COLOR_UNIT  = '#FFD966';        // mirrors HIGHLIGHT_COLOR
+const EARTUNE_PREFIX_UNIT   = '[EarTune]';      // representative W2 agent prefix
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Inlined private functions under test
@@ -32,9 +32,9 @@ function highlightRangeElement(rangeEl: any): void {
   textEl.setBold(start, end, true);
 }
 
-function buildCommentPayload(tabId: string, commentBody: string): object {
+function buildCommentPayload(tabId: string, agentPrefix: string, commentBody: string): object {
   return {
-    content: AGENT_PREFIX_UNIT + commentBody,
+    content: `${agentPrefix} "${commentBody}"`,
     anchor: JSON.stringify({
       r: 'head',
       a: [{ lt: { tb: { id: tabId } } }],
@@ -46,7 +46,8 @@ function buildCommentPayload(tabId: string, commentBody: string): object {
 function clearAgentAnnotations(
   docId: string,
   tabId: string,
-  driveComments: typeof Drive.Comments
+  driveComments: typeof Drive.Comments,
+  agentPrefix: string = EARTUNE_PREFIX_UNIT
 ): number {
   let pageToken: string | undefined;
   let deleted = 0;
@@ -67,7 +68,7 @@ function clearAgentAnnotations(
         continue;
       }
       if (anchorTabId !== tabId) continue;
-      if (!(comment.content ?? '').startsWith(AGENT_PREFIX_UNIT)) continue;
+      if (!(comment.content ?? '').startsWith(agentPrefix)) continue;
       try {
         (driveComments as any).remove(docId, comment.id);
         deleted++;
@@ -216,42 +217,43 @@ describe('highlightRangeElement_', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('addTabComment_ payload construction', () => {
-  it('prefixes content with AGENT_COMMENT_PREFIX', () => {
-    const payload: any = buildCommentPayload('tab-123', 'Rhythm issue here.');
+  it('uses the agent-specific prefix (not a global EditorLLM prefix)', () => {
+    const payload: any = buildCommentPayload('tab-123', '[EarTune]', 'Rhythm issue here.');
 
-    expect(payload.content).toBe('[EditorLLM] Rhythm issue here.');
+    expect(payload.content).toContain('[EarTune]');
+    expect(payload.content).not.toContain('[EditorLLM]');
   });
 
   it('preserves the original comment body after the prefix', () => {
     const body = 'Born-rule exponent must be 2, not 3.';
-    const payload: any = buildCommentPayload('tab-abc', body);
+    const payload: any = buildCommentPayload('tab-abc', EARTUNE_PREFIX_UNIT, body);
 
     expect(payload.content).toContain(body);
-    expect(payload.content.startsWith(AGENT_PREFIX_UNIT)).toBe(true);
+    expect(payload.content.startsWith(EARTUNE_PREFIX_UNIT)).toBe(true);
   });
 
   it('produces valid JSON in the anchor field', () => {
-    const payload: any = buildCommentPayload('tab-xyz', 'reason');
+    const payload: any = buildCommentPayload('tab-xyz', '[EarTune]', 'reason');
 
     expect(() => JSON.parse(payload.anchor)).not.toThrow();
   });
 
   it('anchor contains r:"head"', () => {
-    const payload: any = buildCommentPayload('tab-xyz', 'reason');
+    const payload: any = buildCommentPayload('tab-xyz', '[EarTune]', 'reason');
     const anchor = JSON.parse(payload.anchor);
 
     expect(anchor.r).toBe('head');
   });
 
   it('anchor tab ID matches the provided tabId', () => {
-    const payload: any = buildCommentPayload('my-tab-id-999', 'reason');
+    const payload: any = buildCommentPayload('my-tab-id-999', '[EarTune]', 'reason');
     const anchor = JSON.parse(payload.anchor);
 
     expect(anchor.a[0].lt.tb.id).toBe('my-tab-id-999');
   });
 
   it('anchor follows the nested structure a[0].lt.tb.id', () => {
-    const payload: any = buildCommentPayload('tab-struct-test', 'reason');
+    const payload: any = buildCommentPayload('tab-struct-test', '[EarTune]', 'reason');
     const anchor = JSON.parse(payload.anchor);
 
     expect(Array.isArray(anchor.a)).toBe(true);
@@ -286,7 +288,7 @@ describe('clearAgentAnnotations_ — filtering', () => {
   }
 
   it('deletes agent comment on target tab', () => {
-    const comment = makeComment('c1', '[EditorLLM] fix this', TAB_ID);
+    const comment = makeComment('c1', '[EarTune] fix this', TAB_ID);
     const drive = makeDriveMock([comment]);
 
     const deleted = clearAgentAnnotations(DOC_ID, TAB_ID, drive);
@@ -306,7 +308,7 @@ describe('clearAgentAnnotations_ — filtering', () => {
   });
 
   it('does NOT delete agent comment on a different tab', () => {
-    const comment = makeComment('c3', '[EditorLLM] issue on other tab', OTHER_TAB);
+    const comment = makeComment('c3', '[EarTune] issue on other tab', OTHER_TAB);
     const drive = makeDriveMock([comment]);
 
     const deleted = clearAgentAnnotations(DOC_ID, TAB_ID, drive);
@@ -316,7 +318,7 @@ describe('clearAgentAnnotations_ — filtering', () => {
   });
 
   it('selectively deletes only agent comments when mixed with user comments', () => {
-    const agentComment = makeComment('c4', '[EditorLLM] agent note', TAB_ID);
+    const agentComment = makeComment('c4', '[EarTune] agent note', TAB_ID);
     const userComment  = makeComment('c5', 'Author note',            TAB_ID);
     const drive = makeDriveMock([agentComment, userComment]);
 
@@ -328,7 +330,7 @@ describe('clearAgentAnnotations_ — filtering', () => {
   });
 
   it('skips comments with malformed anchor JSON', () => {
-    const comment = { id: 'c6', content: '[EditorLLM] bad anchor', anchor: '{not-valid-json' };
+    const comment = { id: 'c6', content: '[EarTune] bad anchor', anchor: '{not-valid-json' };
     const drive = makeDriveMock([comment]);
 
     expect(() => clearAgentAnnotations(DOC_ID, TAB_ID, drive)).not.toThrow();
@@ -336,7 +338,7 @@ describe('clearAgentAnnotations_ — filtering', () => {
   });
 
   it('skips comments with missing anchor', () => {
-    const comment = { id: 'c7', content: '[EditorLLM] no anchor', anchor: undefined };
+    const comment = { id: 'c7', content: '[EarTune] no anchor', anchor: undefined };
     const drive = makeDriveMock([comment]);
 
     expect(() => clearAgentAnnotations(DOC_ID, TAB_ID, drive)).not.toThrow();
@@ -346,7 +348,7 @@ describe('clearAgentAnnotations_ — filtering', () => {
   it('skips comments where anchor has no tab ID field', () => {
     const comment = {
       id: 'c8',
-      content: '[EditorLLM] no tab in anchor',
+      content: '[EarTune] no tab in anchor',
       anchor: JSON.stringify({ r: 'head', a: [{ lt: {} }] }),
     };
     const drive = makeDriveMock([comment]);
@@ -358,8 +360,8 @@ describe('clearAgentAnnotations_ — filtering', () => {
   });
 
   it('continues deleting other comments when Drive.remove throws on one', () => {
-    const c1 = makeComment('c9',  '[EditorLLM] first',  TAB_ID);
-    const c2 = makeComment('c10', '[EditorLLM] second', TAB_ID);
+    const c1 = makeComment('c9',  '[EarTune] first',  TAB_ID);
+    const c2 = makeComment('c10', '[EarTune] second', TAB_ID);
     const drive = {
       list:   jest.fn().mockReturnValue({ items: [c1, c2] }),
       remove: jest.fn()
@@ -392,7 +394,7 @@ describe('clearAgentAnnotations_ — pagination', () => {
   function makeComment(id: string) {
     return {
       id,
-      content: `[EditorLLM] comment ${id}`,
+      content: `[EarTune] comment ${id}`,
       anchor: JSON.stringify({ r: 'head', a: [{ lt: { tb: { id: TAB_ID } } }] }),
     };
   }

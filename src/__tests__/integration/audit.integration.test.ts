@@ -4,7 +4,7 @@
 // Workflow coverage:
 //   W1 (generateInstructions) — instruction_update → { proposed_full_text, operations }
 //   W2 (annotateTab)          — content_annotation → { operations }
-//   W3 (handleCommentThread)  — reply-only → { reply }
+//   W3 (handleCommentThreads) — batch reply → { responses: [{threadId, reply}] }
 //
 // All tests use the thinking model (gemini-2.5-pro).
 // Individual test timeout is set to 120 s.
@@ -13,6 +13,7 @@
 import { callGemini } from './helpers/gemini';
 import { INSTRUCTION_UPDATE_SCHEMA, ANNOTATION_SCHEMA, BATCH_REPLY_SCHEMA } from './helpers/schemas';
 import {
+  TestThread,
   buildAuditInstructionsPrompt,
   buildAuditAnnotatePrompt,
   buildAuditBatchPrompt,
@@ -41,59 +42,9 @@ describe('AuditAgent — W1: generateInstructions (instruction_update)', () => {
 
     expect(typeof result.proposed_full_text).toBe('string');
     expect(result.proposed_full_text.trim().length).toBeGreaterThan(0);
-    expect(Array.isArray(result.operations)).toBe(true);
-    expect(result.operations.length).toBeGreaterThan(0);
   }, TIMEOUT);
 
-  it('each operation has non-empty match_text and reason', () => {
-    const userPrompt = buildAuditInstructionsPrompt({
-      styleProfile:  FIXTURES.STYLE_PROFILE,
-      existingAudit: FIXTURES.TECHNICAL_AUDIT,
-      manuscript:    FIXTURES.MERGED_CONTENT,
-    });
-    const result = callGemini(
-      INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
-      INSTRUCTION_UPDATE_SCHEMA,
-      { tier: TIER }
-    );
 
-    for (const op of result.operations) {
-      expect(typeof op.match_text).toBe('string');
-      expect(op.match_text.trim().length).toBeGreaterThan(0);
-      expect(typeof op.reason).toBe('string');
-      expect(op.reason.trim().length).toBeGreaterThan(0);
-    }
-  }, TIMEOUT);
-
-  it('each W1 match_text is a verbatim substring of proposed_full_text', () => {
-    // The prompt instructs: "each with a verbatim match_text from proposed_full_text".
-    // W1 operations patch the TechnicalAudit Instructions tab, so match_text is
-    // anchored in the model's proposed output, not the manuscript.
-    const userPrompt = buildAuditInstructionsPrompt({
-      styleProfile:  FIXTURES.STYLE_PROFILE,
-      existingAudit: FIXTURES.TECHNICAL_AUDIT,
-      manuscript:    FIXTURES.MERGED_CONTENT,
-    });
-    const result = callGemini(
-      INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
-      INSTRUCTION_UPDATE_SCHEMA,
-      { tier: TIER }
-    );
-
-    const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-    const normalizedProposed = normalize(result.proposed_full_text);
-    const hallucinated = result.operations.filter(op => {
-      const n = normalize(op.match_text);
-      return n.length > 0 && !normalizedProposed.includes(n);
-    });
-    if (hallucinated.length > 0) {
-      console.warn(`[match_text grounding] ${hallucinated.length}/${result.operations.length} ops have match_text not found in proposed_full_text:`);
-      hallucinated.forEach(op => console.warn(`  - "${op.match_text.slice(0, 100)}"`));
-    }
-    expect(hallucinated.length).toBeLessThanOrEqual(2);
-  }, TIMEOUT);
 
   it('gracefully returns a response even when existing audit is empty', () => {
     const userPrompt = buildAuditInstructionsPrompt({
@@ -109,7 +60,6 @@ describe('AuditAgent — W1: generateInstructions (instruction_update)', () => {
     );
 
     expect(typeof result.proposed_full_text).toBe('string');
-    expect(Array.isArray(result.operations)).toBe(true);
   }, TIMEOUT);
 
   it('gracefully returns a response even when manuscript is empty', () => {
@@ -126,7 +76,6 @@ describe('AuditAgent — W1: generateInstructions (instruction_update)', () => {
     );
 
     expect(typeof result.proposed_full_text).toBe('string');
-    expect(Array.isArray(result.operations)).toBe(true);
   }, TIMEOUT);
 
 });
@@ -262,17 +211,22 @@ describe('AuditAgent — W2: annotateTab (content_annotation)', () => {
 
 });
 
-// ── W3: handleCommentThread ───────────────────────────────────────────────────
+// ── W3: handleCommentThreads — single-thread batch ───────────────────────────
 
-describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
+describe('AuditAgent — W3: single-thread batch', () => {
 
-  it('returns a reply string when auditing a selected passage', () => {
+  it('returns a responses array with a valid threadId and non-empty reply', () => {
+    const thread: TestThread = {
+      threadId:     'audit-thread-001',
+      selectedText: 'P = |⟨a_n|ψ⟩|³',
+      agentRequest: 'Is this Born rule formula correct?',
+      conversation: [{ role: 'User', authorName: 'Author', content: '@audit Is this Born rule correct?' }],
+    };
     const userPrompt = buildAuditBatchPrompt({
       styleProfile:      FIXTURES.STYLE_PROFILE,
       auditInstructions: FIXTURES.TECHNICAL_AUDIT,
       passageContext:    FIXTURES.CHAPTER_1,
-      selectedText:      'P = |⟨a_n|ψ⟩|³',
-      agentRequest:      'Is this Born rule formula correct?',
+      threads:           [thread],
     });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
@@ -281,17 +235,26 @@ describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
       { tier: TIER }
     );
 
-    expect(typeof result.reply).toBe('string');
-    expect(result.reply.trim().length).toBeGreaterThan(0);
+    expect(Array.isArray(result.responses)).toBe(true);
+    expect(result.responses.length).toBeGreaterThan(0);
+    const r = result.responses[0];
+    expect(r.threadId).toBe(thread.threadId);
+    expect(typeof r.reply).toBe('string');
+    expect(r.reply.trim().length).toBeGreaterThan(0);
   }, TIMEOUT);
 
   it('reply ends with the AI Editorial Assistant signature', () => {
+    const thread: TestThread = {
+      threadId:     'audit-thread-002',
+      selectedText: 'iℏ ∂ψ/∂t = Ĥψ',
+      agentRequest: 'Verify this Schrödinger equation.',
+      conversation: [{ role: 'User', authorName: 'Author', content: '@audit Verify this equation.' }],
+    };
     const userPrompt = buildAuditBatchPrompt({
       styleProfile:      FIXTURES.STYLE_PROFILE,
       auditInstructions: FIXTURES.TECHNICAL_AUDIT,
       passageContext:    FIXTURES.MERGED_CONTENT,
-      selectedText:      'iℏ ∂ψ/∂t = Ĥψ',
-      agentRequest:      'Verify this Schrödinger equation.',
+      threads:           [thread],
     });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
@@ -300,16 +263,21 @@ describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
       { tier: TIER }
     );
 
-    expect(result.reply).toContain('AI Editorial Assistant');
+    expect(result.responses[0].reply).toContain('AI Editorial Assistant');
   }, TIMEOUT);
 
-  it('does NOT return a RootUpdate or workflow_type field', () => {
+  it('does NOT return workflow_type or document-mutation fields', () => {
+    const thread: TestThread = {
+      threadId:     'audit-thread-003',
+      selectedText: 'orthodox quantum mechanics',
+      agentRequest: 'Flag any axiom violations.',
+      conversation: [{ role: 'User', authorName: 'Author', content: '@audit Flag violations.' }],
+    };
     const userPrompt = buildAuditBatchPrompt({
       styleProfile:      FIXTURES.STYLE_PROFILE,
       auditInstructions: FIXTURES.TECHNICAL_AUDIT,
       passageContext:    FIXTURES.MERGED_CONTENT,
-      selectedText:      'orthodox quantum mechanics',
-      agentRequest:      'Flag any axiom violations.',
+      threads:           [thread],
     });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
@@ -324,12 +292,17 @@ describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
   }, TIMEOUT);
 
   it('flags the Born-rule exponent error when selected text is the flawed formula', () => {
+    const thread: TestThread = {
+      threadId:     'audit-thread-004',
+      selectedText: 'P = |⟨a_n|ψ⟩|³',
+      agentRequest: 'Check this formula against the TechnicalAudit rules.',
+      conversation: [{ role: 'User', authorName: 'Author', content: '@audit Check this formula.' }],
+    };
     const userPrompt = buildAuditBatchPrompt({
       styleProfile:      FIXTURES.STYLE_PROFILE,
       auditInstructions: FIXTURES.TECHNICAL_AUDIT,
       passageContext:    FIXTURES.CHAPTER_1,
-      selectedText:      'P = |⟨a_n|ψ⟩|³',
-      agentRequest:      'Check this formula against the TechnicalAudit rules.',
+      threads:           [thread],
     });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
@@ -339,16 +312,21 @@ describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
     );
 
     // The reply should mention the exponent error.
-    expect(/exponent|born|²|cube|should be 2|not 3/i.test(result.reply)).toBe(true);
+    expect(/exponent|born|²|cube|should be 2|not 3/i.test(result.responses[0].reply)).toBe(true);
   }, TIMEOUT);
 
   it('gracefully handles empty audit instructions', () => {
+    const thread: TestThread = {
+      threadId:     'audit-thread-005',
+      selectedText: 'The Chid Axiom fills this gap',
+      agentRequest: 'Perform a technical audit.',
+      conversation: [{ role: 'User', authorName: 'Author', content: '@audit Technical audit.' }],
+    };
     const userPrompt = buildAuditBatchPrompt({
       styleProfile:      FIXTURES.STYLE_PROFILE,
       auditInstructions: '',
       passageContext:    FIXTURES.MERGED_CONTENT,
-      selectedText:      'The Chid Axiom fills this gap',
-      agentRequest:      'Perform a technical audit.',
+      threads:           [thread],
     });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
@@ -357,8 +335,9 @@ describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
       { tier: TIER }
     );
 
-    expect(typeof result.reply).toBe('string');
-    expect(result.reply.trim().length).toBeGreaterThan(0);
+    expect(Array.isArray(result.responses)).toBe(true);
+    expect(result.responses.length).toBeGreaterThan(0);
+    expect(result.responses[0].reply.trim().length).toBeGreaterThan(0);
   }, TIMEOUT);
 
 });
@@ -368,12 +347,17 @@ describe('AuditAgent — W3: handleCommentThread (reply-only)', () => {
 describe('AuditAgent — error conditions', () => {
 
   it('throws a descriptive error when the API key is invalid', () => {
+    const thread: TestThread = {
+      threadId:     'audit-error-thread',
+      selectedText: 'any passage',
+      agentRequest: 'any request',
+      conversation: [{ role: 'User', authorName: 'Author', content: '@audit any request' }],
+    };
     const userPrompt = buildAuditBatchPrompt({
       styleProfile:      FIXTURES.STYLE_PROFILE,
       auditInstructions: FIXTURES.TECHNICAL_AUDIT,
       passageContext:    FIXTURES.MERGED_CONTENT,
-      selectedText:      'any passage',
-      agentRequest:      'any request',
+      threads:           [thread],
     });
 
     expect(() =>

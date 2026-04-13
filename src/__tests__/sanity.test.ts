@@ -223,8 +223,8 @@ describe('Agent tag and contextKeys declarations', () => {
     expect(expectedTags.length).toBeGreaterThan(0);
   });
 
-  it('StylistAgent declares tags = ["@eartune", "@stylist"]', () => {
-    const expectedTags = ['@eartune', '@stylist'];
+  it('EarTuneAgent declares tags = ["@eartune"]', () => {
+    const expectedTags = ['@eartune'];
     expectedTags.forEach(t => {
       expect(typeof t).toBe('string');
       expect(t).toBe(t.toLowerCase());
@@ -255,7 +255,7 @@ describe('Agent tag and contextKeys declarations', () => {
     expect(expected.length).toBeGreaterThan(0);
   });
 
-  it('StylistAgent contextKeys includes COMMENT_ANCHOR_TAB sentinel', () => {
+  it('EarTuneAgent contextKeys includes COMMENT_ANCHOR_TAB sentinel', () => {
     const expected = ['StyleProfile', 'EarTune', '__comment_anchor_tab__'];
     expect(expected).toContain('__comment_anchor_tab__');
     expect(expected.length).toBeGreaterThan(0);

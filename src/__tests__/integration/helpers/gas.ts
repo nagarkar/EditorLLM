@@ -138,7 +138,7 @@ function httpsPostSync_(
       JSON.stringify(url),
     ].join(' ');
 
-    const step1Out = execSync(step1Cmd, { encoding: 'utf8', timeout: 30_000 });
+    const step1Out = execSync(step1Cmd, { encoding: 'utf8', timeout: 180_000 });
 
     // Parse headers + status from step 1
     const step1Lines = step1Out.split('\n');
@@ -154,7 +154,7 @@ function httpsPostSync_(
     if (step1Status === 302 && location) {
       // Step 2: GET the echo URL — no auth needed; the key is in the URL params
       const step2Cmd = [
-        'curl', '-s',
+        'curl', '-s', '-L',
         `-w '\\n%{http_code}'`,
         JSON.stringify(location),
       ].join(' ');
@@ -167,7 +167,7 @@ function httpsPostSync_(
     }
 
     // No redirect — use step 1 body (split off the status line we already popped)
-    const bodyLines = step1Lines.filter(l => !l.match(/^HTTP\//) && !l.match(/^\w+:/));
+    const bodyLines = step1Lines.filter((l: string) => !l.match(/^HTTP\//i) && !l.match(/^[\w-]+:/));
     return { status: step1Status, text: bodyLines.join('\n') };
   } finally {
     try { fsSync.unlinkSync(tmpBody); } catch { /* ignore */ }
@@ -206,7 +206,7 @@ export function runGasFunction(
     parsed = JSON.parse(raw);
   } catch {
     throw new Error(
-      `Web app response is not valid JSON (HTTP ${status}): ${raw.slice(0, 400)}`
+      `Web app response is not valid JSON (HTTP ${status}): ${raw}`
     );
   }
 

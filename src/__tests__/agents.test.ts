@@ -36,7 +36,7 @@ function buildArchitectBatchPrompt(opts: {
   return (
     `STYLE PROFILE:\n` +
     `---\n` +
-    `${opts.styleProfile.slice(0, 2000)}\n` +
+    `${opts.styleProfile}\n` +
     `---\n\n` +
     `MANUSCRIPT CONTEXT:\n` +
     `---\n` +
@@ -53,7 +53,7 @@ function buildArchitectBatchPrompt(opts: {
   ).trim();
 }
 
-function buildStylistBatchPrompt(opts: {
+function buildEarTuneBatchPrompt(opts: {
   styleProfile: string;
   earTuneInstructions: string;
   passageContext: string;
@@ -70,17 +70,17 @@ function buildStylistBatchPrompt(opts: {
   }).join('\n\n');
 
   const passageSection = opts.passageContext
-    ? `PASSAGE CONTEXT:\n---\n${opts.passageContext.slice(0, 4000)}\n---\n\n`
+    ? `PASSAGE CONTEXT:\n---\n${opts.passageContext}\n---\n\n`
     : '';
 
   return (
     `STYLE PROFILE:\n` +
     `---\n` +
-    `${opts.styleProfile.slice(0, 2000)}\n` +
+    `${opts.styleProfile}\n` +
     `---\n\n` +
     `EAR-TUNE INSTRUCTIONS:\n` +
     `---\n` +
-    `${opts.earTuneInstructions.slice(0, 2000)}\n` +
+    `${opts.earTuneInstructions}\n` +
     `---\n\n` +
     `${passageSection}` +
     `THREADS:\n` +
@@ -111,17 +111,17 @@ function buildAuditBatchPrompt(opts: {
   }).join('\n\n');
 
   const passageSection = opts.passageContext
-    ? `PASSAGE CONTEXT:\n---\n${opts.passageContext.slice(0, 4000)}\n---\n\n`
+    ? `PASSAGE CONTEXT:\n---\n${opts.passageContext}\n---\n\n`
     : '';
 
   return (
     `STYLE PROFILE:\n` +
     `---\n` +
-    `${opts.styleProfile.slice(0, 2000)}\n` +
+    `${opts.styleProfile}\n` +
     `---\n\n` +
     `TECHNICAL AUDIT INSTRUCTIONS:\n` +
     `---\n` +
-    `${opts.auditInstructions.slice(0, 3000)}\n` +
+    `${opts.auditInstructions}\n` +
     `---\n\n` +
     `${passageSection}` +
     `THREADS:\n` +
@@ -273,19 +273,8 @@ function instructionUpdateSchemaShape() {
     type: 'object',
     properties: {
       proposed_full_text: { type: 'string' },
-      operations: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            match_text: { type: 'string' },
-            reason: { type: 'string' },
-          },
-          required: ['match_text', 'reason'],
-        },
-      },
     },
-    required: ['proposed_full_text', 'operations'],
+    required: ['proposed_full_text'],
   };
 }
 
@@ -311,11 +300,11 @@ function annotationSchemaShape() {
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
-const ALL_KNOWN_TAGS = new Set(['@ai', '@architect', '@eartune', '@stylist', '@audit', '@auditor']);
+const ALL_KNOWN_TAGS = new Set(['@ai', '@architect', '@eartune', '@audit', '@auditor', '@tether', '@ref']);
 
 // All agents that include COMMENT_ANCHOR_TAB in contextKeys.
 // @ai is included because CommentAgent now groups by anchor tab.
-const ANCHOR_NEEDING_TAGS = new Set(['@ai', '@eartune', '@stylist', '@audit', '@auditor']);
+const ANCHOR_NEEDING_TAGS = new Set(['@ai', '@eartune', '@audit', '@auditor', '@tether', '@ref']);
 
 function makeComment(overrides: {
   id?: string;
@@ -559,14 +548,63 @@ describe('buildThread_: anchor tab resolution', () => {
   });
 });
 
+// Mirrors CommentProcessor.resolveAnchorTabName_ + buildTabBodyIndex_ traversal order.
+function resolveAnchorTabNameFromIndex(
+  selectedText: string,
+  tabBodies: Array<{ title: string; body: string }>
+): string | null {
+  if (!selectedText.trim()) return null;
+  const probe = selectedText.slice(0, 80);
+  for (const { title, body } of tabBodies) {
+    if (body.includes(probe)) return title;
+  }
+  return null;
+}
+
+describe('resolveAnchorTabName_ (tab body index)', () => {
+  it('returns the first tab in DFS order whose body contains the 80-char probe', () => {
+    const tabBodies = [
+      { title: 'A', body: 'no match here' },
+      { title: 'B', body: 'hello world and more text' },
+      { title: 'C', body: 'hello world duplicate' },
+    ];
+    expect(resolveAnchorTabNameFromIndex('hello world', tabBodies)).toBe('B');
+  });
+
+  it('prefers an ancestor tab when both parent and child bodies contain the probe', () => {
+    const tabBodies = [
+      { title: 'Parent', body: 'shared phrase end' },
+      { title: 'Child', body: 'prefix shared phrase end suffix' },
+    ];
+    expect(resolveAnchorTabNameFromIndex('shared phrase', tabBodies)).toBe('Parent');
+  });
+
+  it('returns null when no body contains the probe', () => {
+    const tabBodies = [{ title: 'Only', body: 'abc' }];
+    expect(resolveAnchorTabNameFromIndex('zzz', tabBodies)).toBeNull();
+  });
+
+  it('returns null for whitespace-only selected text', () => {
+    expect(resolveAnchorTabNameFromIndex('   ', [{ title: 'T', body: 'x' }])).toBeNull();
+  });
+
+  it('matches only on the first 80 characters of selected text (same as production)', () => {
+    const long = 'a'.repeat(100);
+    const tabBodies = [{ title: 'T', body: `${'a'.repeat(80)}DIFFERENT` }];
+    expect(resolveAnchorTabNameFromIndex(long, tabBodies)).toBe('T');
+    expect(resolveAnchorTabNameFromIndex(`${long}EXTRA`, tabBodies)).toBe('T');
+  });
+});
+
 // ── 2. Tag routing ────────────────────────────────────────────────────────────
 
 describe('tag routing — every declared tag maps to the right agent class', () => {
   const ROUTING_TABLE: Array<{ tags: string[]; agentClass: string }> = [
     { tags: ['@ai'],                 agentClass: 'CommentAgent'   },
     { tags: ['@architect'],          agentClass: 'ArchitectAgent' },
-    { tags: ['@eartune', '@stylist'],agentClass: 'StylistAgent'   },
+    { tags: ['@eartune'],            agentClass: 'EarTuneAgent'   },
     { tags: ['@audit', '@auditor'],  agentClass: 'AuditAgent'     },
+    { tags: ['@tether', '@ref'],     agentClass: 'TetherAgent'    },
   ];
 
   ROUTING_TABLE.forEach(({ tags, agentClass }) => {
@@ -654,8 +692,8 @@ describe('ArchitectAgent batch prompt structure', () => {
   });
 });
 
-describe('StylistAgent batch prompt structure', () => {
-  const prompt = buildStylistBatchPrompt({
+describe('EarTuneAgent batch prompt structure', () => {
+  const prompt = buildEarTuneBatchPrompt({
     styleProfile:       'Voice: intimate, philosophically rigorous.',
     earTuneInstructions: 'Vary sentence length for ebb-and-flow.',
     passageContext:     'The observer attends, and the wave collapses.',
@@ -698,7 +736,7 @@ describe('StylistAgent batch prompt structure', () => {
   });
 
   it('omits PASSAGE CONTEXT section when passageContext is empty', () => {
-    const promptNoCtx = buildStylistBatchPrompt({
+    const promptNoCtx = buildEarTuneBatchPrompt({
       styleProfile:       'Voice.',
       earTuneInstructions: 'Rules.',
       passageContext:     '',
@@ -839,16 +877,6 @@ describe('instructionUpdateSchema shape', () => {
 
   it('requires proposed_full_text', () => {
     expect((schema as any).required).toContain('proposed_full_text');
-  });
-
-  it('requires operations array', () => {
-    expect((schema as any).required).toContain('operations');
-  });
-
-  it('operation items require match_text and reason', () => {
-    const items = (schema as any).properties.operations.items;
-    expect(items.required).toContain('match_text');
-    expect(items.required).toContain('reason');
   });
 
   it('does not include workflow_type or target_tab (agent sets those)', () => {
@@ -1076,10 +1104,10 @@ describe('processAll batch dispatch logic', () => {
   });
 
   it('multi-tag agent receives all threads in one batch (not split by tag)', () => {
-    // StylistAgent handles both @eartune and @stylist.
+    // EarTuneAgent handles both @eartune and @eartune.
     // Both sets of threads must arrive in the same handleCommentThreads call.
     const agent: MockAgent = {
-      name: 'StylistAgent', tags: ['@eartune', '@stylist'], needsAnchor: false,
+      name: 'EarTuneAgent', tags: ['@eartune', '@eartune'], needsAnchor: false,
       handleCommentThreads: jest.fn().mockReturnValue([
         { threadId: 'c1', content: 'r1' },
         { threadId: 'c2', content: 'r2' },
@@ -1087,7 +1115,7 @@ describe('processAll batch dispatch logic', () => {
     };
     const comments = [
       makeComment({ id: 'c1', content: '@eartune Check rhythm.' }),
-      makeComment({ id: 'c2', content: '@stylist Smooth this.' }),
+      makeComment({ id: 'c2', content: '@eartune Smooth this.' }),
     ];
     simulateProcessAll(comments, [agent]);
     expect(agent.handleCommentThreads).toHaveBeenCalledTimes(1);
@@ -1314,9 +1342,9 @@ describe('Drive API call conventions', () => {
   });
 });
 
-// ── 9. StylistAgent annotateTab prompt structure (W2 — unchanged) ─────────────
+// ── 9. EarTuneAgent annotateTab prompt structure (W2 — unchanged) ─────────────
 
-function buildStylistAnnotatePrompt(opts: {
+function buildEarTuneAnnotatePrompt(opts: {
   styleProfile: string;
   earTuneInstructions: string;
   passage: string;
@@ -1325,17 +1353,17 @@ function buildStylistAnnotatePrompt(opts: {
   return `
 STYLE PROFILE:
 ---
-${opts.styleProfile.slice(0, 3000)}
+${opts.styleProfile}
 ---
 
 EAR-TUNE INSTRUCTIONS:
 ---
-${opts.earTuneInstructions.slice(0, 2000)}
+${opts.earTuneInstructions}
 ---
 
 PASSAGE TO SWEEP (from tab: "${opts.tabName}"):
 ---
-${opts.passage.slice(0, 8000)}
+${opts.passage}
 ---
 
 Identify every passage with a rhythmic, phonetic, or cadence problem.
@@ -1346,8 +1374,8 @@ Return a JSON object with:
 `.trim();
 }
 
-describe('StylistAgent annotateTab prompt structure (W2)', () => {
-  const prompt = buildStylistAnnotatePrompt({
+describe('EarTuneAgent annotateTab prompt structure (W2)', () => {
+  const prompt = buildEarTuneAnnotatePrompt({
     styleProfile: 'Voice: intimate.',
     earTuneInstructions: 'Vary sentence length.',
     passage: 'The observer attends, and the wave collapses inward upon itself.',
@@ -1367,5 +1395,174 @@ describe('StylistAgent annotateTab prompt structure (W2)', () => {
   it('does not reference THREADS or batch response format', () => {
     expect(prompt).not.toContain('THREADS:');
     expect(prompt).not.toContain('"responses"');
+  });
+});
+
+// ── 10. TetherAgent batch prompt structure ────────────────────────────────────
+
+function buildTetherBatchPrompt(opts: {
+  styleProfile: string;
+  tetherInstructions: string;
+  passageContext: string;
+  threads: Array<{ threadId: string; selectedText: string; agentRequest: string; conversation: Array<{ role: 'User' | 'AI'; authorName: string; content: string }> }>;
+}): string {
+  const threadSection = opts.threads.map(t => {
+    const conv = t.conversation.map(m => `[${m.role}] ${m.authorName}: ${m.content}`).join('\n');
+    return (
+      `[THREAD ${t.threadId}]\n` +
+      `SELECTED TEXT: ${t.selectedText}\n` +
+      `CONVERSATION:\n${conv}\n` +
+      `REQUEST: ${t.agentRequest}`
+    );
+  }).join('\n\n');
+
+  const passageSection = opts.passageContext
+    ? `PASSAGE CONTEXT:\n---\n${opts.passageContext}\n---\n\n`
+    : '';
+
+  return (
+    `STYLE PROFILE:\n` +
+    `---\n` +
+    `${opts.styleProfile}\n` +
+    `---\n\n` +
+    `TETHER INSTRUCTIONS:\n` +
+    `---\n` +
+    `${opts.tetherInstructions}\n` +
+    `---\n\n` +
+    `${passageSection}` +
+    `THREADS:\n` +
+    `---\n` +
+    `${threadSection}\n` +
+    `---\n\n` +
+    `For each thread, provide an investigative response grounded in historical\n` +
+    `or scientific fact. Validate references, flag errors vs. controversies,\n` +
+    `and suggest alignment opportunities where applicable.\n` +
+    `End each reply with "— AI Editorial Assistant".\n` +
+    `Return a JSON object with "responses": an array of {threadId, reply} entries, ` +
+    `one per thread you are replying to.`
+  ).trim();
+}
+
+describe('TetherAgent batch prompt structure', () => {
+  const prompt = buildTetherBatchPrompt({
+    styleProfile:       'Voice: intimate, philosophically rigorous.',
+    tetherInstructions: 'Verify all Rig Veda citations.',
+    passageContext:     'Schrödinger proposed the cat thought experiment in 1935.',
+    threads: [{
+      threadId:     'thread-005',
+      selectedText: 'Schrödinger proposed the cat',
+      agentRequest: 'Verify this date and context.',
+      conversation: [{ role: 'User' as const, authorName: 'Author', content: '@tether Verify this date and context.' }],
+    }],
+  });
+
+  it('contains STYLE PROFILE section', () => {
+    expect(prompt).toContain('STYLE PROFILE:');
+  });
+
+  it('contains TETHER INSTRUCTIONS section', () => {
+    expect(prompt).toContain('TETHER INSTRUCTIONS:');
+  });
+
+  it('contains PASSAGE CONTEXT section when provided', () => {
+    expect(prompt).toContain('PASSAGE CONTEXT:');
+    expect(prompt).toContain('Schrödinger proposed');
+  });
+
+  it('contains THREADS section with thread label', () => {
+    expect(prompt).toContain('THREADS:');
+    expect(prompt).toContain('[THREAD thread-005]');
+  });
+
+  it('contains SELECTED TEXT label for the thread', () => {
+    expect(prompt).toContain('SELECTED TEXT: Schrödinger proposed the cat');
+  });
+
+  it('asks agent to return batch responses JSON', () => {
+    expect(prompt).toContain('"responses"');
+  });
+
+  it('requires replies to end with signature', () => {
+    expect(prompt).toContain('AI Editorial Assistant');
+  });
+
+  it('mentions historical/scientific validation in instructions', () => {
+    expect(prompt).toContain('historical');
+    expect(prompt).toContain('scientific');
+  });
+
+  it('omits PASSAGE CONTEXT section when passageContext is empty', () => {
+    const promptNoCtx = buildTetherBatchPrompt({
+      styleProfile:       'Voice.',
+      tetherInstructions: 'Rules.',
+      passageContext:     '',
+      threads: [SAMPLE_THREAD],
+    });
+    expect(promptNoCtx).not.toContain('PASSAGE CONTEXT:');
+  });
+});
+
+// ── 11. TetherAgent annotateTab prompt structure (W2) ─────────────────────────
+
+function buildTetherAnnotatePrompt(opts: {
+  styleProfile: string;
+  tetherInstructions: string;
+  passage: string;
+  tabName: string;
+}): string {
+  return `
+STYLE PROFILE:
+---
+${opts.styleProfile}
+---
+
+TETHER INSTRUCTIONS:
+---
+${opts.tetherInstructions}
+---
+
+PASSAGE TO VALIDATE (from tab: "${opts.tabName}"):
+---
+${opts.passage}
+---
+
+Perform an external source validation sweep.
+1. Flag invalid references or factual errors.
+2. Identify "controversial" statements and annotate them with context.
+3. Suggest 2–3 specific "missed opportunities" for alignment with prior
+   historical or scientific work.
+
+Return a JSON object with:
+- operations: one per issue or opportunity found. Each must have:
+    - match_text: verbatim 3–4-word phrase from the passage above
+    - reason: description of the factual discrepancy or alignment opportunity
+`.trim();
+}
+
+describe('TetherAgent annotateTab prompt structure (W2)', () => {
+  const prompt = buildTetherAnnotatePrompt({
+    styleProfile: 'Voice: intimate.',
+    tetherInstructions: 'Verify Rig Veda and QM citations.',
+    passage: 'Einstein said God does not play dice with the universe.',
+    tabName: 'Chapter 5',
+  });
+
+  it('contains PASSAGE TO VALIDATE section with tab name', () => {
+    expect(prompt).toContain('PASSAGE TO VALIDATE');
+    expect(prompt).toContain('Chapter 5');
+  });
+
+  it('asks for operations with match_text and reason', () => {
+    expect(prompt).toContain('match_text');
+    expect(prompt).toContain('reason');
+  });
+
+  it('does not reference THREADS or batch response format', () => {
+    expect(prompt).not.toContain('THREADS:');
+    expect(prompt).not.toContain('"responses"');
+  });
+
+  it('mentions source validation in instructions', () => {
+    expect(prompt).toContain('source validation');
   });
 });

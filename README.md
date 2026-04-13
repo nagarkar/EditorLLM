@@ -1,6 +1,6 @@
 # EditorLLM
 
-AI-augmented book editing workspace for Google Docs. Runs as a Google Apps Script add-on, providing a sidebar with four editorial agents — Architect, Stylist, Auditor, and Comment — each backed by the Gemini API.
+AI-augmented book editing workspace for Google Docs. Runs as a Google Apps Script add-on, providing a sidebar with four editorial agents — Architect, EarTune, Auditor, and Comment — each backed by the Gemini API.
 
 ---
 
@@ -142,7 +142,7 @@ npm run test:e2e
 
 # One test by name pattern (substring match, no redeploy needed)
 npm run test:e2e -- -t "multi-thread"
-npm run test:e2e -- -t "StylistAgent"
+npm run test:e2e -- -t "EarTuneAgent"
 npm run test:e2e -- -t "idempotent"
 ```
 
@@ -210,7 +210,7 @@ Coverage per agent:
 | Agent | W1 (generateInstructions) | W2 (annotateTab) | W3 (handleCommentThread) |
 |-------|--------------------------|-----------------|--------------------------|
 | ArchitectAgent | ✓ 3 tests — thinking model | N/A (no annotateTab) | ✓ 4 tests — thinking model |
-| StylistAgent | ✓ 4 tests — fast model | ✓ 5 tests — fast model | ✓ 4 tests — fast model |
+| EarTuneAgent | ✓ 4 tests — fast model | ✓ 5 tests — fast model | ✓ 4 tests — fast model |
 | AuditAgent | ✓ 4 tests — thinking model | ✓ 5 tests — thinking model | ✓ 5 tests — thinking model |
 | CommentAgent | ✓ 4 tests — fast model | N/A (no annotateTab) | ✓ 6 tests — fast model |
 
@@ -223,7 +223,7 @@ Pass a filename pattern as a positional argument — Jest matches it against fil
 ```bash
 npx jest --config jest.integration.config.cjs collaboration.integration
 npx jest --config jest.integration.config.cjs architect.integration
-npx jest --config jest.integration.config.cjs stylist.integration
+npx jest --config jest.integration.config.cjs eartune.integration
 npx jest --config jest.integration.config.cjs audit.integration
 npx jest --config jest.integration.config.cjs commentAgent.integration
 ```
@@ -305,7 +305,7 @@ Use this script whenever GAS source files change and you need to push + verify q
 
 # Same, but run only one test (fastest iteration loop)
 ./gas-redeploy.sh --test "multi-thread"
-./gas-redeploy.sh --test "StylistAgent"
+./gas-redeploy.sh --test "EarTuneAgent"
 ./gas-redeploy.sh --test "idempotent"
 
 # Push + redeploy only, skip tests entirely
@@ -393,7 +393,7 @@ bash deploy_prod.sh --dry-run
 │   ├── GeminiService.ts          # Gemini API client (synchronous, JSON output)
 │   ├── BaseAgent.ts              # Abstract base: schema builders, context loading
 │   ├── ArchitectAgent.ts         # W1 + W3 — style profile and structural review
-│   ├── StylistAgent.ts           # W1 + W2 + W3 — ear-tune rhythm annotation
+│   ├── EarTuneAgent.ts           # W1 + W2 + W3 — ear-tune rhythm annotation
 │   ├── AuditAgent.ts             # W1 + W2 + W3 — technical/physics audit
 │   ├── CommentAgent.ts           # W1 + W3 — @AI comment thread replies
 │   ├── CollaborationService.ts   # Drive comment CRUD, annotation routing
@@ -422,7 +422,7 @@ bash deploy_prod.sh --dry-run
 │       │   ├── prompts.ts        # Prompt builders mirroring agent methods
 │       │   └── schemas.ts        # JSON schemas for Gemini response validation
 │       ├── architect.integration.test.ts
-│       ├── stylist.integration.test.ts
+│       ├── eartune.integration.test.ts
 │       ├── audit.integration.test.ts
 │       ├── commentAgent.integration.test.ts
 │       ├── collaboration.integration.test.ts

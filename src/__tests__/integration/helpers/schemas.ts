@@ -10,19 +10,8 @@ export const INSTRUCTION_UPDATE_SCHEMA = {
   type: 'object',
   properties: {
     proposed_full_text: { type: 'string' },
-    operations: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          match_text: { type: 'string' },
-          reason:     { type: 'string' },
-        },
-        required: ['match_text', 'reason'],
-      },
-    },
   },
-  required: ['proposed_full_text', 'operations'],
+  required: ['proposed_full_text'],
 } as const;
 
 /** Schema for Gemini responses for W2 (annotateTab). */

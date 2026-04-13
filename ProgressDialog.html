@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: 'Google Sans', sans-serif; padding: 20px; font-size: 13px; text-align: center; }
+    #status { margin-top: 20px; padding: 10px; border-radius: 4px; display: none; }
+    .loading { background: #fff8e1; color: #f57f17; display: block; }
+    .error { background: #ffebee; color: #c62828; display: block; }
+    .spinner { margin-top: 10px; width: 24px; height: 24px; border: 3px solid #f3f3f3; border-top: 3px solid #6200ea; border-radius: 50%; animation: spin 1s linear infinite; display: inline-block; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="loader">
+    <div class="spinner"></div>
+    <div style="margin-top: 10px; color: #424242;">Generating instructions... Please wait.</div>
+  </div>
+  <div id="status"></div>
+  <script>
+    var agentKey = "<?= agentKey ?>";
+    window.onload = function() {
+      var fn = agentKey + "GenerateInstructions";
+      if (!google.script.run[fn]) {
+         document.getElementById('loader').style.display = 'none';
+         var errEl = document.getElementById('status');
+         errEl.className = 'error';
+         errEl.textContent = 'Error: Invalid agent mapping: ' + fn;
+         return;
+      }
+      
+      google.script.run
+        .withSuccessHandler(function() {
+          google.script.host.close();
+        })
+        .withFailureHandler(function(e) {
+          document.getElementById('loader').style.display = 'none';
+          var errEl = document.getElementById('status');
+          errEl.className = 'error';
+          errEl.style.display = 'block';
+          errEl.textContent = 'Error: ' + (e.message || e);
+        })
+        [fn]();
+    };
+  </script>
+</body>
+</html>

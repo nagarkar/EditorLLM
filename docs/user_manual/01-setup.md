@@ -8,6 +8,16 @@
 
 If you don't see the EditorLLM menu, the add-on may not be installed on this document. Ask the document owner to verify the script is bound and authorized.
 
+### Live Log Sidebar
+
+For long-running operations (Ear-Tune, Audit), a real-time progress log is available:
+
+1. Click **EditorLLM** > **Open Log Sidebar**.
+2. The log sidebar opens on the right. It polls every two seconds and streams log entries as the agent runs.
+3. Each entry shows a timestamp, log level, and message — e.g., `[INFO] EarTuneAgent: processing paragraph 3/12`.
+
+The log sidebar is non-blocking: you can continue reading or editing while an agent runs. Close it at any time; it does not interrupt the running operation.
+
 ## First-Time Setup
 
 ### Initialize Tabs
@@ -41,7 +51,7 @@ EditorLLM uses three model tiers. Each can be configured independently.
 
 | Tier | Used by | Recommended for |
 |---|---|---|
-| **Fast** | Comment Agent, Audio Stylist | Low-latency tasks: comments, prose styling |
+| **Fast** | Comment Agent, Audio EarTune | Low-latency tasks: comments, prose styling |
 | **Thinking** | Structural Architect, Logical Auditor | Deep reasoning: style analysis, technical audits |
 | **DeepSeek** | (Available for future agents) | Experimental model slot |
 

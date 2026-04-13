@@ -58,16 +58,17 @@ import {
   deleteComment,
   deleteDocTab,
   getCommentWithReplies,
+  getTabContent,
   insertTextIntoTab,
   listAllComments,
 } from './helpers/drive';
 import { runGasFunction, getWebAppUrl } from './helpers/gas';
 import { INTEGRATION_CONFIG } from './config';
 
-const DOC_ID  = INTEGRATION_CONFIG.googleDocId;
-const TOKEN   = () => process.env.GOOGLE_TOKEN ?? INTEGRATION_CONFIG.googleToken;
+const DOC_ID = INTEGRATION_CONFIG.googleDocId;
+const TOKEN = () => process.env.GOOGLE_TOKEN ?? INTEGRATION_CONFIG.googleToken;
 
-// Fast-tier tests (CommentAgent, StylistAgent): 5 minutes is plenty.
+// Fast-tier tests (CommentAgent, EarTuneAgent): 5 minutes is plenty.
 const TIMEOUT = 5 * 60 * 1000;
 // Thinking-tier tests (ArchitectAgent, AuditAgent): allow up to 10 minutes.
 // Apps Script web app execution cap is 6 minutes; two thinking calls back-to-back
@@ -129,8 +130,8 @@ const describeE2E = hasCredentials ? describe : describe.skip;
 // ── Test state ────────────────────────────────────────────────────────────────
 
 describeE2E('E2E: @AI comment → commentProcessorRun() → agent reply', () => {
-  let testTabId      = '';
-  let testCommentId  = '';
+  let testTabId = '';
+  let testCommentId = '';
 
   // Unique per run so parallel runs don't interfere.
   const RUN_ID = Date.now();
@@ -256,10 +257,10 @@ describeE2E('E2E: hasApiKey doPost route (smoke test)', () => {
 // Directly tests the buildThread_() → null path in CommentProcessor.ts.
 
 describeE2E('E2E: non-routable comments are skipped', () => {
-  let testTabId    = '';
-  let plainId      = '';
-  let taggedId     = '';
-  const RUN_ID     = Date.now();
+  let testTabId = '';
+  let plainId = '';
+  let taggedId = '';
+  const RUN_ID = Date.now();
 
   beforeAll(() => {
     seedTestEnvironment_(webAppUrl, TOKEN());
@@ -319,14 +320,14 @@ describeE2E('E2E: non-routable comments are skipped', () => {
 // Runs commentProcessorRun() twice on the same @AI thread and asserts that
 // exactly one agent reply exists — not two.
 //
-// Mechanism being tested (CommentProcessor.ts buildThread_, line ~147):
+// Mechanism being tested (CommentProcessor.ts buildThread_, line ~184):
 //   After the first run, the agent reply becomes the last message in the thread.
 //   That reply has no @tag, so buildThread_() returns null on the second run.
 
 describeE2E('E2E: commentProcessorRun() is idempotent — no duplicate replies', () => {
-  let testTabId   = '';
-  let commentId   = '';
-  const RUN_ID    = Date.now();
+  let testTabId = '';
+  let commentId = '';
+  const RUN_ID = Date.now();
 
   beforeAll(() => {
     seedTestEnvironment_(webAppUrl, TOKEN());
@@ -467,10 +468,10 @@ describeE2E('E2E: multi-thread routing — @ai + @architect + @audit dispatched 
 // afterAll always restores the key so subsequent tests are unaffected.
 
 describeE2E('E2E: missing API key — processAll handles the failure gracefully', () => {
-  let testTabId      = '';
-  let commentId      = '';
-  const RUN_ID       = Date.now();
-  const savedApiKey  = process.env.GEMINI_API_KEY ?? '';
+  let testTabId = '';
+  let commentId = '';
+  const RUN_ID = Date.now();
+  const savedApiKey = process.env.GEMINI_API_KEY ?? '';
 
   beforeAll(() => {
     const tabs = fetchTabs(DOC_ID, TOKEN());
@@ -521,12 +522,12 @@ describeE2E('E2E: missing API key — processAll handles the failure gracefully'
   }, TIMEOUT);
 });
 
-// ── E2E 7: StylistAgent W2 — stylistAnnotateTab on an isolated temp tab ───────
+// ── E2E 7: EarTuneAgent W2 — earTuneAnnotateTab on an isolated temp tab ───────
 //
 // What this test proves:
-//   • setupStandardTabs(), architectGenerateExample(), stylistGenerateExample()
+//   • setupStandardTabs(), architectGenerateExample(), earTuneGenerateExample()
 //     complete without error end-to-end (tab setup + content seeding)
-//   • stylistAnnotateTab() runs the full EarTune W2 pipeline on real doc content
+//   • earTuneAnnotateTab() runs the full EarTune W2 pipeline on real doc content
 //   • Drive comments land on the intended tab (anchor filtering by tab ID)
 //   • Agent comments carry the [EditorLLM] prefix
 //   • Cleanup (deleteDocTab) safely removes the temp tab and its annotations
@@ -537,7 +538,7 @@ describeE2E('E2E: missing API key — processAll handles the failure gracefully'
 //   • Touching any tab the user actually authors
 //
 // Timeout: LONG_TIMEOUT — beforeAll makes 3 doPost calls + 2 Docs REST writes;
-// the main test makes 1 fast-tier Gemini call via stylistAnnotateTab.
+// the main test makes 1 fast-tier Gemini call via earTuneAnnotateTab.
 
 // Prose with intentional rhythmic weaknesses (heavy passive voice, repetitive
 // sentence structure, awkward consonant clusters) to reliably trigger EarTune.
@@ -562,9 +563,9 @@ is built from known knowable things we know we need to know in order to know. \
 The careful, methodical, systematic, deliberate, intentional approach was adopted. \
 Results showed that results were consistent with earlier results from prior results.`;
 
-describeE2E('E2E: StylistAgent W2 — stylistAnnotateTab on isolated temp tab', () => {
-  let tempTabId   = '';
-  const RUN_ID    = Date.now();
+describeE2E('E2E: EarTuneAgent W2 — earTuneAnnotateTab on isolated temp tab', () => {
+  let tempTabId = '';
+  const RUN_ID = Date.now();
   const tempTabName = `E2E-EarTune-${RUN_ID}`;
 
   beforeAll(() => {
@@ -581,9 +582,9 @@ describeE2E('E2E: StylistAgent W2 — stylistAnnotateTab on isolated temp tab', 
     runGasFunction(webAppUrl, 'architectGenerateExample', [], TOKEN());
 
     // Step 3: seed EarTune tab with example instructions
-    //         (no Gemini — writes hardcoded STYLIST_EXAMPLE_CONTENT).
-    console.log('[E2E eartune] stylistGenerateExample…');
-    runGasFunction(webAppUrl, 'stylistGenerateExample', [], TOKEN());
+    //         (no Gemini — writes hardcoded EARTUNE_EXAMPLE_CONTENT).
+    console.log('[E2E eartune] earTuneGenerateExample…');
+    runGasFunction(webAppUrl, 'earTuneGenerateExample', [], TOKEN());
 
     // Step 4: create an isolated temp tab and populate it with fixture prose.
     //         The tab name is unique per run so parallel runs cannot interfere.
@@ -607,12 +608,13 @@ describeE2E('E2E: StylistAgent W2 — stylistAnnotateTab on isolated temp tab', 
     }
   }, LONG_TIMEOUT);
 
-  it('stylistAnnotateTab completes and creates at least one [EditorLLM] comment on the temp tab', () => {
+  it('earTuneAnnotateTab completes and creates at least one [EarTune] comment on the temp tab', () => {
     // Run the full EarTune W2 pipeline on the temp tab via the web app.
     // One fast-tier Gemini call; result is Drive comments anchored to tempTabId.
-    console.log(`[E2E eartune] calling stylistAnnotateTab("${tempTabName}")…`);
-    runGasFunction(webAppUrl, 'stylistAnnotateTab', [tempTabName], TOKEN());
-    console.log('[E2E eartune] stylistAnnotateTab returned');
+    // W2 comments use the agent-specific prefix [EarTune], not the global [EditorLLM] prefix.
+    console.log(`[E2E eartune] calling earTuneAnnotateTab("${tempTabName}")…`);
+    runGasFunction(webAppUrl, 'earTuneAnnotateTab', [tempTabName], TOKEN());
+    console.log('[E2E eartune] earTuneAnnotateTab returned');
 
     // Fetch all Drive comments on the doc and filter by anchor tab ID.
     // The anchor JSON format (reverse-engineered from Drive API) is:
@@ -625,11 +627,16 @@ describeE2E('E2E: StylistAgent W2 — stylistAnnotateTab on isolated temp tab', 
       } catch { return false; }
     });
 
-    const agentComments = onTempTab.filter(c => c.content?.startsWith('[EditorLLM]'));
+    const agentComments = onTempTab.filter(c => c.content?.startsWith('[EarTune]'));
     console.log(
       `[E2E eartune] Drive comments on temp tab: ${onTempTab.length} total, ` +
       `${agentComments.length} from agent`
     );
+    const allAgentCommentsGlobal = allComments.filter(c => c.content?.startsWith('[EarTune]'));
+    console.log(`[E2E eartune] Global document agent comments (uncached): ${allAgentCommentsGlobal.length}`);
+    if (allAgentCommentsGlobal.length > 0) {
+      console.log(`Global Agent Comment Sample: ${allAgentCommentsGlobal[0].content?.slice(0, 100)} - ANCHOR:`, allAgentCommentsGlobal[0].anchor);
+    }
     if (agentComments.length > 0) {
       console.log(`[E2E eartune] first agent comment: "${agentComments[0].content?.slice(0, 120)}"`);
     }
@@ -637,7 +644,7 @@ describeE2E('E2E: StylistAgent W2 — stylistAnnotateTab on isolated temp tab', 
     expect(agentComments.length).toBeGreaterThanOrEqual(1);
   }, LONG_TIMEOUT);
 
-  it('each agent comment on the temp tab starts with the [EditorLLM] prefix', () => {
+  it('each agent comment on the temp tab starts with the [EarTune] prefix', () => {
     const allComments = listAllComments(DOC_ID, TOKEN());
     const onTempTab = allComments.filter(c => {
       try {
@@ -648,10 +655,82 @@ describeE2E('E2E: StylistAgent W2 — stylistAnnotateTab on isolated temp tab', 
 
     // Only check comments that already exist — if none, the previous test would
     // have failed already; here we verify every one has the correct prefix.
-    const agentComments = onTempTab.filter(c => c.content?.startsWith('[EditorLLM]'));
+    const agentComments = onTempTab.filter(c => c.content?.startsWith('[EarTune]'));
     for (const c of agentComments) {
-      expect(c.content).toMatch(/^\[EditorLLM\]/);
+      expect(c.content).toMatch(/^\[EarTune\]/);
     }
     console.log(`[E2E eartune] verified prefix on ${agentComments.length} comment(s)`);
   }, LONG_TIMEOUT);
+});
+
+// ── E2E 8: architectGenerateExample — tab content verification ────────────────
+// Runs setupStandardTabs + architectGenerateExample via doPost, then reads the
+// StyleProfile tab via Docs REST API and asserts expected example content.
+//
+// This is a zero-cost test (no Gemini calls — architectGenerateExample writes
+// hardcoded EXAMPLE_CONTENT from ArchitectAgent.ts).
+//
+// What this test proves:
+//   • The full generateExample pipeline (ensureStandardTabs → markdownToTab)
+//     executes without error — including the getOrCreateTab duplicate-tab fix.
+//   • Tab content is substantial and matches expected headings/structure.
+
+describeE2E('E2E: architectGenerateExample — StyleProfile content verification', () => {
+  beforeAll(() => {
+    seedTestEnvironment_(webAppUrl, TOKEN());
+  }, TIMEOUT);
+
+  it('setupStandardTabs + architectGenerateExample complete without error', () => {
+    console.log('[E2E archExample] setupStandardTabs…');
+    const setupResult = runGasFunction(webAppUrl, 'setupStandardTabs', [], TOKEN());
+    console.log(`[E2E archExample] setupStandardTabs result: ${JSON.stringify(setupResult)}`);
+    expect(setupResult).toBeDefined();
+
+    console.log('[E2E archExample] architectGenerateExample…');
+    const exampleResult = runGasFunction(webAppUrl, 'architectGenerateExample', [], TOKEN());
+    console.log(`[E2E archExample] architectGenerateExample result: ${JSON.stringify(exampleResult)}`);
+    expect(exampleResult).toEqual({ ok: true });
+  }, TIMEOUT);
+
+  it('StyleProfile tab contains the expected example headings and structure', () => {
+    // Read the StyleProfile tab content via Docs REST API.
+    const content = getTabContent(DOC_ID, 'StyleProfile', TOKEN());
+    console.log(`[E2E archExample] StyleProfile content length: ${content.length}`);
+    console.log(`[E2E archExample] StyleProfile first 200 chars: "${content.slice(0, 200)}"`);
+
+    // Minimum content length — the example is ~900 chars of markdown
+    expect(content.length).toBeGreaterThan(200);
+
+    // Expected section headings from ArchitectAgent.EXAMPLE_CONTENT
+    expect(content).toContain('Voice');
+    expect(content).toContain('Sentence Rhythm');
+    expect(content).toContain('Vocabulary Register');
+    expect(content).toContain('Structural Patterns');
+    expect(content).toContain('Thematic Motifs');
+
+    // Expected content fragments (from the hardcoded EXAMPLE_CONTENT)
+    expect(content).toContain('philosophical inquiry');
+    expect(content).toContain('Chit');
+  }, TIMEOUT);
+
+  it('standard instruction tabs exist after setup', () => {
+    const tabs = fetchTabs(DOC_ID, TOKEN());
+    const tabNames = tabs.map(t => t.title);
+    console.log(`[E2E archExample] tabs: ${JSON.stringify(tabNames)}`);
+
+    // Expected standard tabs created by ensureStandardTabs
+    const expected = [
+      'MergedContent',
+      'Agentic Instructions',
+      'Agentic Scratch',
+      'StyleProfile',
+      'EarTune Instructions',
+      'Audit Instructions',
+      'TetherInstructions',
+      'Comment Instructions',
+    ];
+    for (const name of expected) {
+      expect(tabNames).toContain(name);
+    }
+  }, TIMEOUT);
 });

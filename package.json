@@ -5,14 +5,16 @@
   "main": "dist/Code.js",
   "type": "commonjs",
   "scripts": {
-    "build": "tsc && cp appsscript.json dist/ && cp *.html dist/ 2>/dev/null || true",
+    "build": "rm -rf dist && tsc && cp appsscript.json dist/ && cp *.html dist/ 2>/dev/null || true",
     "lint": "eslint src/**/*.ts",
-    "test": "jest",
-    "test:integration": "jest --config jest.integration.config.cjs",
-    "test:e2e": "jest --config jest.e2e.config.cjs",
+    "test": "npm run build && jest",
+    "test:integration": "jest --config jest.integration.config.cjs 2>&1 | tee .last_integration_test_results.txt",
+    "test:e2e": "jest --config jest.e2e.config.cjs 2>&1 | tee .last_e2e_test_results.txt",
     "build:all": "npm run build && npm run lint && npm run test",
     "deploy:staging": "bash deploy.sh --skip-e2e",
-    "deploy:prod": "npm run build:all && clasp deploy --deploymentId YOUR_DEPLOYMENT_ID_HERE"
+    "deploy:prod": "npm run build:all && clasp deploy --deploymentId YOUR_DEPLOYMENT_ID_HERE",
+    "dump_prompts": "node scripts/dump_prompts.js",
+    "postbuild": "npm run dump_prompts"
   },
   "devDependencies": {
     "@types/google-apps-script": "^1.0.83",

@@ -1,5 +1,7 @@
 node_modules/
 dist/
+transcripts/
 *.js.map
 .env
 .env.integration
+.last_*

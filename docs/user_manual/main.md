@@ -9,7 +9,7 @@ EditorLLM is an AI-augmented editing workspace for Google Docs. It provides a te
 1. [Setup & Configuration](01-setup.md)
 2. [Tab Merger](02-tab-merger.md)
 3. [Structural Architect](03-structural-architect.md)
-4. [Audio Stylist (Ear-Tune)](04-audio-stylist.md)
+4. [Audio EarTune (Ear-Tune)](04-audio-eartune.md)
 5. [Logical Auditor (Technical Audit)](05-logical-auditor.md)
 6. [Comment Agent (@AI Responder)](06-comment-agent.md)
 7. [Review Workflow: Scratch Tabs & Annotations](07-review-workflow.md)
@@ -26,6 +26,16 @@ EditorLLM is an AI-augmented editing workspace for Google Docs. It provides a te
 3. The sidebar appears on the right side of the document.
 
 If you don't see the EditorLLM menu, the add-on may not be installed on this document. Ask the document owner to verify the script is bound and authorized.
+
+### Live Log Sidebar
+
+For long-running operations (Ear-Tune, Audit), a real-time progress log is available:
+
+1. Click **EditorLLM** > **Open Log Sidebar**.
+2. The log sidebar opens on the right. It polls every two seconds and streams log entries as the agent runs.
+3. Each entry shows a timestamp, log level, and message — e.g., `[INFO] EarTuneAgent: processing paragraph 3/12`.
+
+The log sidebar is non-blocking: you can continue reading or editing while an agent runs. Close it at any time; it does not interrupt the running operation.
 
 ## First-Time Setup
 
@@ -60,7 +70,7 @@ EditorLLM uses three model tiers. Each can be configured independently.
 
 | Tier | Used by | Recommended for |
 |---|---|---|
-| **Fast** | Comment Agent, Audio Stylist | Low-latency tasks: comments, prose styling |
+| **Fast** | Comment Agent, Audio EarTune | Low-latency tasks: comments, prose styling |
 | **Thinking** | Structural Architect, Logical Auditor | Deep reasoning: style analysis, technical audits |
 | **DeepSeek** | (Available for future agents) | Experimental model slot |
 
@@ -193,11 +203,11 @@ Uses **Thinking** (extended reasoning) — deep style analysis requires careful 
 
 ---
 
-# Audio Stylist (Ear-Tune)
+# Audio EarTune (Ear-Tune)
 
 ## What It Does
 
-The Audio Stylist optimises prose for spoken-word clarity and rhythmic listenability. It proposes rewrites that:
+The Audio EarTune optimises prose for spoken-word clarity and rhythmic listenability. It proposes rewrites that:
 
 - Eliminate tongue-twisting consonant clusters.
 - Ensure sentences land on stressed syllables.
@@ -213,11 +223,11 @@ All edits are constrained by the StyleProfile, so the author's voice is maintain
 This is the primary editing action:
 
 1. Navigate to the tab you want to optimise (e.g., a chapter tab).
-2. Open the sidebar and find the **Audio Stylist** section.
+2. Open the sidebar and find the **Audio EarTune** section.
 3. The sidebar shows "Active tab: Chapter 1" (or whichever tab you're on). Click the **↻** button to refresh if it shows the wrong tab.
 4. Click **Ear-Tune**.
 
-The Stylist will:
+The EarTune will:
 - Read the active tab's content.
 - Read the StyleProfile and EarTune instructions for context.
 - Propose rhythmic rewrites via the Gemini API.
@@ -232,15 +242,15 @@ Click **Generate Example** to write sample EarTune instructions to the EarTune t
 
 Click **Generate** to regenerate the EarTune system prompt:
 
-1. The Stylist reads the current StyleProfile.
+1. The EarTune reads the current StyleProfile.
 2. It produces updated EarTune instructions that incorporate the rhythm and cadence patterns specific to your manuscript.
 3. The result is written to an **EarTune Scratch** review tab.
 
 Review and accept or edit the instructions before the next Ear-Tune run.
 
-## Comment Routing: `@eartune` or `@stylist`
+## Comment Routing: `@eartune` or `@eartune`
 
-You can invoke the Stylist from a comment:
+You can invoke the EarTune from a comment:
 
 1. Select a passage.
 2. Add a comment:
@@ -249,11 +259,11 @@ You can invoke the Stylist from a comment:
    ```
    or:
    ```
-   @stylist This paragraph reads too monotonously — add rhythm variation.
+   @eartune This paragraph reads too monotonously — add rhythm variation.
    ```
 3. Click **Process @AI Comments**.
 
-The Stylist will:
+The EarTune will:
 - Read the StyleProfile and EarTune instructions.
 - If possible, identify which tab contains the selected passage (anchor tab resolution).
 - Build a prompt targeting the specific passage with your instruction.
@@ -262,7 +272,7 @@ The Stylist will:
 ## When to Run
 
 - **After finalising content** — run Ear-Tune on each chapter tab once the prose is stable.
-- **After StyleProfile changes** — regenerate EarTune instructions so the Stylist reflects your updated style.
+- **After StyleProfile changes** — regenerate EarTune instructions so the EarTune reflects your updated style.
 - **On selected passages via comments** — for targeted rhythmic fixes.
 
 ## What It Reads
@@ -389,7 +399,7 @@ Click **Process @AI Comments** in the sidebar (green button in the Comment Agent
 The system scans all comment threads and:
 - Finds threads where the **last message** starts with a recognised `@tag`.
 - Routes `@AI` threads to the Comment Agent.
-- Routes `@architect`, `@eartune`, `@stylist`, `@audit`, `@auditor` to their respective agents.
+- Routes `@architect`, `@eartune`, `@eartune`, `@audit`, `@auditor` to their respective agents.
 - Posts a reply to each processed thread.
 - Shows a summary: "Replied: 3, Skipped: 1".
 
@@ -437,8 +447,8 @@ When the Comment Agent processes a thread, it uses:
 |---|---|---|
 | `@AI` | Comment Agent | Free-form reply (no doc changes) |
 | `@architect` | Structural Architect | Architectural analysis or StyleProfile update |
-| `@eartune` | Audio Stylist | Rhythmic rewrite of selected passage |
-| `@stylist` | Audio Stylist | Same as `@eartune` |
+| `@eartune` | Audio EarTune | Rhythmic rewrite of selected passage |
+| `@ear-tune` | Audio EarTune | Hyphenated alias for `@eartune` |
 | `@audit` | Logical Auditor | Technical audit of selected passage |
 | `@auditor` | Logical Auditor | Same as `@audit` |
 
@@ -567,6 +577,15 @@ The error message includes a list of available models to help you choose.
 
 **Fix:** This is a known limitation of text-matching. Check the Apps Script logs (View > Logs in the script editor) for "match_text not found" warnings.
 
+### Log Sidebar shows no output
+
+**Cause:** The log ring buffer in CacheService is empty or has expired (entries are evicted after 6 hours).
+
+**Possible fixes:**
+- Trigger an operation (Ear-Tune, Audit) and then open the log sidebar — it only shows entries from the current session.
+- If entries immediately disappear, confirm the sidebar is open *before* starting the operation so it captures entries from the beginning.
+- Check Apps Script Executions (https://script.google.com) for server-side errors that may be preventing log writes.
+
 ### "Could not fetch comments"
 
 **Cause:** The Drive API failed to list comments, typically due to a permissions issue.
@@ -580,7 +599,7 @@ The error message includes a list of available models to help you choose.
 - All tagged threads have already been answered (the last message is an AI reply).
 - The tag used isn't recognised (e.g., `@helper` is not a registered agent tag).
 
-**Fix:** Check your comment threads. The last message must start with a registered tag (`@AI`, `@architect`, `@eartune`, `@stylist`, `@audit`, `@auditor`).
+**Fix:** Check your comment threads. The last message must start with a registered tag (`@AI`, `@architect`, `@eartune`, `@ear-tune`, `@audit`, `@auditor`).
 
 ## Checking Logs
 
@@ -593,7 +612,7 @@ For detailed debugging, open the Apps Script editor:
 
 Key log prefixes:
 - `[CommentProcessor]` — comment routing, thread parsing, dispatch
-- `[ArchitectAgent]`, `[StylistAgent]`, `[AuditAgent]`, `[CommentAgent]` — per-agent Gemini calls and context
+- `[ArchitectAgent]`, `[EarTuneAgent]`, `[AuditAgent]`, `[CommentAgent]` — per-agent Gemini calls and context
 - `[DocOps]` — tab creation and registry operations
 
 ## Performance

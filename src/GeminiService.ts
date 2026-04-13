@@ -9,13 +9,17 @@ const GeminiService = (() => {
   // ── API key helpers ────────────────────────────────────────────────────────
 
   /**
-   * Script properties take precedence (shared/admin key).
-   * User properties are the per-user override fallback.
+   * Environment variables take precedence (only available during tests).
+   * User properties are the per-user override.
+   * Script properties are the fallback (shared/admin key).
    */
   function resolveApiKey_(): string | null {
+    if (typeof process !== 'undefined' && process.env.GEMINI_API_KEY) {
+      return process.env.GEMINI_API_KEY;
+    }
     return (
-      PropertiesService.getScriptProperties().getProperty(PROP_KEY_API) ||
-      PropertiesService.getUserProperties().getProperty(PROP_KEY_API)
+      PropertiesService.getUserProperties().getProperty(PROP_KEY_API) ||
+      PropertiesService.getScriptProperties().getProperty(PROP_KEY_API)
     );
   }
 
@@ -32,11 +36,21 @@ const GeminiService = (() => {
   // ── Model resolution ───────────────────────────────────────────────────────
 
   function resolveModel_(tier: ModelTier): string {
-    const props = PropertiesService.getScriptProperties();
-    const key = tier === MODEL.FAST     ? MODEL_PROP_KEYS.FAST
-              : tier === MODEL.THINKING ? MODEL_PROP_KEYS.THINKING
-              :                          MODEL_PROP_KEYS.DEEPSEEK;
-    return props.getProperty(key) || DEFAULT_MODELS[tier];
+    const key = `GEMINI_${tier.toUpperCase()}_MODEL`;
+
+    if (typeof process !== 'undefined') {
+      if (tier === MODEL.FAST && process.env.GEMINI_FAST_MODEL) return process.env.GEMINI_FAST_MODEL;
+      if (tier === MODEL.THINKING && process.env.GEMINI_THINKING_MODEL) return process.env.GEMINI_THINKING_MODEL;
+      if (tier === MODEL.DEEPSEEK && process.env.GEMINI_DEEPSEEK_MODEL) return process.env.GEMINI_DEEPSEEK_MODEL;
+    }
+
+    const userProp = PropertiesService.getUserProperties().getProperty(key);
+    if (userProp) return userProp;
+
+    const scriptProp = PropertiesService.getScriptProperties().getProperty(key);
+    if (scriptProp) return scriptProp;
+
+    return DEFAULT_MODELS[tier];
   }
 
   // ── Payload construction ───────────────────────────────────────────────────
@@ -63,46 +77,102 @@ const GeminiService = (() => {
 
   // ── Core API call ──────────────────────────────────────────────────────────
 
-  function callApi_(apiKey: string, model: string, payload: object): any {
-    const url = `${API_BASE}/${model}:generateContent?key=${apiKey}`;
-    const response = UrlFetchApp.fetch(url, {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify(payload),
+  /**
+   * Builds UrlFetchApp options, injecting the API key as an HTTP header
+   * (x-goog-api-key) instead of a URL query parameter.
+   * Keeping the key out of the URL prevents it from appearing in server logs,
+   * proxy logs, and browser history (OWASP API2:2023 / Sensitive Data Exposure).
+   */
+  function buildFetchOptions_(apiKey: string, extra: GoogleAppsScript.URL_Fetch.URLFetchRequestOptions = {}): GoogleAppsScript.URL_Fetch.URLFetchRequestOptions {
+    return {
+      ...extra,
+      headers: {
+        ...(extra.headers as object | undefined ?? {}),
+        'x-goog-api-key': apiKey,
+      },
       muteHttpExceptions: true,
-    });
+    };
+  }
 
-    const raw = response.getContentText();
-    const result = JSON.parse(raw);
+  /**
+   * Returns true for error codes/messages that are worth retrying:
+   *   429 — rate limited (quota exceeded or too many requests)
+   *   503 — service unavailable / overloaded
+   */
+  function isRetryableError_(httpCode: number, msg: string): boolean {
+    if (httpCode === 429 || httpCode === 503) return true;
+    if (msg.includes('quota') || msg.includes('rate') || msg.includes('overloaded')) return true;
+    return false;
+  }
 
-    if (result.error) {
-      const msg: string = result.error.message ?? '';
-      // Enrich model-not-found errors with the live list of available models
-      if (msg.includes('is not found') || msg.includes('not supported for generateContent')) {
-        let modelList = '';
-        try {
-          const available = listGenerateContentModels();
-          modelList = '\n\nAvailable models that support generateContent:\n  ' +
-            available.join('\n  ');
-        } catch (_) {
-          modelList = '\n\n(Could not fetch available models — check your API key.)';
+  /**
+   * Calls the Gemini generateContent endpoint.
+   * Retries up to MAX_RETRIES times with exponential back-off when the API
+   * returns a rate-limit (429) or overload (503) error, which can occur when
+   * two consecutive thinking-tier calls are made in rapid succession.
+   */
+  function callApi_(apiKey: string, model: string, payload: object): any {
+    const MAX_RETRIES = 2;
+    // Back-off delays in ms: first retry after 15 s, second after 30 s.
+    const RETRY_DELAYS = [15000, 30000];
+
+    // API key travels in the x-goog-api-key header — NOT in the URL.
+    const url = `${API_BASE}/${model}:generateContent`;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      const response = UrlFetchApp.fetch(url, buildFetchOptions_(apiKey, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify(payload),
+      }));
+
+      const httpCode = response.getResponseCode();
+      const raw = response.getContentText();
+      const result = JSON.parse(raw);
+
+      if (result.error) {
+        const msg: string = result.error.message ?? '';
+
+        if (attempt < MAX_RETRIES && isRetryableError_(httpCode, msg)) {
+          const delay = RETRY_DELAYS[attempt];
+          Tracer.warn(
+            `[GeminiService] callApi_: HTTP ${httpCode} — "${msg}" — ` +
+            `retrying in ${delay / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES})`
+          );
+          Utilities.sleep(delay);
+          continue;
         }
-        throw new Error(
-          `Model "${model}" is not available or has been deprecated.${modelList}` +
-          `\n\nUpdate your model configuration in the ${EXTENSION_NAME} sidebar → Setup → Configure Models.`
-        );
+
+        // Enrich model-not-found errors with the live list of available models
+        if (msg.includes('is not found') || msg.includes('not supported for generateContent')) {
+          let modelList = '';
+          try {
+            const available = listGenerateContentModels();
+            modelList = '\n\nAvailable models that support generateContent:\n  ' +
+              available.join('\n  ');
+          } catch (_) {
+            modelList = '\n\n(Could not fetch available models — check your API key.)';
+          }
+          throw new Error(
+            `Model "${model}" is not available or has been deprecated.${modelList}` +
+            `\n\nUpdate your model configuration in the ${EXTENSION_NAME} sidebar → Setup → Configure Models.`
+          );
+        }
+        throw new Error(`Gemini API error: ${msg}`);
       }
-      throw new Error(`Gemini API error: ${msg}`);
+
+      // Skip thought parts; find the first text part that is not a thinking trace
+      const parts: any[] = result.candidates?.[0]?.content?.parts ?? [];
+      const textPart = parts.find((p: any) => !p.thought && p.text);
+      if (!textPart) {
+        throw new Error('Gemini returned no usable content. Full response: ' + raw);
+      }
+
+      return JSON.parse(textPart.text);
     }
 
-    // Skip thought parts; find the first text part that is not a thinking trace
-    const parts: any[] = result.candidates?.[0]?.content?.parts ?? [];
-    const textPart = parts.find((p: any) => !p.thought && p.text);
-    if (!textPart) {
-      throw new Error('Gemini returned no usable content. Full response: ' + raw);
-    }
-
-    return JSON.parse(textPart.text);
+    // Should never reach here — the loop always returns or throws.
+    throw new Error('[GeminiService] callApi_: exhausted retries without resolving');
   }
 
   // ── Public: generateJson ───────────────────────────────────────────────────
@@ -139,9 +209,10 @@ const GeminiService = (() => {
     const apiKey = resolveApiKey_();
     if (!apiKey) throw new Error('API key not set. Cannot list models.');
 
+    // API key travels in the x-goog-api-key header — NOT in the URL.
     const resp = UrlFetchApp.fetch(
-      `${API_BASE}?key=${apiKey}&pageSize=100`,
-      { muteHttpExceptions: true }
+      `${API_BASE}?pageSize=100`,
+      buildFetchOptions_(apiKey)
     );
     const result = JSON.parse(resp.getContentText());
     if (result.error) {
@@ -157,25 +228,25 @@ const GeminiService = (() => {
   }
 
   /**
-   * Persists the three model names to script properties.
-   * Script properties are shared across all users of this bound script.
+   * Persists the three model names to user properties.
+   * Keys provided by the user are stored exclusively per-user.
    */
   function saveModelConfig(fast: string, thinking: string, deepseek: string): void {
-    const props = PropertiesService.getScriptProperties();
-    props.setProperty(MODEL_PROP_KEYS.FAST,     fast.trim());
-    props.setProperty(MODEL_PROP_KEYS.THINKING, thinking.trim());
-    props.setProperty(MODEL_PROP_KEYS.DEEPSEEK, deepseek.trim());
+    const props = PropertiesService.getUserProperties();
+    props.setProperty('GEMINI_FAST_MODEL',     fast.trim());
+    props.setProperty('GEMINI_THINKING_MODEL', thinking.trim());
+    props.setProperty('GEMINI_DEEPSEEK_MODEL', deepseek.trim());
   }
 
   /**
    * Returns the currently configured model names (or defaults if not yet set).
+   * Models resolve hierarchically: Environment -> User Properties -> Script Properties.
    */
   function getModelConfig(): { fast: string; thinking: string; deepseek: string } {
-    const props = PropertiesService.getScriptProperties();
     return {
-      fast:     props.getProperty(MODEL_PROP_KEYS.FAST)     || DEFAULT_MODELS.fast,
-      thinking: props.getProperty(MODEL_PROP_KEYS.THINKING) || DEFAULT_MODELS.thinking,
-      deepseek: props.getProperty(MODEL_PROP_KEYS.DEEPSEEK) || DEFAULT_MODELS.deepseek,
+      fast:     resolveModel_(MODEL.FAST),
+      thinking: resolveModel_(MODEL.THINKING),
+      deepseek: resolveModel_(MODEL.DEEPSEEK),
     };
   }
 

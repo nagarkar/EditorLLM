@@ -18,13 +18,15 @@ const CommentProcessor = (() => {
       for (const tag of agent.tags) {
         const normalised = tag.toLowerCase();
         if (tagRegistry_.has(normalised)) {
-          Logger.log(`[CommentProcessor] init: duplicate tag "${normalised}" — last writer wins`);
+          Tracer.warn(`[CommentProcessor] init: duplicate tag "${normalised}" — last writer wins`);
         }
         tagRegistry_.set(normalised, agent);
       }
     }
+    
+    // TODO: Log tags by agent instead of just a full list of tags
     const tags = [...tagRegistry_.keys()].join(', ');
-    Logger.log(
+    Tracer.info(
       `[CommentProcessor] init: ${tagRegistry_.size} tag(s) across ${roster_.length} agent(s): [${tags}]`
     );
   }
@@ -43,7 +45,7 @@ const CommentProcessor = (() => {
     let pageToken: string | undefined;
     let page = 0;
 
-    try {
+    try {      
       do {
         page++;
         const opts: any = {
@@ -60,15 +62,15 @@ const CommentProcessor = (() => {
         all.push(...items);
 
         pageToken = list.nextPageToken;
-        Logger.log(
+        Tracer.info(
           `[CommentProcessor] fetchComments_: page ${page} → ${items.length} comment(s) (cumulative: ${all.length})`
         );
       } while (pageToken);
 
-      Logger.log(`[CommentProcessor] fetchComments_: total ${all.length} comment(s) fetched`);
+      Tracer.info(`[CommentProcessor] fetchComments_: total ${all.length} comment(s) fetched`);
       return all;
     } catch (e: any) {
-      Logger.log(`[CommentProcessor] fetchComments_: Drive.Comments.list failed — ${e.message}`);
+      Tracer.error(`[CommentProcessor] fetchComments_: Drive.Comments.list failed — ${e.message}`);
       throw new Error(`Could not fetch comments: ${e.message}`);
     }
   }
@@ -89,15 +91,15 @@ const CommentProcessor = (() => {
       try {
         // GAS API not in @types — cast required
         (Drive.Replies as any).create(
-          { content: reply.content },
+          { content: AGENT_COMMENT_PREFIX + reply.content },
           docId,
           reply.threadId,
           { fields: 'id,content' }
         );
-        Logger.log(`[CommentProcessor] postReply_: posted reply to thread ${reply.threadId} (attempt ${attempt})`);
+        Tracer.info(`[CommentProcessor] postReply_: posted reply to thread ${reply.threadId} (attempt ${attempt})`);
         return true;
       } catch (e: any) {
-        Logger.log(
+        Tracer.error(
           `[CommentProcessor] postReply_: attempt ${attempt} FAILED for thread ${reply.threadId} — ${e.message}`
         );
         if (attempt < 2) {
@@ -111,32 +113,27 @@ const CommentProcessor = (() => {
   // ── Thread parsing ───────────────────────────────────────────────────────────
 
   /**
-   * Searches all document tabs for one whose body contains the given probe string.
-   * Uses DocumentApp's start-of-execution snapshot (fast, but misses tabs created
-   * during this run). Returns the tab title, or null if not found.
+   * Walks the tab tree once and maps each tab's unique ID to its title.
+   * This enables true O(1) anchor resolution from Drive API payloads without
+   * ever fetching tab body text over the Apps Script RPC bridge.
    */
-  function resolveAnchorTabName_(selectedText: string): string | null {
-    if (!selectedText.trim()) return null;
-    const probe = selectedText.slice(0, 80);
+  function buildTabDirectory_(): Map<string, string> {
+    const directory = new Map<string, string>();
 
-    function search_(tabs: GoogleAppsScript.Document.Tab[]): string | null {
+    function visit_(tabs: GoogleAppsScript.Document.Tab[]): void {
       for (const tab of tabs) {
-        if (tab.asDocumentTab().getBody().getText().includes(probe)) {
-          return tab.getTitle();
-        }
-        const found = search_(tab.getChildTabs());
-        if (found) return found;
+        directory.set(tab.getId(), tab.getTitle());
+        visit_(tab.getChildTabs());
       }
-      return null;
     }
 
-    const result = search_(DocumentApp.getActiveDocument().getTabs());
-    if (!result) {
-      Logger.log(
-        `[CommentProcessor] resolveAnchorTabName_: no tab found for probe "${probe.slice(0, 40)}…"`
-      );
-    }
-    return result;
+    visit_(DocumentApp.getActiveDocument().getTabs());
+    Tracer.info(`[CommentProcessor] buildTabDirectory_: ${directory.size} tab(s) indexed`);
+    return directory;
+  }
+
+  function rosterNeedsAnchorTab_(): boolean {
+    return roster_.some(a => a.contextKeys.includes(COMMENT_ANCHOR_TAB));
   }
 
   /**
@@ -158,7 +155,7 @@ const CommentProcessor = (() => {
    *   in the last message.
    * Role detection: messages starting with "Response from @AI" are AI turns.
    */
-  function buildThread_(comment: any): CommentThread | null {
+  function buildThread_(comment: any, tabDirectory: Map<string, string>): CommentThread | null {
     const replies: any[] = comment.replies || [];
     const allMessages = [comment, ...replies];
     const lastMessage = allMessages[allMessages.length - 1];
@@ -191,12 +188,23 @@ const CommentProcessor = (() => {
       '';
 
     const agent = tagRegistry_.get(tag)!;
-    const anchorTabName = agent.contextKeys.includes(COMMENT_ANCHOR_TAB)
-      ? resolveAnchorTabName_(selectedText)
-      : null;
+    let anchorTabName: string | null = null;
+    
+    if (agent.contextKeys.includes(COMMENT_ANCHOR_TAB)) {
+      try {
+        const anchorObj = JSON.parse(comment.anchor || '{}');
+        const tabId = anchorObj?.a?.[0]?.lt?.tb?.id;
+        if (tabId && tabDirectory.has(tabId)) {
+          anchorTabName = tabDirectory.get(tabId)!;
+        }
+      } catch (e) {
+        // Fallback: unable to parse explicit tab ID, agent will fallback to selectedText
+      }
+    }
 
     const threadId = comment.id || comment.commentId;
-    Logger.log(
+    
+    Tracer.info(
       `[CommentProcessor] buildThread_: parsed thread=${threadId} tag=${tag} ` +
       `anchor=${anchorTabName ?? '(none)'} msgs=${allMessages.length}`
     );
@@ -226,13 +234,13 @@ const CommentProcessor = (() => {
       if (key === COMMENT_ANCHOR_TAB) {
         const nullCount = threads.filter(t => t.anchorTabName === null).length;
         if (nullCount > 0) {
-          Logger.log(
+          Tracer.warn(
             `[CommentProcessor] validateRequiredTabs_: ${nullCount}/${threads.length} thread(s) for ` +
             `${agent.constructor.name} have no resolved anchor tab — agent will use selectedText as fallback`
           );
         }
       } else if (!DocOps.tabExists(key)) {
-        Logger.log(
+        Tracer.warn(
           `[CommentProcessor] validateRequiredTabs_: required tab "${key}" missing for ${agent.constructor.name}`
         );
       }
@@ -255,30 +263,39 @@ const CommentProcessor = (() => {
     let skipped = 0;
 
     const comments = fetchComments_(docId);
-    Logger.log(`[CommentProcessor] processAll: ${comments.length} comment(s) to process`);
+    Tracer.info(`[CommentProcessor] processAll: ${comments.length} comment(s) to process`);
+
+    const tabDirectory: Map<string, string> =
+      comments.length > 0 && rosterNeedsAnchorTab_() ? buildTabDirectory_() : new Map();
 
     // ── Phase 1: Parse all threads and group by agent instance ───────────────
     // Using Map<BaseAgent, CommentThread[]> keyed on object identity so
-    // multi-tag agents (e.g. StylistAgent with @eartune and @stylist) receive
+    // multi-tag agents (e.g. EarTuneAgent with @eartune and @eartune) receive
     // all their threads in a single batch.
     const agentGroups = new Map<BaseAgent, CommentThread[]>();
+    // threadId → tag: used in phase 2 so byAgent is keyed by routing tag
+    // (e.g. '@audit') rather than class name, matching the original behaviour
+    // that predated the batch API refactor.
+    const threadIdToTag = new Map<string, string>();
 
     for (const comment of comments) {
       const commentId = comment.id || comment.commentId || '(unknown)';
 
-      const thread = buildThread_(comment);
+      const thread = buildThread_(comment, tabDirectory);
       if (!thread) {
-        Logger.log(`[CommentProcessor] processAll: skipping comment ${commentId} — no routable tag`);
+        Tracer.warn(`[CommentProcessor] processAll: skipping comment ${commentId} — no routable tag`);
         skipped++;
         continue;
       }
 
       const agent = tagRegistry_.get(thread.tag);
       if (!agent) {
-        Logger.log(`[CommentProcessor] processAll: skipping thread ${thread.threadId} — tag "${thread.tag}" not in registry`);
+        Tracer.warn(`[CommentProcessor] processAll: skipping thread ${thread.threadId} — tag "${thread.tag}" not in registry`);
         skipped++;
         continue;
       }
+
+      threadIdToTag.set(thread.threadId, thread.tag);
 
       if (!agentGroups.has(agent)) {
         agentGroups.set(agent, []);
@@ -289,7 +306,7 @@ const CommentProcessor = (() => {
     // ── Phase 2: Dispatch each agent group as a single batch ─────────────────
     for (const [agent, threads] of agentGroups) {
       const agentName = agent.constructor.name;
-      Logger.log(
+      Tracer.info(
         `[CommentProcessor] processAll: dispatching ${threads.length} thread(s) to ${agentName}`
       );
 
@@ -300,14 +317,14 @@ const CommentProcessor = (() => {
       try {
         replies = agent.handleCommentThreads(threads);
       } catch (e: any) {
-        Logger.log(
+        Tracer.error(
           `[CommentProcessor] processAll: ${agentName} threw on batch of ${threads.length} thread(s) — ${e.message}`
         );
         skipped += threads.length;
         continue;
       }
 
-      Logger.log(
+      Tracer.info(
         `[CommentProcessor] processAll: ${agentName} returned ${replies.length} reply/replies ` +
         `for ${threads.length} thread(s)`
       );
@@ -317,14 +334,15 @@ const CommentProcessor = (() => {
         const posted = postReply_(docId, reply);
         if (posted) {
           replied++;
-          byAgent[agentName] = (byAgent[agentName] || 0) + 1;
+          const tag = threadIdToTag.get(reply.threadId) ?? agentName;
+          byAgent[tag] = (byAgent[tag] || 0) + 1;
         } else {
           skipped++;
         }
       }
     }
 
-    Logger.log(
+    Tracer.info(
       `[CommentProcessor] processAll: done — replied=${replied}, skipped=${skipped}, byAgent=${JSON.stringify(byAgent)}`
     );
     return { replied, skipped, byAgent };

@@ -8,9 +8,9 @@ The system is designed for high-fidelity manuscript editing, where a set of spec
 
 ### Key capabilities
 
-- **Multi-agent comment routing** — users tag comment threads with `@AI`, `@architect`, `@eartune`, `@stylist`, `@audit`, or `@auditor`; each thread is automatically dispatched to the appropriate agent.
+- **Multi-agent comment routing** — users tag comment threads with `@AI`, `@architect`, `@eartune`, `@eartune`, `@audit`, or `@auditor`; each thread is automatically dispatched to the appropriate agent.
 - **StyleProfile generation** — the Structural Architect analyses the full manuscript and produces a binding style guide that constrains all other agents.
-- **Ear-Tune editing** — the Audio Stylist proposes rhythmic, spoken-word-optimised rewrites.
+- **Ear-Tune editing** — the Audio EarTune proposes rhythmic, spoken-word-optimised rewrites.
 - **Technical auditing** — the Logical Auditor checks axiom consistency, LaTeX captions, and physical constants.
 - **Tab management** — automated creation of standard tabs, tab merging, and content routing between tabs.
 - **Configurable models** — three Gemini model tiers (fast, thinking, deepseek) stored in script properties and configurable from the sidebar.
@@ -49,7 +49,7 @@ EditorLLM/
 │   ├── CollaborationService.ts   # Matching, highlighting, commenting (IIFE module)
 │   ├── BaseAgent.ts              # Abstract base class with registry
 │   ├── ArchitectAgent.ts         # Structural Architect agent
-│   ├── StylistAgent.ts           # Audio Stylist agent
+│   ├── EarTuneAgent.ts           # Audio EarTune agent
 │   ├── AuditAgent.ts             # Logical Auditor agent
 │   ├── CommentAgent.ts           # @AI catch-all comment handler
 │   ├── CommentProcessor.ts       # Comment routing orchestrator (IIFE module)
@@ -93,7 +93,7 @@ Because GAS evaluates files sequentially in a flat scope, the order matters. `.c
 6. `CollaborationService.js` — highlighting/commenting (references `DocOps`, `HIGHLIGHT_COLOR`)
 7. `BaseAgent.js` — abstract base class (references `GeminiService`, `DocOps`, `MODEL`)
 8. `ArchitectAgent.js` — extends `BaseAgent` (references `ARCHITECT_SYSTEM_PROMPT`)
-9. `StylistAgent.js` — extends `BaseAgent`
+9. `EarTuneAgent.js` — extends `BaseAgent`
 10. `AuditAgent.js` — extends `BaseAgent`
 11. `CommentAgent.js` — extends `BaseAgent`
 12. `TabMerger.js` — tab merge utility (references `DocOps`, `TAB_NAMES`)
@@ -138,13 +138,13 @@ Every concrete agent implements five abstract members:
 
 | Member | Purpose |
 |---|---|
-| `tags: string[]` | Lowercase routing tags (e.g. `['@eartune', '@stylist']`) |
+| `tags: string[]` | Lowercase routing tags (e.g. `['@eartune', '@eartune']`) |
 | `contextKeys: string[]` | Tab names needed for comment processing (pre-flight validation) |
 | `handleCommentThread(thread)` | Workflow 3: reply to a comment thread; return a `ThreadReply`. No doc changes. |
 | `generateInstructions()` | Workflow 1: refresh the agent's system prompt tab via `instruction_update` |
 | `generateExample()` | Write example content to the agent's tabs |
 
-Note also that `annotateTab(tabName)` is a concrete method on StylistAgent and AuditAgent (workflow 2) — not an abstract BaseAgent method.
+Note also that `annotateTab(tabName)` is a concrete method on EarTuneAgent and AuditAgent (workflow 2) — not an abstract BaseAgent method.
 
 ### 5.3 Tag-Based Comment Routing
 
@@ -202,7 +202,7 @@ Three configurable tiers map to Gemini model names stored in script properties:
 
 | Tier | Constant | Default | Used by |
 |---|---|---|---|
-| `fast` | `MODEL.FAST` | `gemini-2.0-flash` | CommentAgent, StylistAgent |
+| `fast` | `MODEL.FAST` | `gemini-2.0-flash` | CommentAgent, EarTuneAgent |
 | `thinking` | `MODEL.THINKING` | `gemini-2.5-pro-preview-03-25` | ArchitectAgent, AuditAgent |
 | `deepseek` | `MODEL.DEEPSEEK` | `gemini-2.0-flash-thinking-exp-01-21` | Available for future agents |
 
@@ -226,7 +226,7 @@ User writes "@eartune Smooth this rhythm" as a comment on selected text
          │     └── extract tag, agentRequest, selectedText, conversation
          │     └── resolveAnchorTabName_() if agent needs COMMENT_ANCHOR_TAB
          │
-         ├── tag registry lookup → StylistAgent
+         ├── tag registry lookup → EarTuneAgent
          │
          ├── validateRequiredTabs_() (advisory logging)
          │
@@ -270,7 +270,7 @@ User clicks "Generate" on Structural Architect card
 | `MergedContent` | (root) | Unified manuscript text, merged from chapter tabs |
 | `Agentic Instructions` | (root) | Parent tab for all agent configuration |
 | `StyleProfile` | Agentic Instructions | Generated style guide constraining all agents |
-| `EarTune` | Agentic Instructions | Ear-Tune system prompt for the Audio Stylist |
+| `EarTune` | Agentic Instructions | Ear-Tune system prompt for the Audio EarTune |
 | `TechnicalAudit` | Agentic Instructions | Audit rules for the Logical Auditor |
 | `Comment Instructions` | Agentic Instructions | System prompt for the `@AI` comment responder |
 

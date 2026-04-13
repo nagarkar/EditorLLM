@@ -36,4 +36,10 @@ module.exports = {
   // xmlhttprequest keeps an internal libuv handle open after synchronous XHR
   // completes. forceExit cleans up after all tests finish rather than hanging.
   forceExit: true,
+  // Write a human-readable summary to .last_integration_test_results.txt after every run
+  // so the AI assistant can read failures directly without copy-paste.
+  reporters: [
+    'default',
+    ['<rootDir>/jest.file-reporter.cjs', { outputFile: '.last_integration_test_results.txt' }],
+  ],
 };

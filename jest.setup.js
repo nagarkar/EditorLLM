@@ -1,5 +1,10 @@
 // Mock all Google Apps Script globals for Jest (Node.js) environment
 
+const fs = require('fs');
+const path = require('path');
+
+// The PromptBuilders requirement has been deprecated.
+
 const mockBody = {
   getText: jest.fn().mockReturnValue(''),
   clear: jest.fn(),
@@ -120,6 +125,59 @@ global.Docs = {
 
 global.Logger = {
   log: jest.fn(),
+};
+
+// ── CacheService mock (in-memory Map with TTL) ────────────────────────────
+// Used by the real Tracer module in tracer.test.ts.
+function createMockCache() {
+  const store = new Map();  // key → { value, expiresAt }
+  return {
+    _store: store,  // exposed for test assertions
+    put(key, value, ttl) {
+      const expiresAt = ttl ? Date.now() + ttl * 1000 : Infinity;
+      store.set(key, { value: String(value), expiresAt });
+    },
+    get(key) {
+      const entry = store.get(key);
+      if (!entry) return null;
+      if (Date.now() > entry.expiresAt) {
+        store.delete(key);
+        return null;
+      }
+      return entry.value;
+    },
+    getAll(keys) {
+      const result = {};
+      keys.forEach(function(k) {
+        const v = this.get(k);
+        if (v !== null) result[k] = v;
+      }, this);
+      return result;
+    },
+    remove(key) { store.delete(key); },
+    removeAll(keys) { keys.forEach(function(k) { store.delete(k); }); },
+  };
+}
+
+const mockUserCache = createMockCache();
+global.CacheService = {
+  getUserCache: jest.fn().mockReturnValue(mockUserCache),
+  getScriptCache: jest.fn().mockReturnValue(createMockCache()),
+  _mockUserCache: mockUserCache,  // exposed for test reset
+  _createMockCache: createMockCache,
+};
+
+global.Tracer = {
+  info:       jest.fn(),
+  warn:       jest.fn(),
+  error:      jest.fn(),
+  startJob:   jest.fn(),
+  finishJob:  jest.fn(),
+  failJob:    jest.fn(),
+  getLogs:    jest.fn().mockReturnValue([]),
+  getJobStatus: jest.fn().mockReturnValue({ label: 'Agent', done: false, error: null }),
+  getJobList:   jest.fn().mockReturnValue([]),
+  clearAll:     jest.fn(),
 };
 
 global.Utilities = {

@@ -16,19 +16,20 @@
   ],
   "filePushOrder": [
     "dist/Types.js",
-    "dist/Prompts.js",
     "dist/StringProcessor.js",
     "dist/GeminiService.js",
     "dist/DocOps.js",
     "dist/CollaborationService.js",
     "dist/BaseAgent.js",
     "dist/ArchitectAgent.js",
-    "dist/StylistAgent.js",
+    "dist/EarTuneAgent.js",
     "dist/AuditAgent.js",
+    "dist/TetherAgent.js",
     "dist/CommentAgent.js",
     "dist/MarkdownService.js",
     "dist/TabMerger.js",
     "dist/CommentProcessor.js",
+    "dist/Tracer.js",
     "dist/Code.js"
   ],
   "skipSubdirectories": false

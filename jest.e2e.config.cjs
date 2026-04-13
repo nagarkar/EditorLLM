@@ -45,4 +45,10 @@ module.exports = {
   // E2E involves a real GAS execution + Gemini API call — allow 5 minutes.
   testTimeout: 5 * 60 * 1000,
   forceExit: true,
+  // Write a human-readable summary to .last_e2e_test_results after every run
+  // so the AI assistant can read failures directly without copy-paste.
+  reporters: [
+    'default',
+    ['<rootDir>/jest.file-reporter.cjs', { outputFile: '.last_e2e_test_results.txt' }],
+  ],
 };

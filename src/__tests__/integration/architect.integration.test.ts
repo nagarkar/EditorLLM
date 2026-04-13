@@ -4,10 +4,13 @@
 // Workflow coverage:
 //   W1 (generateInstructions) — instruction_update → { proposed_full_text, operations }
 //   W2 (annotateTab)          — NOT APPLICABLE for ArchitectAgent
-//   W3 (handleCommentThread)  — reply-only → { reply }
+//   W3 (handleCommentThreads) — batch reply → { responses: [{threadId, reply}] }
 //
-// All tests use the thinking model (gemini-2.5-pro).
-// Individual test timeout is set to 120 s.
+// ArchitectAgent does not subgroup by anchor tab; all threads share
+// MergedContent + StyleProfile context in one batch.
+//
+// All tests use the thinking model.
+// Individual test timeout is set to 120 s; multi-thread tests use 150 s.
 // ============================================================
 
 import { callGemini } from './helpers/gemini';
@@ -16,7 +19,14 @@ import {
   buildArchitectInstructionsPrompt,
   buildArchitectBatchPrompt,
 } from './helpers/prompts';
-import { FIXTURES, INTEGRATION_SYSTEM_PROMPT } from './fixtures/testDocument';
+import {
+  FIXTURES,
+  INTEGRATION_SYSTEM_PROMPT,
+  ARCHITECT_THREADS,
+} from './fixtures/testDocument';
+
+const TIMEOUT       = 120000;
+const TIMEOUT_MULTI = 150000;
 
 // ── W1: generateInstructions ──────────────────────────────────────────────────
 
@@ -35,56 +45,11 @@ describe('ArchitectAgent — W1: generateInstructions (instruction_update)', () 
 
     expect(typeof result.proposed_full_text).toBe('string');
     expect(result.proposed_full_text.trim().length).toBeGreaterThan(0);
-    expect(Array.isArray(result.operations)).toBe(true);
-    expect(result.operations.length).toBeGreaterThan(0);
-  }, 120000);
+  }, TIMEOUT);
 
-  it('each operation has non-empty match_text and reason', () => {
-    const userPrompt = buildArchitectInstructionsPrompt({
-      manuscript: FIXTURES.MERGED_CONTENT,
-    });
-    const result = callGemini(
-      INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
-      INSTRUCTION_UPDATE_SCHEMA,
-      { tier: 'thinking' }
-    );
 
-    for (const op of result.operations) {
-      expect(typeof op.match_text).toBe('string');
-      expect(op.match_text.trim().length).toBeGreaterThan(0);
-      expect(typeof op.reason).toBe('string');
-      expect(op.reason.trim().length).toBeGreaterThan(0);
-    }
-  }, 120000);
-
-  it('each W1 match_text is a verbatim substring of proposed_full_text', () => {
-    // The prompt explicitly instructs: "Each match_text must be a verbatim 3–4-word
-    // phrase from proposed_full_text." So the correct grounding source is the model's
-    // own proposed output, not the manuscript.
-    const userPrompt = buildArchitectInstructionsPrompt({ manuscript: FIXTURES.MERGED_CONTENT });
-    const result = callGemini(
-      INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
-      INSTRUCTION_UPDATE_SCHEMA,
-      { tier: 'thinking' }
-    );
-
-    const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-    const normalizedProposed = normalize(result.proposed_full_text);
-    const hallucinated = result.operations.filter(op => {
-      const n = normalize(op.match_text);
-      return n.length > 0 && !normalizedProposed.includes(n);
-    });
-    if (hallucinated.length > 0) {
-      console.warn(`[match_text grounding] ${hallucinated.length}/${result.operations.length} ops have match_text not found in proposed_full_text:`);
-      hallucinated.forEach(op => console.warn(`  - "${op.match_text.slice(0, 100)}"`));
-    }
-    expect(hallucinated.length).toBeLessThanOrEqual(2);
-  }, 120000);
 
   it('gracefully returns a response even when MergedContent is empty', () => {
-    // Empty context degrades quality but must not crash.
     const userPrompt = buildArchitectInstructionsPrompt({ manuscript: '' });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
@@ -93,10 +58,8 @@ describe('ArchitectAgent — W1: generateInstructions (instruction_update)', () 
       { tier: 'thinking' }
     );
 
-    // Response may be minimal but must still match the schema.
     expect(typeof result.proposed_full_text).toBe('string');
-    expect(Array.isArray(result.operations)).toBe(true);
-  }, 120000);
+  }, TIMEOUT);
 
 });
 
@@ -105,63 +68,21 @@ describe('ArchitectAgent — W1: generateInstructions (instruction_update)', () 
 describe('ArchitectAgent — W2: annotateTab (not applicable)', () => {
 
   it('is not implemented on ArchitectAgent', () => {
-    // ArchitectAgent has no annotateTab method. This test documents the intent
-    // and will fail at TypeScript compile time if annotateTab is ever added
-    // without a corresponding integration test.
-    //
-    // The absence of a W2 test for ArchitectAgent is intentional: architectural
-    // analysis runs via W1 (generateInstructions) for instruction-level changes
-    // and W3 (handleCommentThread) for targeted passage feedback.
     expect(true).toBe(true); // deliberate no-op — see comment above
   });
 
 });
 
-// ── W3: handleCommentThread ───────────────────────────────────────────────────
+// ── W3: handleCommentThreads — single-thread batch ───────────────────────────
 
-describe('ArchitectAgent — W3: handleCommentThread (reply-only)', () => {
+describe('ArchitectAgent — W3: single-thread batch', () => {
 
-  it('returns a reply string when analysing a selected passage', () => {
-    const userPrompt = buildArchitectBatchPrompt({
-      styleProfile:  FIXTURES.STYLE_PROFILE,
-      manuscript:    FIXTURES.MERGED_CONTENT,
-      selectedText:  'The Chid Axiom fills this gap',
-      agentRequest:  'Does this passage follow the thesis→observation pattern?',
-    });
-    const result = callGemini(
-      INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
-      BATCH_REPLY_SCHEMA,
-      { tier: 'thinking' }
-    );
-
-    expect(typeof result.reply).toBe('string');
-    expect(result.reply.trim().length).toBeGreaterThan(0);
-  }, 120000);
-
-  it('reply ends with the AI Editorial Assistant signature', () => {
-    const userPrompt = buildArchitectBatchPrompt({
-      styleProfile:  FIXTURES.STYLE_PROFILE,
-      manuscript:    FIXTURES.MERGED_CONTENT,
-      selectedText:  'consciousness is the ground',
-      agentRequest:  'Check motif consistency.',
-    });
-    const result = callGemini(
-      INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
-      BATCH_REPLY_SCHEMA,
-      { tier: 'thinking' }
-    );
-
-    expect(result.reply).toContain('AI Editorial Assistant');
-  }, 120000);
-
-  it('does NOT return a RootUpdate or workflow_type field', () => {
+  it('returns a responses array with a valid threadId and non-empty reply', () => {
+    const [thread] = ARCHITECT_THREADS;
     const userPrompt = buildArchitectBatchPrompt({
       styleProfile: FIXTURES.STYLE_PROFILE,
       manuscript:   FIXTURES.MERGED_CONTENT,
-      selectedText: 'orthodox quantum mechanics',
-      agentRequest: 'Flag any inconsistency.',
+      threads:      [thread],
     });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
@@ -170,18 +91,56 @@ describe('ArchitectAgent — W3: handleCommentThread (reply-only)', () => {
       { tier: 'thinking' }
     );
 
-    // W3 is reply-only — no document mutation fields should appear.
+    expect(Array.isArray(result.responses)).toBe(true);
+    expect(result.responses.length).toBeGreaterThan(0);
+    const r = result.responses[0];
+    expect(r.threadId).toBe(thread.threadId);
+    expect(typeof r.reply).toBe('string');
+    expect(r.reply.trim().length).toBeGreaterThan(0);
+  }, TIMEOUT);
+
+  it('reply ends with the AI Editorial Assistant signature', () => {
+    const [thread] = ARCHITECT_THREADS;
+    const userPrompt = buildArchitectBatchPrompt({
+      styleProfile: FIXTURES.STYLE_PROFILE,
+      manuscript:   FIXTURES.MERGED_CONTENT,
+      threads:      [thread],
+    });
+    const result = callGemini(
+      INTEGRATION_SYSTEM_PROMPT,
+      userPrompt,
+      BATCH_REPLY_SCHEMA,
+      { tier: 'thinking' }
+    );
+
+    expect(result.responses[0].reply).toContain('AI Editorial Assistant');
+  }, TIMEOUT);
+
+  it('does NOT return workflow_type or document-mutation fields', () => {
+    const [thread] = ARCHITECT_THREADS;
+    const userPrompt = buildArchitectBatchPrompt({
+      styleProfile: FIXTURES.STYLE_PROFILE,
+      manuscript:   FIXTURES.MERGED_CONTENT,
+      threads:      [thread],
+    });
+    const result = callGemini(
+      INTEGRATION_SYSTEM_PROMPT,
+      userPrompt,
+      BATCH_REPLY_SCHEMA,
+      { tier: 'thinking' }
+    );
+
     expect(result.workflow_type).toBeUndefined();
     expect(result.target_tab).toBeUndefined();
     expect(result.operations).toBeUndefined();
-  }, 120000);
+  }, TIMEOUT);
 
   it('gracefully handles empty StyleProfile', () => {
+    const [thread] = ARCHITECT_THREADS;
     const userPrompt = buildArchitectBatchPrompt({
-      styleProfile: '',  // missing — should degrade gracefully
+      styleProfile: '',
       manuscript:   FIXTURES.MERGED_CONTENT,
-      selectedText: 'The Chid Axiom fills this gap',
-      agentRequest: 'Analyse structure.',
+      threads:      [thread],
     });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
@@ -190,9 +149,74 @@ describe('ArchitectAgent — W3: handleCommentThread (reply-only)', () => {
       { tier: 'thinking' }
     );
 
-    expect(typeof result.reply).toBe('string');
-    expect(result.reply.trim().length).toBeGreaterThan(0);
-  }, 120000);
+    expect(Array.isArray(result.responses)).toBe(true);
+    expect(result.responses.length).toBeGreaterThan(0);
+    expect(result.responses[0].reply.trim().length).toBeGreaterThan(0);
+  }, TIMEOUT);
+
+});
+
+// ── W3: handleCommentThreads — multi-thread batch ────────────────────────────
+
+describe('ArchitectAgent — W3: multi-thread batch (no anchor-tab subgrouping)', () => {
+
+  it('returns responses — all returned threadIds are valid input IDs', () => {
+    const userPrompt = buildArchitectBatchPrompt({
+      styleProfile: FIXTURES.STYLE_PROFILE,
+      manuscript:   FIXTURES.MERGED_CONTENT,
+      threads:      ARCHITECT_THREADS,
+    });
+    const result = callGemini(
+      INTEGRATION_SYSTEM_PROMPT,
+      userPrompt,
+      BATCH_REPLY_SCHEMA,
+      { tier: 'thinking' }
+    );
+
+    expect(Array.isArray(result.responses)).toBe(true);
+    expect(result.responses.length).toBeGreaterThan(0);
+
+    const validIds = new Set(ARCHITECT_THREADS.map(t => t.threadId));
+    for (const r of result.responses) {
+      expect(validIds.has(r.threadId)).toBe(true);
+    }
+  }, TIMEOUT_MULTI);
+
+  it('each reply in the multi-thread batch is a non-empty string', () => {
+    const userPrompt = buildArchitectBatchPrompt({
+      styleProfile: FIXTURES.STYLE_PROFILE,
+      manuscript:   FIXTURES.MERGED_CONTENT,
+      threads:      ARCHITECT_THREADS,
+    });
+    const result = callGemini(
+      INTEGRATION_SYSTEM_PROMPT,
+      userPrompt,
+      BATCH_REPLY_SCHEMA,
+      { tier: 'thinking' }
+    );
+
+    for (const r of result.responses) {
+      expect(typeof r.reply).toBe('string');
+      expect(r.reply.trim().length).toBeGreaterThan(0);
+    }
+  }, TIMEOUT_MULTI);
+
+  it('no duplicate threadIds in the batch response', () => {
+    const userPrompt = buildArchitectBatchPrompt({
+      styleProfile: FIXTURES.STYLE_PROFILE,
+      manuscript:   FIXTURES.MERGED_CONTENT,
+      threads:      ARCHITECT_THREADS,
+    });
+    const result = callGemini(
+      INTEGRATION_SYSTEM_PROMPT,
+      userPrompt,
+      BATCH_REPLY_SCHEMA,
+      { tier: 'thinking' }
+    );
+
+    const ids = result.responses.map((r: any) => r.threadId);
+    expect(new Set(ids).size).toBe(ids.length);
+  }, TIMEOUT_MULTI);
 
 });
 
@@ -201,11 +225,11 @@ describe('ArchitectAgent — W3: handleCommentThread (reply-only)', () => {
 describe('ArchitectAgent — error conditions', () => {
 
   it('throws a descriptive error when the API key is invalid', () => {
+    const [thread] = ARCHITECT_THREADS;
     const userPrompt = buildArchitectBatchPrompt({
       styleProfile: FIXTURES.STYLE_PROFILE,
       manuscript:   FIXTURES.MERGED_CONTENT,
-      selectedText: 'any passage',
-      agentRequest: 'any request',
+      threads:      [thread],
     });
 
     expect(() =>

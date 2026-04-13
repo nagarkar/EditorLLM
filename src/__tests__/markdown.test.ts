@@ -479,7 +479,7 @@ Install the add-on and run **Initialize Tabs**.
 | Agent | Tier |
 | --- | --- |
 | Architect | Thinking |
-| Stylist | Fast |
+| EarTune | Fast |
 
 ---
 

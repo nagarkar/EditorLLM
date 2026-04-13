@@ -1,0 +1,11 @@
+---
+description: After test runs, read Jest file reporter outputs (E2E + integration workflow)
+alwaysApply: true
+---
+
+<!--
+  Canonical workflow text lives in .agents/workflows/run_tests.md only.
+  This file adds Cursor rule frontmatter; do not duplicate steps here.
+-->
+
+@../../.agents/workflows/run_tests.md

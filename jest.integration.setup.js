@@ -212,6 +212,17 @@ global.Logger = {
   log: jest.fn(),
 };
 
+global.Tracer = {
+  info:       jest.fn(),
+  warn:       jest.fn(),
+  error:      jest.fn(),
+  startJob:   jest.fn(),
+  finishJob:  jest.fn(),
+  failJob:    jest.fn(),
+  getLogs:    jest.fn().mockReturnValue([]),
+  getJobStatus: jest.fn().mockReturnValue({ label: 'Agent', done: false, error: null }),
+};
+
 global.Utilities = {
   sleep: jest.fn(),
 };

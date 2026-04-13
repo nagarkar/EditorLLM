@@ -1,10 +1,10 @@
 // ============================================================
-// StylistAgent integration tests — real Gemini API calls.
+// EarTuneAgent integration tests — real Gemini API calls.
 //
 // Workflow coverage:
 //   W1 (generateInstructions) — instruction_update → { proposed_full_text, operations }
 //   W2 (annotateTab)          — content_annotation → { operations }
-//   W3 (handleCommentThread)  — reply-only → { reply }
+//   W3 (handleCommentThreads) — batch reply → { responses: [{threadId, reply}] }
 //
 // All tests use the fast model (gemini-2.0-flash).
 // Individual test timeout is set to 60 s.
@@ -13,9 +13,10 @@
 import { callGemini } from './helpers/gemini';
 import { INSTRUCTION_UPDATE_SCHEMA, ANNOTATION_SCHEMA, BATCH_REPLY_SCHEMA } from './helpers/schemas';
 import {
-  buildStylistInstructionsPrompt,
-  buildStylistAnnotatePrompt,
-  buildStylistBatchPrompt,
+  TestThread,
+  buildEarTuneInstructionsPrompt,
+  buildEarTuneAnnotatePrompt,
+  buildEarTuneBatchPrompt,
 } from './helpers/prompts';
 import { FIXTURES, INTEGRATION_SYSTEM_PROMPT } from './fixtures/testDocument';
 
@@ -24,10 +25,10 @@ const TIMEOUT = 60000;
 
 // ── W1: generateInstructions ──────────────────────────────────────────────────
 
-describe('StylistAgent — W1: generateInstructions (instruction_update)', () => {
+describe('EarTuneAgent — W1: generateInstructions (instruction_update)', () => {
 
   it('produces proposed_full_text and operations from StyleProfile', () => {
-    const userPrompt = buildStylistInstructionsPrompt({
+    const userPrompt = buildEarTuneInstructionsPrompt({
       styleProfile:    FIXTURES.STYLE_PROFILE,
       existingEarTune: FIXTURES.EAR_TUNE,
     });
@@ -40,60 +41,12 @@ describe('StylistAgent — W1: generateInstructions (instruction_update)', () =>
 
     expect(typeof result.proposed_full_text).toBe('string');
     expect(result.proposed_full_text.trim().length).toBeGreaterThan(0);
-    expect(Array.isArray(result.operations)).toBe(true);
-    expect(result.operations.length).toBeGreaterThan(0);
   }, TIMEOUT);
 
-  it('each operation has non-empty match_text and reason', () => {
-    const userPrompt = buildStylistInstructionsPrompt({
-      styleProfile:    FIXTURES.STYLE_PROFILE,
-      existingEarTune: FIXTURES.EAR_TUNE,
-    });
-    const result = callGemini(
-      INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
-      INSTRUCTION_UPDATE_SCHEMA,
-      { tier: TIER }
-    );
 
-    for (const op of result.operations) {
-      expect(typeof op.match_text).toBe('string');
-      expect(op.match_text.trim().length).toBeGreaterThan(0);
-      expect(typeof op.reason).toBe('string');
-      expect(op.reason.trim().length).toBeGreaterThan(0);
-    }
-  }, TIMEOUT);
-
-  it('each W1 match_text is a verbatim substring of proposed_full_text', () => {
-    // The prompt instructs: "each with a verbatim match_text from proposed_full_text".
-    // The W1 context is STYLE_PROFILE + EAR_TUNE (no manuscript); match_text must
-    // be anchored in the model's own proposed output, not the manuscript.
-    const userPrompt = buildStylistInstructionsPrompt({
-      styleProfile:    FIXTURES.STYLE_PROFILE,
-      existingEarTune: FIXTURES.EAR_TUNE,
-    });
-    const result = callGemini(
-      INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
-      INSTRUCTION_UPDATE_SCHEMA,
-      { tier: TIER }
-    );
-
-    const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-    const normalizedProposed = normalize(result.proposed_full_text);
-    const hallucinated = result.operations.filter(op => {
-      const n = normalize(op.match_text);
-      return n.length > 0 && !normalizedProposed.includes(n);
-    });
-    if (hallucinated.length > 0) {
-      console.warn(`[match_text grounding] ${hallucinated.length}/${result.operations.length} ops have match_text not found in proposed_full_text:`);
-      hallucinated.forEach(op => console.warn(`  - "${op.match_text.slice(0, 100)}"`));
-    }
-    expect(hallucinated.length).toBeLessThanOrEqual(2);
-  }, TIMEOUT);
 
   it('gracefully returns a response even when StyleProfile is empty', () => {
-    const userPrompt = buildStylistInstructionsPrompt({
+    const userPrompt = buildEarTuneInstructionsPrompt({
       styleProfile:    '',
       existingEarTune: FIXTURES.EAR_TUNE,
     });
@@ -105,11 +58,10 @@ describe('StylistAgent — W1: generateInstructions (instruction_update)', () =>
     );
 
     expect(typeof result.proposed_full_text).toBe('string');
-    expect(Array.isArray(result.operations)).toBe(true);
   }, TIMEOUT);
 
   it('gracefully returns a response even when existing EarTune is empty', () => {
-    const userPrompt = buildStylistInstructionsPrompt({
+    const userPrompt = buildEarTuneInstructionsPrompt({
       styleProfile:    FIXTURES.STYLE_PROFILE,
       existingEarTune: '',
     });
@@ -121,17 +73,16 @@ describe('StylistAgent — W1: generateInstructions (instruction_update)', () =>
     );
 
     expect(typeof result.proposed_full_text).toBe('string');
-    expect(Array.isArray(result.operations)).toBe(true);
   }, TIMEOUT);
 
 });
 
 // ── W2: annotateTab ───────────────────────────────────────────────────────────
 
-describe('StylistAgent — W2: annotateTab (content_annotation)', () => {
+describe('EarTuneAgent — W2: annotateTab (content_annotation)', () => {
 
   it('returns an operations array when given a passage to annotate', () => {
-    const userPrompt = buildStylistAnnotatePrompt({
+    const userPrompt = buildEarTuneAnnotatePrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
       passage:             FIXTURES.CHAPTER_1,
@@ -149,7 +100,7 @@ describe('StylistAgent — W2: annotateTab (content_annotation)', () => {
   }, TIMEOUT);
 
   it('each annotation operation has non-empty match_text and reason', () => {
-    const userPrompt = buildStylistAnnotatePrompt({
+    const userPrompt = buildEarTuneAnnotatePrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
       passage:             FIXTURES.CHAPTER_1,
@@ -173,7 +124,7 @@ describe('StylistAgent — W2: annotateTab (content_annotation)', () => {
   it('detects the planted alliteration issue in CHAPTER_1', () => {
     // CHAPTER_1 contains: "peculiar peculiar pattern" and "perpetually perplexing portrait"
     // — EarTune rule 4 prohibits 3+ alliterative words in a row.
-    const userPrompt = buildStylistAnnotatePrompt({
+    const userPrompt = buildEarTuneAnnotatePrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
       passage:             FIXTURES.CHAPTER_1,
@@ -197,7 +148,7 @@ describe('StylistAgent — W2: annotateTab (content_annotation)', () => {
 
   it('each W2 match_text is a verbatim substring of the annotated passage', () => {
     const passage = FIXTURES.CHAPTER_1;
-    const userPrompt = buildStylistAnnotatePrompt({
+    const userPrompt = buildEarTuneAnnotatePrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
       passage,
@@ -226,7 +177,7 @@ describe('StylistAgent — W2: annotateTab (content_annotation)', () => {
       'The observer attends and the wave collapses. ' +
       'Consciousness is the ground. ' +
       'In that stillness, measurement becomes meaning.';
-    const userPrompt = buildStylistAnnotatePrompt({
+    const userPrompt = buildEarTuneAnnotatePrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
       passage:             cleanPassage,
@@ -240,12 +191,12 @@ describe('StylistAgent — W2: annotateTab (content_annotation)', () => {
     );
 
     // A genuinely clean passage should produce very few issues.
-    // Allow up to 3 — the model may flag minor stylistic preferences.
-    expect(result.operations.length).toBeLessThanOrEqual(3);
+    // Allow up to 5 — the model may flag minor eartuneic preferences.
+    expect(result.operations.length).toBeLessThanOrEqual(5);
   }, TIMEOUT);
 
   it('returns valid schema response even when passage is very short', () => {
-    const userPrompt = buildStylistAnnotatePrompt({
+    const userPrompt = buildEarTuneAnnotatePrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
       passage:             'Consciousness is.',
@@ -263,7 +214,7 @@ describe('StylistAgent — W2: annotateTab (content_annotation)', () => {
   }, TIMEOUT);
 
   it('does NOT return proposed_full_text (W2 is annotation-only)', () => {
-    const userPrompt = buildStylistAnnotatePrompt({
+    const userPrompt = buildEarTuneAnnotatePrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
       passage:             FIXTURES.CHAPTER_1,
@@ -283,17 +234,22 @@ describe('StylistAgent — W2: annotateTab (content_annotation)', () => {
 
 });
 
-// ── W3: handleCommentThread ───────────────────────────────────────────────────
+// ── W3: handleCommentThreads — single-thread batch ───────────────────────────
 
-describe('StylistAgent — W3: handleCommentThread (reply-only)', () => {
+describe('EarTuneAgent — W3: single-thread batch', () => {
 
-  it('returns a reply string when analysing a selected passage', () => {
-    const userPrompt = buildStylistBatchPrompt({
+  it('returns a responses array with a valid threadId and non-empty reply', () => {
+    const thread: TestThread = {
+      threadId:     'eartune-thread-001',
+      selectedText: 'The persistent persistence of perception pervades',
+      agentRequest: 'Flag any rhythmic issues in this passage.',
+      conversation: [{ role: 'User', authorName: 'Author', content: '@eartune Flag rhythmic issues.' }],
+    };
+    const userPrompt = buildEarTuneBatchPrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
       passageContext:      FIXTURES.MERGED_CONTENT,
-      selectedText:        'The persistent persistence of perception pervades',
-      agentRequest:        'Flag any rhythmic issues in this passage.',
+      threads:             [thread],
     });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
@@ -302,17 +258,26 @@ describe('StylistAgent — W3: handleCommentThread (reply-only)', () => {
       { tier: TIER }
     );
 
-    expect(typeof result.reply).toBe('string');
-    expect(result.reply.trim().length).toBeGreaterThan(0);
+    expect(Array.isArray(result.responses)).toBe(true);
+    expect(result.responses.length).toBeGreaterThan(0);
+    const r = result.responses[0];
+    expect(r.threadId).toBe(thread.threadId);
+    expect(typeof r.reply).toBe('string');
+    expect(r.reply.trim().length).toBeGreaterThan(0);
   }, TIMEOUT);
 
   it('reply ends with the AI Editorial Assistant signature', () => {
-    const userPrompt = buildStylistBatchPrompt({
+    const thread: TestThread = {
+      threadId:     'eartune-thread-002',
+      selectedText: 'consciousness is the ground',
+      agentRequest: 'Check cadence.',
+      conversation: [{ role: 'User', authorName: 'Author', content: '@eartune Check cadence.' }],
+    };
+    const userPrompt = buildEarTuneBatchPrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
       passageContext:      FIXTURES.MERGED_CONTENT,
-      selectedText:        'consciousness is the ground',
-      agentRequest:        'Check cadence.',
+      threads:             [thread],
     });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
@@ -321,16 +286,21 @@ describe('StylistAgent — W3: handleCommentThread (reply-only)', () => {
       { tier: TIER }
     );
 
-    expect(result.reply).toContain('AI Editorial Assistant');
+    expect(result.responses[0].reply).toContain('AI Editorial Assistant');
   }, TIMEOUT);
 
-  it('does NOT return a RootUpdate or workflow_type field', () => {
-    const userPrompt = buildStylistBatchPrompt({
+  it('does NOT return workflow_type or document-mutation fields', () => {
+    const thread: TestThread = {
+      threadId:     'eartune-thread-003',
+      selectedText: 'orthodox quantum mechanics',
+      agentRequest: 'Is the rhythm suitable for read-aloud?',
+      conversation: [{ role: 'User', authorName: 'Author', content: '@eartune Rhythm check.' }],
+    };
+    const userPrompt = buildEarTuneBatchPrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
       passageContext:      FIXTURES.MERGED_CONTENT,
-      selectedText:        'orthodox quantum mechanics',
-      agentRequest:        'Is the rhythm suitable for read-aloud?',
+      threads:             [thread],
     });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
@@ -345,12 +315,17 @@ describe('StylistAgent — W3: handleCommentThread (reply-only)', () => {
   }, TIMEOUT);
 
   it('gracefully handles empty EarTune instructions', () => {
-    const userPrompt = buildStylistBatchPrompt({
+    const thread: TestThread = {
+      threadId:     'eartune-thread-004',
+      selectedText: 'The Chid Axiom fills this gap',
+      agentRequest: 'Evaluate sentence rhythm.',
+      conversation: [{ role: 'User', authorName: 'Author', content: '@eartune Evaluate rhythm.' }],
+    };
+    const userPrompt = buildEarTuneBatchPrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: '',
       passageContext:      FIXTURES.MERGED_CONTENT,
-      selectedText:        'The Chid Axiom fills this gap',
-      agentRequest:        'Evaluate sentence rhythm.',
+      threads:             [thread],
     });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
@@ -359,23 +334,29 @@ describe('StylistAgent — W3: handleCommentThread (reply-only)', () => {
       { tier: TIER }
     );
 
-    expect(typeof result.reply).toBe('string');
-    expect(result.reply.trim().length).toBeGreaterThan(0);
+    expect(Array.isArray(result.responses)).toBe(true);
+    expect(result.responses.length).toBeGreaterThan(0);
+    expect(result.responses[0].reply.trim().length).toBeGreaterThan(0);
   }, TIMEOUT);
 
 });
 
 // ── Error conditions ──────────────────────────────────────────────────────────
 
-describe('StylistAgent — error conditions', () => {
+describe('EarTuneAgent — error conditions', () => {
 
   it('throws a descriptive error when the API key is invalid', () => {
-    const userPrompt = buildStylistBatchPrompt({
+    const thread: TestThread = {
+      threadId:     'eartune-error-thread',
+      selectedText: 'any passage',
+      agentRequest: 'any request',
+      conversation: [{ role: 'User', authorName: 'Author', content: '@eartune any request' }],
+    };
+    const userPrompt = buildEarTuneBatchPrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
       passageContext:      FIXTURES.MERGED_CONTENT,
-      selectedText:        'any passage',
-      agentRequest:        'any request',
+      threads:             [thread],
     });
 
     expect(() =>

@@ -44,6 +44,15 @@ The error message includes a list of available models to help you choose.
 
 **Fix:** This is a known limitation of text-matching. Check the Apps Script logs (View > Logs in the script editor) for "match_text not found" warnings. The agent falls back to highlighting the first word in the tab body.
 
+### Log Sidebar shows no output
+
+**Cause:** The log ring buffer in CacheService is empty or has expired (entries are evicted after 6 hours).
+
+**Possible fixes:**
+- Trigger an operation (Ear-Tune, Audit) and then open the log sidebar — it only shows entries from the current session.
+- If entries immediately disappear, confirm the sidebar is open *before* starting the operation so it captures entries from the beginning.
+- Check Apps Script Executions (https://script.google.com) for server-side errors that may be preventing log writes.
+
 ### "Could not fetch comments"
 
 **Cause:** The Drive API failed to list comments, typically due to a permissions issue.
@@ -57,7 +66,7 @@ The error message includes a list of available models to help you choose.
 - All tagged threads have already been answered (the last message is an AI reply).
 - The tag used isn't recognised (e.g., `@helper` is not a registered agent tag).
 
-**Fix:** Check your comment threads. The last message must start with a registered tag (`@AI`, `@architect`, `@eartune`, `@stylist`, `@audit`, `@auditor`).
+**Fix:** Check your comment threads. The last message must start with a registered tag (`@AI`, `@architect`, `@eartune`, `@ear-tune`, `@audit`, `@auditor`).
 
 ## Checking Logs
 
@@ -70,7 +79,7 @@ For detailed debugging, open the Apps Script editor:
 
 Key log prefixes:
 - `[CommentProcessor]` — comment routing, thread parsing, dispatch
-- `[ArchitectAgent]`, `[StylistAgent]`, `[AuditAgent]`, `[CommentAgent]` — per-agent Gemini calls and context
+- `[ArchitectAgent]`, `[EarTuneAgent]`, `[AuditAgent]`, `[CommentAgent]` — per-agent Gemini calls and context
 - `[DocOps]` — tab creation and registry operations
 
 ## Performance

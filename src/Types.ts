@@ -21,13 +21,14 @@ interface Operation {
  */
 interface RootUpdate {
   workflow_type: 'instruction_update' | 'content_annotation';
+  agent_name?: string;
   /** Required for content_annotation: tab to highlight and comment. */
   target_tab?: string;
   /** Required for instruction_update: base name for the Scratch review tab. */
   review_tab?: string;
   /** Required for instruction_update: the full proposed text. */
   proposed_full_text?: string;
-  operations: Operation[];
+  operations?: Operation[];
 }
 
 /**
@@ -44,21 +45,14 @@ type ModelTier = 'fast' | 'thinking' | 'deepseek';
  * bare string literals — eliminates typos and makes grep easy.
  */
 const MODEL = {
-  FAST:     'fast'     as ModelTier,
+  FAST: 'fast' as ModelTier,
   THINKING: 'thinking' as ModelTier,
   DEEPSEEK: 'deepseek' as ModelTier,
 } as const;
 
-/** Script property keys that hold the configured model names. */
-const MODEL_PROP_KEYS = {
-  FAST:     'GEMINI_FAST_MODEL',
-  THINKING: 'GEMINI_THINKING_MODEL',
-  DEEPSEEK: 'GEMINI_DEEPSEEK_MODEL',
-} as const;
-
 /** Fallback model names used when script properties are not set. */
 const DEFAULT_MODELS: Record<ModelTier, string> = {
-  fast:     'gemini-3-flash-preview',
+  fast: 'gemini-3-flash-preview',
   thinking: 'gemini-3.1-pro-preview',
   deepseek: 'gemini-2.0-flash-thinking-exp-01-21',
 };
@@ -75,7 +69,7 @@ const DEFAULT_MODELS: Record<ModelTier, string> = {
  * touching any test source files.
  */
 interface ModelConfig {
-  fast?:     string;
+  fast?: string;
   thinking?: string;
   deepseek?: string;
 }
@@ -84,9 +78,11 @@ interface ModelConfig {
 const TAB_NAMES = {
   MERGED_CONTENT: 'MergedContent',
   AGENTIC_INSTRUCTIONS: 'Agentic Instructions',
+  AGENTIC_SCRATCH: 'Agentic Scratch',
   STYLE_PROFILE: 'StyleProfile',
-  EAR_TUNE: 'EarTune',
-  TECHNICAL_AUDIT: 'TechnicalAudit',
+  EAR_TUNE: 'EarTune Instructions',
+  TECHNICAL_AUDIT: 'Audit Instructions',
+  TETHER_INSTRUCTIONS: 'TetherInstructions',
   COMMENT_INSTRUCTIONS: 'Comment Instructions',
 } as const;
 
@@ -119,16 +115,16 @@ const COMMENT_ANCHOR_TAB = '__comment_anchor_tab__';
 
 /** A parsed comment thread ready for agent dispatch. */
 interface CommentThread {
-  threadId:      string;
-  tag:           string;           // normalised lowercase, e.g. '@eartune'
-  agentRequest:  string;           // text after the tag in the last message
-  conversation:  CommentMessage[]; // full thread history
-  selectedText:  string;           // the passage the comment is anchored to
+  threadId: string;
+  tag: string;           // normalised lowercase, e.g. '@eartune'
+  agentRequest: string;           // text after the tag in the last message
+  conversation: CommentMessage[]; // full thread history
+  selectedText: string;           // the passage the comment is anchored to
   anchorTabName: string | null;    // resolved by CommentProcessor; null if not found
 }
 
 /** What an agent returns from handleCommentThread — posted as a Drive reply. */
 interface ThreadReply {
   threadId: string;
-  content:  string;
+  content: string;
 }

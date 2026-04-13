@@ -2,27 +2,43 @@
 // Code.ts — Entry point, menu, and exposed server functions
 // ============================================================
 
-// Singletons self-register in BaseAgent's constructor; no explicit list needed.
-const architectAgent = new ArchitectAgent();
-const stylistAgent = new StylistAgent();
-const auditAgent = new AuditAgent();
-const commentAgent = new CommentAgent();
+// Lazy singletons — classes may not be defined yet when Code.js loads
+// (GAS file evaluation order is not guaranteed to follow filePushOrder).
+let architectAgent_: ArchitectAgent;
+let earTuneAgent_: EarTuneAgent;
+let auditAgent_: AuditAgent;
+let tetherAgent_: TetherAgent;
+let commentAgent_: CommentAgent;
 
-// Initialise CommentProcessor from the registry rather than repeating the list.
-CommentProcessor.init(BaseAgent.getAllAgents());
+function getArchitectAgent(): ArchitectAgent { return architectAgent_ ??= new ArchitectAgent(); }
+function getEarTuneAgent(): EarTuneAgent { return earTuneAgent_ ??= new EarTuneAgent(); }
+function getAuditAgent(): AuditAgent { return auditAgent_ ??= new AuditAgent(); }
+function getTetherAgent(): TetherAgent { return tetherAgent_ ??= new TetherAgent(); }
+function getCommentAgent(): CommentAgent { return commentAgent_ ??= new CommentAgent(); }
 
-// --------------- Menu ---------------
+
 
 function onOpen(): void {
-  DocumentApp.getUi()
-    .createMenu('EditorLLM')
+  Tracer.clearAll();  // wipe stale job pills from prior sessions
+  const ui = DocumentApp.getUi();
+  ui.createMenu('EditorLLM')
     .addItem('Open Sidebar', 'showSidebar')
     .addSeparator()
-    .addItem('Configure Architect', 'showArchitectConfig')
-    .addItem('Configure Stylist', 'showStylistConfig')
-    .addItem('Configure Auditor', 'showAuditorConfig')
+    .addSubMenu(ui.createMenu('Architect')
+      .addItem('Generate Instructions', 'architectGenerateInstructions')
+      .addItem('Process Active Tab', 'architectAnnotateTab'))
+    .addSubMenu(ui.createMenu('EarTune')
+      .addItem('Generate Instructions', 'earTuneGenerateInstructions')
+      .addItem('Process Active Tab', 'earTuneAnnotateTab'))
+    .addSubMenu(ui.createMenu('Auditor')
+      .addItem('Generate Instructions', 'auditorGenerateInstructions')
+      .addItem('Process Active Tab', 'auditorAnnotateTab'))
+    .addSubMenu(ui.createMenu('Tether')
+      .addItem('Generate Instructions', 'tetherGenerateInstructions')
+      .addItem('Process Active Tab', 'tetherAnnotateTab'))
     .addSeparator()
     .addItem('Process @AI Comments', 'commentProcessorRun')
+    .addItem('Clear Annotations', 'clearAllAnnotations')
     .addToUi();
 }
 
@@ -42,26 +58,21 @@ function showSidebar(): void {
   DocumentApp.getUi().showSidebar(html);
 }
 
+/** Opens the live-log sidebar (replaces any open sidebar). */
+function showLogSidebar(): void {
+  const html = HtmlService.createHtmlOutputFromFile('LogSidebar')
+    .setTitle('EditorLLM Logs')
+    .setWidth(320);
+  DocumentApp.getUi().showSidebar(html);
+}
+
 // --------------- Config Dialogs ---------------
 
-function showArchitectConfig(): void {
-  showConfigDialog_('architect', 'Structural Architect');
-}
-
-function showStylistConfig(): void {
-  showConfigDialog_('stylist', 'Audio Stylist');
-}
-
-function showAuditorConfig(): void {
-  showConfigDialog_('auditor', 'Logical Auditor');
-}
-
-function showConfigDialog_(agentKey: string, agentLabel: string): void {
-  const html = HtmlService.createHtmlOutputFromFile('ModalDialog')
-    .setWidth(480)
-    .setHeight(360);
-  DocumentApp.getUi()
-    .showModalDialog(html, `Configure — ${agentLabel}`);
+function showApiKeyConfig(): void {
+  const html = HtmlService.createHtmlOutputFromFile('ApiKeyDialog')
+    .setWidth(340)
+    .setHeight(200);
+  DocumentApp.getUi().showModalDialog(html, 'Set API Key');
 }
 
 // --------------- Server functions exposed to sidebar/dialog ---------------
@@ -88,59 +99,155 @@ function saveModelConfig(fast: string, thinking: string, deepseek: string): void
   GeminiService.saveModelConfig(fast, thinking, deepseek);
 }
 
+// Highlight Color Configuration
+function getHighlightColor(): string | null {
+  return PropertiesService.getUserProperties().getProperty('HIGHLIGHT_COLOR') || HIGHLIGHT_COLOR;
+}
+
+function saveHighlightColor(color: string): void {
+  PropertiesService.getUserProperties().setProperty('HIGHLIGHT_COLOR', color);
+}
+
 // Setup
 function setupStandardTabs(): void {
   DocOps.ensureStandardTabs();
 }
 
+// ── Helper: wrap any menu action with job tracking ──────────
+function runTrackedJob_(label: string, action: () => void, openSidebar = false): void {
+  Tracer.startJob(label);
+  if (openSidebar) showLogSidebar();
+  try {
+    action();
+    Tracer.finishJob();
+  } catch (e: any) {
+    Tracer.error(`${label} failed: ${e.message}`);
+    Tracer.failJob(e.message);
+    throw e;
+  }
+}
+
 // Architect
 function architectGenerateExample(): void {
-  BaseAgent.clearAllAgentCaches();
-  architectAgent.generateExample();
+  runTrackedJob_('Architect → Generate Example', () => {
+    BaseAgent.clearAllAgentCaches();
+    getArchitectAgent().generateExample();
+  });
 }
 
 function architectGenerateInstructions(): void {
-  BaseAgent.clearAllAgentCaches();
-  architectAgent.generateInstructions();
+  runTrackedJob_('Architect → Generate Instructions', () => {
+    BaseAgent.clearAllAgentCaches();
+    getArchitectAgent().generateInstructions();
+  });
 }
 
-// Stylist
-function stylistGenerateExample(): void {
-  BaseAgent.clearAllAgentCaches();
-  stylistAgent.generateExample();
+function architectAnnotateTab(tabName?: string): void {
+  DocumentApp.getUi().alert('ArchitectAgent does not support full-tab sweeps. It generates the StyleProfile and responds to @architect comments.');
 }
 
-function stylistGenerateInstructions(): void {
-  BaseAgent.clearAllAgentCaches();
-  stylistAgent.generateInstructions();
+// EARTUNE
+function earTuneGenerateExample(): void {
+  runTrackedJob_('EarTune → Generate Example', () => {
+    BaseAgent.clearAllAgentCaches();
+    getEarTuneAgent().generateExample();
+  });
 }
 
-function stylistAnnotateTab(tabName: string): void {
+function earTuneGenerateInstructions(): void {
+  runTrackedJob_('EarTune → Generate Instructions', () => {
+    BaseAgent.clearAllAgentCaches();
+    getEarTuneAgent().generateInstructions();
+  });
+}
+
+function earTuneAnnotateTab(tabName?: string): void {
   BaseAgent.clearAllAgentCaches();
-  stylistAgent.annotateTab(tabName || TAB_NAMES.MERGED_CONTENT);
+  const target = tabName || getActiveTabName();
+  runTrackedJob_(`EarTune → "${target || 'active tab'}"`, () => {
+    getEarTuneAgent().annotateTab(target as string);
+  }, true);
 }
 
 // Auditor
 function auditorGenerateExample(): void {
-  BaseAgent.clearAllAgentCaches();
-  auditAgent.generateExample();
+  runTrackedJob_('Auditor → Generate Example', () => {
+    BaseAgent.clearAllAgentCaches();
+    getAuditAgent().generateExample();
+  });
 }
 
 function auditorGenerateInstructions(): void {
-  BaseAgent.clearAllAgentCaches();
-  auditAgent.generateInstructions();
+  runTrackedJob_('Auditor → Generate Instructions', () => {
+    BaseAgent.clearAllAgentCaches();
+    getAuditAgent().generateInstructions();
+  });
 }
 
-function auditorAnnotateTab(tabName: string): void {
+function auditorAnnotateTab(tabName?: string): void {
   BaseAgent.clearAllAgentCaches();
-  auditAgent.annotateTab(tabName || TAB_NAMES.MERGED_CONTENT);
+  const target = tabName || getActiveTabName();
+  runTrackedJob_(`Audit → "${target || 'active tab'}"`, () => {
+    getAuditAgent().annotateTab(target as string);
+  }, true);
+}
+
+// Tether
+function tetherGenerateExample(): void {
+  runTrackedJob_('Tether → Generate Example', () => {
+    BaseAgent.clearAllAgentCaches();
+    getTetherAgent().generateExample();
+  });
+}
+
+function tetherGenerateInstructions(): void {
+  runTrackedJob_('Tether → Generate Instructions', () => {
+    BaseAgent.clearAllAgentCaches();
+    getTetherAgent().generateInstructions();
+  });
+}
+
+function tetherAnnotateTab(tabName?: string): void {
+  BaseAgent.clearAllAgentCaches();
+  const target = tabName || getActiveTabName();
+  runTrackedJob_(`Tether → "${target || 'active tab'}"`, () => {
+    getTetherAgent().annotateTab(target as string);
+  }, true);
 }
 
 // Comment Processor
 function commentProcessorRun(): { replied: number; skipped: number; byAgent: Record<string, number> } {
-  BaseAgent.clearAllAgentCaches();
-  return CommentProcessor.processAll();
+  let result: { replied: number; skipped: number; byAgent: Record<string, number> } = { replied: 0, skipped: 0, byAgent: {} };
+  runTrackedJob_('Process @AI Comments', () => {
+    BaseAgent.clearAllAgentCaches();
+    CommentProcessor.init(BaseAgent.getAllAgents());
+    result = CommentProcessor.processAll();
+    Tracer.info(`[commentProcessorRun] replied=${result.replied}, skipped=${result.skipped}`);
+  }, true);
+  return result;
 }
+
+function clearAllAnnotations(): void {
+  runTrackedJob_('Clear All Annotations', () => {
+    BaseAgent.clearAllAgentCaches();
+    const tabs = getTabNames();
+    const prefixes = ['[Architect]', '[EarTune]', '[Auditor]', '[Tether]', '[EditorLLM] '];
+    Tracer.info(`[clearAllAnnotations] starting: ${tabs.length} tab(s), prefixes=${JSON.stringify(prefixes)}`);
+
+    for (const tabName of tabs) {
+      const tabId = DocOps.getTabIdByName(tabName);
+      if (!tabId) {
+        Tracer.warn(`[clearAllAnnotations] tab "${tabName}" has no ID — skipping`);
+        continue;
+      }
+      Tracer.info(`[clearAllAnnotations] clearing tab "${tabName}" (id=${tabId})`);
+      CollaborationService.clearAgentAnnotations(tabId, prefixes);
+      CollaborationService.clearTabHighlights(tabName);
+    }
+    Tracer.info(`[clearAllAnnotations] done`);
+  }, true);
+}
+
 
 /**
  * Web app entry point for E2E testing.
@@ -166,7 +273,7 @@ function doPost(e: GoogleAppsScript.Events.DoPost): GoogleAppsScript.Content.Tex
   let params: unknown[] = [];
   try {
     const body = e?.postData?.contents ? JSON.parse(e.postData.contents) : {};
-    fn     = body.fn     ?? '';
+    fn = body.fn ?? '';
     params = body.params ?? [];
   } catch {
     return ContentService
@@ -178,7 +285,7 @@ function doPost(e: GoogleAppsScript.Events.DoPost): GoogleAppsScript.Content.Tex
   try {
     BaseAgent.clearAllAgentCaches();
     if (fn === 'commentProcessorRun') {
-      result = CommentProcessor.processAll();
+      result = commentProcessorRun();
     } else if (fn === 'hasApiKey') {
       result = GeminiService.hasApiKey();
     } else if (fn === 'setScriptProperty') {
@@ -195,20 +302,20 @@ function doPost(e: GoogleAppsScript.Events.DoPost): GoogleAppsScript.Content.Tex
     } else if (fn === 'architectGenerateExample') {
       // Seeds MergedContent (if empty) and StyleProfile with example content.
       // No Gemini call — writes hardcoded ARCHITECT_EXAMPLE_CONTENT.
-      architectAgent.generateExample();
+      getArchitectAgent().generateExample();
       result = { ok: true };
-    } else if (fn === 'stylistGenerateExample') {
+    } else if (fn === 'earTuneGenerateExample') {
       // Seeds the EarTune tab with example instructions.
-      // No Gemini call — writes hardcoded STYLIST_EXAMPLE_CONTENT.
-      stylistAgent.generateExample();
+      // No Gemini call — writes hardcoded EARTUNE_EXAMPLE_CONTENT.
+      getEarTuneAgent().generateExample();
       result = { ok: true };
-    } else if (fn === 'stylistAnnotateTab') {
+    } else if (fn === 'earTuneAnnotateTab') {
       // Runs a full EarTune sweep on the named tab.
       // Makes one fast-tier Gemini call; results are Drive comments on the tab.
       // params[0] = tabName (must match an existing tab title exactly)
       const [tabName] = params as string[];
-      if (!tabName) throw new Error('stylistAnnotateTab: params[0] (tabName) is required');
-      stylistAgent.annotateTab(tabName);
+      if (!tabName) throw new Error('earTuneAnnotateTab: params[0] (tabName) is required');
+      getEarTuneAgent().annotateTab(tabName);
       result = { ok: true };
     } else {
       return ContentService
@@ -217,7 +324,7 @@ function doPost(e: GoogleAppsScript.Events.DoPost): GoogleAppsScript.Content.Tex
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    Logger.log(`[doPost] ${fn} threw: ${msg}`);
+    Tracer.error(`[doPost] ${fn} threw: ${msg}`);
     return ContentService
       .createTextOutput(JSON.stringify({ error: msg }))
       .setMimeType(ContentService.MimeType.JSON);
@@ -229,22 +336,39 @@ function doPost(e: GoogleAppsScript.Events.DoPost): GoogleAppsScript.Content.Tex
 }
 
 function commentAgentGenerateExample(): void {
-  BaseAgent.clearAllAgentCaches();
-  commentAgent.generateExample();
+  runTrackedJob_('Comment Agent → Generate Example', () => {
+    BaseAgent.clearAllAgentCaches();
+    getCommentAgent().generateExample();
+  });
 }
 
 function commentAgentGenerateInstructions(): void {
-  BaseAgent.clearAllAgentCaches();
-  commentAgent.generateInstructions();
+  runTrackedJob_('Comment Agent → Generate Instructions', () => {
+    BaseAgent.clearAllAgentCaches();
+    getCommentAgent().generateInstructions();
+  });
+}
+
+// --------------- Live-log sidebar server functions ---------------
+
+/** Returns log entries for a specific job with seq > sinceSeq. */
+function getLogsSince(jobId: string, sinceSeq: number): LogEntry[] {
+  return Tracer.getLogs(jobId, sinceSeq);
+}
+
+/** Returns the status of a specific job. */
+function getJobStatus(jobId: string): { label: string; done: boolean; error: string | null } {
+  return Tracer.getJobStatus(jobId);
+}
+
+/** Returns all tracked jobs (newest first) for the sidebar job picker. */
+function getJobList(): JobMeta[] {
+  return Tracer.getJobList();
 }
 
 // Tab Merger
-function mergeOneTabIntoMergeContent(tabName: string): { ok: boolean; name: string; message?: string } {
-  return TabMerger.mergeOneTab(tabName);
-}
-
-function clearMergeTabContent(): { ok: boolean; message?: string } {
-  return TabMerger.clearDestination();
+function runMergeAllTabs(tabNames: string[]): { ok: boolean; successes: number; errors: string[] } {
+  return TabMerger.mergeAllTabs(tabNames);
 }
 
 function getMergeTabNames(): string[] {

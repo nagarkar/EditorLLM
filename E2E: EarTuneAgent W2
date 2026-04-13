@@ -1,0 +1,271 @@
+  console.log
+    [integration setup] GOOGLE_TOKEN: fresh gcloud token (prefix: ya29.a0Aa7MY...)
+
+      at Object.<anonymous> (jest.integration.setup.js:62:13)
+
+  console.log
+    [integration setup] GOOGLE_DOC_ID: 171gwEEGJbJTdsYB1F8mLN2tP2jcBKQbaFHZV1-p_L3E
+
+      at Object.<anonymous> (jest.integration.setup.js:87:9)
+
+  console.log
+    [integration setup] GEMINI_API_KEY: (set)
+
+      at Object.<anonymous> (jest.integration.setup.js:88:9)
+
+  console.log
+    [integration setup] GEMINI_FAST_MODEL: gemini-2.0-flash
+
+      at Object.<anonymous> (jest.integration.setup.js:89:9)
+
+  console.log
+    [integration setup] GEMINI_THINKING_MODEL: gemini-2.5-flash
+
+      at Object.<anonymous> (jest.integration.setup.js:90:9)
+
+  console.log
+    [integration setup] GEMINI_DEEPSEEK_MODEL: gemini-2.0-flash
+
+      at Object.<anonymous> (jest.integration.setup.js:91:9)
+
+  console.log
+    [E2E] webAppUrl:  https://script.google.com/macros/s/AKfycbzDtj8t5Ecu67a-bYftZEJV9QHIjcXE7X7tu4HhTJs9L7VzXJa37wQWK0ulVRHH0YRF9w/exec
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:145:13)
+
+  console.log
+    [E2E] docId:      171gwEEGJbJTdsYB1F8mLN2tP2jcBKQbaFHZV1-p_L3E
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:146:13)
+
+  console.log
+    [E2E] doc URL:    https://docs.google.com/document/d/171gwEEGJbJTdsYB1F8mLN2tP2jcBKQbaFHZV1-p_L3E/edit
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:147:13)
+
+  console.log
+    [E2E] tab:        "Sermons" (t.aduv7dcf2st)
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:156:13)
+
+  console.log
+    [E2E] comment:    AAAB316afGs
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:160:13)
+
+  console.log
+    [E2E] comment URL: https://docs.google.com/document/d/171gwEEGJbJTdsYB1F8mLN2tP2jcBKQbaFHZV1-p_L3E/edit
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:161:13)
+
+  console.log
+    [E2E] comment visible via Drive REST: YES (281 total comments on doc)
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:186:13)
+
+  console.log
+    [E2E] calling commentProcessorRun() via web app doPost()...
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:198:13)
+
+  console.log
+    [E2E] commentProcessorRun result: {"replied":1,"skipped":280,"byAgent":{"@ai":1}}
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:201:13)
+
+  console.log
+    [E2E] comment AAAB316afGs — 1 reply(s), resolved=undefined
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:211:13)
+
+  console.log
+    [E2E] agent reply: [EditorLLM] I fear my friend Basilides hath long since ascended beyond the reach of mortal sight, but I shall guide ye n...
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:224:13)
+
+  console.log
+    [E2E] view in doc: https://docs.google.com/document/d/171gwEEGJbJTdsYB1F8mLN2tP2jcBKQbaFHZV1-p_L3E/edit
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:225:13)
+
+  console.log
+    [E2E hasApiKey] result: true
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:248:13)
+
+  console.log
+    [E2E skip] plain=AAAB316afHI  tagged=AAAB316afHM
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:283:13)
+
+  console.log
+    [E2E skip] processAll result: {"replied":1,"skipped":281,"byAgent":{"@ai":1}}
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:298:13)
+
+  console.log
+    [E2E skip] plain comment agent replies: 0
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:306:13)
+
+  console.log
+    [E2E skip] tagged comment agent replies: 1
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:313:13)
+
+  console.log
+    [E2E idem] comment: AAAB316afH8
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:343:13)
+
+  console.log
+    [E2E idem] run 1: {"replied":1,"skipped":280,"byAgent":{"@ai":1}}
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:360:13)
+
+  console.log
+    [E2E idem] agent replies after 2 runs: 1
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:370:13)
+
+  console.log
+    [E2E multi] comments: {"ai":"AAAB316afIE","architect":"AAAB316afII","audit":"AAAB316afIM"}
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:411:13)
+
+  console.log
+    [E2E multi] processAll result: {"replied":3,"skipped":280,"byAgent":{"@audit":1,"@architect":1,"@ai":1}}
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:427:13)
+
+  console.log
+    [E2E multi] @ai (AAAB316afIE): 1 agent reply(s) — "[EditorLLM] I am not able to answer the question based on the context provided. "
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:453:15)
+
+  console.log
+    [E2E multi] @architect (AAAB316afII): 1 agent reply(s) — "[EditorLLM] No, the provided passage does not require structural changes. It eff"
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:453:15)
+
+  console.log
+    [E2E multi] @audit (AAAB316afIM): 1 agent reply(s) — "[EditorLLM] The passage introduces 'Nothing' as 'the root of all that is, and al"
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:453:15)
+
+  console.log
+    [E2E no-key] comment: AAAB316afIc
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:485:13)
+
+  console.log
+    [E2E no-key] processAll result: {"replied":0,"skipped":280,"byAgent":{}}
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:508:13)
+
+  console.log
+    [E2E no-key] agent replies: 0
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:519:13)
+
+  console.log
+    [E2E eartune] setupStandardTabs…
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:575:13)
+
+  console.log
+    [E2E eartune] architectGenerateExample…
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:580:13)
+
+  console.log
+    [E2E eartune] stylistGenerateExample…
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:585:13)
+
+  console.log
+    [E2E eartune] creating temp tab "E2E-EarTune-1776033469083"…
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:590:13)
+
+  console.log
+    [E2E eartune] tempTabId: t.aji36d8pycez
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:592:13)
+
+  console.log
+    [E2E eartune] fixture prose inserted into temp tab
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:595:13)
+
+  console.log
+    [E2E eartune] calling stylistAnnotateTab("E2E-EarTune-1776033469083")…
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:613:13)
+
+  console.log
+    [E2E eartune] stylistAnnotateTab returned
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:615:13)
+
+  console.log
+    [E2E eartune] Drive comments on temp tab: 8 total, 0 from agent
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:629:13)
+
+  console.log
+    [E2E eartune] verified prefix on 0 comment(s)
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:655:13)
+
+  console.log
+    [E2E eartune] afterAll: temp tab t.aji36d8pycez deleted
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:603:17)
+
+FAIL src/__tests__/integration/e2e.test.ts (179.986 s)
+  E2E: @AI comment → commentProcessorRun() → agent reply
+    ✓ commentProcessorRun() reports at least one reply processed (8691 ms)
+    ✓ the @AI comment thread has an agent reply containing the [EditorLLM] prefix (396 ms)
+    ✓ the agent reply ends with the AI Editorial Assistant signature (388 ms)
+  E2E: hasApiKey doPost route (smoke test)
+    ✓ returns true when GEMINI_API_KEY is present in ScriptProperties (4022 ms)
+  E2E: non-routable comments are skipped
+    ✓ processAll reports skipped >= 1 (the plain comment) and replied >= 1 (the @AI comment) (9126 ms)
+    ✓ the plain comment has no agent reply (350 ms)
+    ✓ the @AI comment has at least one agent reply (329 ms)
+  E2E: commentProcessorRun() is idempotent — no duplicate replies
+    ✓ two consecutive runs produce exactly one agent reply (14146 ms)
+  E2E: multi-thread routing — @ai + @architect + @audit dispatched in one run
+    ✓ processAll routes all three threads and byAgent reflects the correct agent counts (37787 ms)
+    ✓ each comment thread has at least one agent reply with the EditorLLM signature (1225 ms)
+  E2E: missing API key — processAll handles the failure gracefully
+    ✓ processAll returns replied:0 and skipped >= 1 — no unhandled exception (10047 ms)
+    ✓ the comment has no agent reply when the key is missing (383 ms)
+  E2E: StylistAgent W2 — stylistAnnotateTab on isolated temp tab
+    ✕ stylistAnnotateTab completes and creates at least one [EditorLLM] comment on the temp tab (15469 ms)
+    ✓ each agent comment on the temp tab starts with the [EditorLLM] prefix (1195 ms)
+
+  ● E2E: StylistAgent W2 — stylistAnnotateTab on isolated temp tab › stylistAnnotateTab completes and creates at least one [EditorLLM] comment on the temp tab
+
+    expect(received).toBeGreaterThanOrEqual(expected)
+
+    Expected: >= 1
+    Received:    0
+
+      635 |     }
+      636 |
+    > 637 |     expect(agentComments.length).toBeGreaterThanOrEqual(1);
+          |                                  ^
+      638 |   }, LONG_TIMEOUT);
+      639 |
+      640 |   it('each agent comment on the temp tab starts with the [EditorLLM] prefix', () => {
+
+      at Object.<anonymous> (src/__tests__/integration/e2e.test.ts:637:34)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 13 passed, 14 total
+Snapshots:   0 total
+Time:        180.262 s, estimated 237 s
+Ran all test suites.
+Force exiting Jest: Have you considered using `--detectOpenHandles` to detect async operations that kept running after all tests finished?

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: 'Google Sans', sans-serif; padding: 20px; font-size: 13px; color: #202124; }
+    h3 { font-size: 14px; font-weight: 600; color: #6200ea; margin-top: 0; margin-bottom: 12px; }
+    label { display: block; font-size: 11px; font-weight: 600; color: #616161; text-transform: uppercase; margin-bottom: 6px; }
+    input[type="password"], input[type="text"] { width: 100%; padding: 8px; border: 1px solid #bdbdbd; border-radius: 4px; box-sizing: border-box; }
+    input[type="password"]:focus, input[type="text"]:focus { outline: none; border-color: #6200ea; }
+    .btn-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+    button { padding: 8px 16px; border: none; border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .btn-primary { background: #6200ea; color: #fff; }
+    .btn-primary:hover { background: #4527a0; }
+    .btn-ghost { background: transparent; color: #757575; }
+    .btn-ghost:hover { background: #f5f5f5; }
+    #status { margin-top: 10px; padding: 8px; font-size: 11px; border-radius: 4px; display: none; }
+    .info { background: #e8f5e9; color: #2e7d32; display: block!important; }
+    .error { background: #ffebee; color: #c62828; display: block!important; }
+    .loading { background: #fff8e1; color: #f57f17; display: block!important; }
+  </style>
+</head>
+<body>
+  <h3>Set API Key</h3>
+  <label>Gemini API Key</label>
+  <input type="password" id="api-key-input" autocomplete="off" />
+  
+  <div id="status"></div>
+
+  <div class="btn-row">
+    <button class="btn-ghost" onclick="google.script.host.close()">Cancel</button>
+    <button class="btn-primary" onclick="saveKey()">Save</button>
+  </div>
+
+  <script>
+    function setStatus(msg, type) {
+      var el = document.getElementById('status');
+      el.textContent = msg;
+      el.className = type;
+    }
+
+    function saveKey() {
+      var key = document.getElementById('api-key-input').value.trim();
+      if (!key) {
+        setStatus('Please enter an API key.', 'error');
+        return;
+      }
+      setStatus('Saving API key...', 'loading');
+      google.script.run
+        .withSuccessHandler(function() {
+          setStatus('Saved successfully.', 'info');
+          setTimeout(function() { google.script.host.close(); }, 800);
+        })
+        .withFailureHandler(function(e) {
+          setStatus('Error: ' + e.message, 'error');
+        })
+        .saveApiKey(key);
+    }
+
+    // On Load
+    google.script.run
+      .withSuccessHandler(function(hasKey) {
+        var input = document.getElementById('api-key-input');
+        if (hasKey) {
+          input.placeholder = '**** (set)';
+        } else {
+          input.placeholder = 'AIza...';
+        }
+      })
+      .hasApiKey();
+  </script>
+</body>
+</html>

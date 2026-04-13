@@ -1,325 +1,346 @@
 <script>
-    // ── Helpers ────────────────────────────────────────────
+  // ── Helpers ────────────────────────────────────────────
 
-    function setStatus(msg, type) {
-      var el = document.getElementById('status');
+  function setStatus(msg, type) {
+    var el = document.getElementById('status');
+    el.textContent = msg;
+    el.className = 'status-box' + (type ? ' ' + type : '');
+  }
+
+  function setMergeStatus(msg, type) {
+    var el = document.getElementById('merge-status');
+    el.textContent = msg;
+    el.className = 'status-box' + (type ? ' ' + type : '');
+  }
+
+  function setMergeProgress(msg) {
+    document.getElementById('merge-progress').textContent = msg;
+  }
+
+  /** Wraps google.script.run in a Promise for sequential async calls. */
+  function runServer(fnName) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    return new Promise(function (resolve, reject) {
+      var call = google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(reject);
+      call[fnName].apply(call, args);
+    });
+  }
+
+  // ── Setup ──────────────────────────────────────────────
+
+  function setupTabs() {
+    setStatus('Initialising standard tabs…', 'loading');
+    google.script.run
+      .withSuccessHandler(function () {
+        setStatus('Standard tabs created.', 'info');
+      })
+      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
+      .setupStandardTabs();
+  }
+
+  function openApiKeyDialog() {
+    google.script.run.showApiKeyConfig();
+  }
+
+  // ── Architect ──────────────────────────────────────────
+
+  function runArchitectExample() {
+    setStatus('Generating example content…', 'loading');
+    google.script.run
+      .withSuccessHandler(function () { setStatus('Example content written to tabs.', 'info'); })
+      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
+      .architectGenerateExample();
+  }
+
+  function runArchitectInstructions() {
+    setStatus('Architect generating StyleProfile…', 'loading');
+    google.script.run
+      .withSuccessHandler(function () { setStatus('StyleProfile Scratch tab updated.', 'info'); })
+      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
+      .architectGenerateInstructions();
+  }
+
+  // ── EarTune ────────────────────────────────────────────
+
+  function runEarTuneExample() {
+    setStatus('Writing EarTune example…', 'loading');
+    google.script.run
+      .withSuccessHandler(function () { setStatus('EarTune example written.', 'info'); })
+      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
+      .earTuneGenerateExample();
+  }
+
+  function runEarTuneInstructions() {
+    setStatus('EarTune generating instructions…', 'loading');
+    google.script.run
+      .withSuccessHandler(function () { setStatus('EarTune Scratch tab updated.', 'info'); })
+      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
+      .earTuneGenerateInstructions();
+  }
+
+  // ── Active tab display ─────────────────────────────────────
+
+  async function runEarTune() {
+    try {
+      setStatus('Identifying active tab…', 'loading');
+      var tabName = await runServer('getActiveTabName');
+      var name = tabName || 'active tab';
+      setStatus("Running Ear-Tune on Tab '" + name + "'…", 'loading');
+      await runServer('earTuneAnnotateTab');
+      setStatus("Ear-Tune annotations applied to Tab '" + name + "'.", 'info');
+    } catch (e) {
+      setStatus('Error: ' + e.message, 'error');
+    }
+  }
+
+  // ── Auditor ────────────────────────────────────────────
+
+  function runAuditorExample() {
+    setStatus('Writing TechnicalAudit example…', 'loading');
+    google.script.run
+      .withSuccessHandler(function () { setStatus('TechnicalAudit example written.', 'info'); })
+      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
+      .auditorGenerateExample();
+  }
+
+  function runAuditorInstructions() {
+    setStatus('Auditor generating instructions…', 'loading');
+    google.script.run
+      .withSuccessHandler(function () { setStatus('TechnicalAudit Scratch tab updated.', 'info'); })
+      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
+      .auditorGenerateInstructions();
+  }
+
+  async function runAudit() {
+    try {
+      setStatus('Identifying active tab…', 'loading');
+      var tabName = await runServer('getActiveTabName');
+      var name = tabName || 'active tab';
+      setStatus("Running Technical Audit on Tab '" + name + "'…", 'loading');
+      await runServer('auditorAnnotateTab');
+      setStatus("Audit annotations applied to Tab '" + name + "'.", 'info');
+    } catch (e) {
+      setStatus('Error: ' + e.message, 'error');
+    }
+  }
+
+  // ── Tether ─────────────────────────────────────────────
+
+  function runTetherExample() {
+    setStatus('Writing TetherInstructions example…', 'loading');
+    google.script.run
+      .withSuccessHandler(function () { setStatus('TetherInstructions example written.', 'info'); })
+      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
+      .tetherGenerateExample();
+  }
+
+  function runTetherInstructions() {
+    setStatus('Tether generating instructions…', 'loading');
+    google.script.run
+      .withSuccessHandler(function () { setStatus('TetherInstructions Scratch tab updated.', 'info'); })
+      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
+      .tetherGenerateInstructions();
+  }
+
+  async function runTether() {
+    try {
+      setStatus('Identifying active tab…', 'loading');
+      var tabName = await runServer('getActiveTabName');
+      var name = tabName || 'active tab';
+      setStatus("Running Tether Check on Tab '" + name + "'…", 'loading');
+      await runServer('tetherAnnotateTab');
+      setStatus("Tether annotations applied to Tab '" + name + "'.", 'info');
+    } catch (e) {
+      setStatus('Error: ' + e.message, 'error');
+    }
+  }
+
+  // ── Comment Agent ──────────────────────────────────────
+
+  function runProcessComments() {
+    setStatus('Processing @AI comment threads…', 'loading');
+    google.script.run
+      .withSuccessHandler(function (result) {
+        var msg = result.message ||
+          ('Replied: ' + result.replied + ', Skipped: ' + result.skipped);
+        setStatus(msg, result.replied > 0 ? 'info' : 'loading');
+      })
+      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
+      .commentProcessorRun();
+  }
+
+  function runCommentExample() {
+    setStatus('Writing Comment Instructions example…', 'loading');
+    google.script.run
+      .withSuccessHandler(function () { setStatus('Comment Instructions example written.', 'info'); })
+      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
+      .commentAgentGenerateExample();
+  }
+
+  function runCommentInstructions() {
+    setStatus('Generating Comment Instructions…', 'loading');
+    google.script.run
+      .withSuccessHandler(function () { setStatus('Comment Instructions Scratch tab updated.', 'info'); })
+      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
+      .commentAgentGenerateInstructions();
+  }
+
+  // ── Merge Tabs ─────────────────────────────────────────
+
+  function loadSavedMergeNames() {
+    google.script.run
+      .withSuccessHandler(function (names) {
+        document.getElementById('merge-tab-names').value = names.join(', ');
+        setMergeProgress(names.length ? 'Loaded ' + names.length + ' saved tab name(s).' : 'No saved names found.');
+      })
+      .withFailureHandler(function (e) { setMergeStatus('Error loading: ' + e.message, 'error'); })
+      .getMergeTabNames();
+  }
+
+  function saveMergeNames() {
+    var csv = document.getElementById('merge-tab-names').value;
+    google.script.run
+      .withSuccessHandler(function () { setMergeProgress('Tab names saved.'); })
+      .withFailureHandler(function (e) { setMergeStatus('Error saving: ' + e.message, 'error'); })
+      .saveMergeTabs(csv);
+  }
+
+  async function runMergeNow() {
+    var raw = document.getElementById('merge-tab-names').value || '';
+    var names = raw.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    if (!names.length) {
+      setMergeStatus('Enter at least one tab name to merge.', 'error');
+      return;
+    }
+
+    var btn = document.getElementById('mergeNowBtn');
+    btn.disabled = true;
+    setMergeStatus('', '');
+    setMergeProgress('Merging ' + names.length + ' tab(s)... Please wait.');
+
+    try {
+      var res = await runServer('runMergeAllTabs', names);
+      if (res && res.ok) {
+        setMergeProgress('');
+        setMergeStatus('Merged ' + res.successes + ' tab(s) into MergedContent.', 'info');
+      } else {
+        setMergeProgress('');
+        var errMsg = 'Merge complete with errors.\nOK: ' + (res.successes || 0) + '  Failed: ' + (res.errors ? res.errors.length : 1) + '\n\n' + (res.errors ? res.errors.join('\n') : 'Unknown error');
+        setMergeStatus(errMsg, 'error');
+      }
+    } catch (err) {
+      setMergeProgress('');
+      setMergeStatus('Error: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  loadModelConfig();
+  loadHighlightColor();
+
+  // ── Global Setting Functions ───────────────────────────
+
+  function loadHighlightColor() {
+    google.script.run
+      .withSuccessHandler(function (color) {
+        if (color) document.getElementById('highlight-color').value = color;
+      })
+      .getHighlightColor();
+  }
+
+  function saveHighlightColor() {
+    var color = document.getElementById('highlight-color').value;
+    setColorStatus('Saving…', 'loading');
+    google.script.run
+      .withSuccessHandler(function () { setColorStatus('Color saved.', 'info'); })
+      .withFailureHandler(function (e) { setColorStatus('Error: ' + e.message, 'error'); })
+      .saveHighlightColor(color);
+  }
+
+  function setColorStatus(msg, type) {
+    var el = document.getElementById('color-status');
+    if (el) {
       el.textContent = msg;
       el.className = 'status-box' + (type ? ' ' + type : '');
     }
+  }
 
-    function setMergeStatus(msg, type) {
-      var el = document.getElementById('merge-status');
-      el.textContent = msg;
-      el.className = 'status-box' + (type ? ' ' + type : '');
+  // ── Model Configuration ────────────────────────────────
+
+  function setModelStatus(msg, type) {
+    var el = document.getElementById('model-status');
+    el.textContent = msg;
+    el.className = 'status-box' + (type ? ' ' + type : '');
+  }
+
+  function loadModelConfig() {
+    google.script.run
+      .withSuccessHandler(function (cfg) {
+        document.getElementById('model-fast').innerHTML = '<option value="' + cfg.fast + '">' + cfg.fast + '</option>';
+        document.getElementById('model-fast').value = cfg.fast;
+
+        document.getElementById('model-thinking').innerHTML = '<option value="' + cfg.thinking + '">' + cfg.thinking + '</option>';
+        document.getElementById('model-thinking').value = cfg.thinking;
+
+        document.getElementById('model-deepseek').innerHTML = '<option value="' + cfg.deepseek + '">' + cfg.deepseek + '</option>';
+        document.getElementById('model-deepseek').value = cfg.deepseek;
+      })
+      .withFailureHandler(function (e) { setModelStatus('Error loading config: ' + e.message, 'error'); })
+      .getModelConfig();
+  }
+
+  function saveModelConfig() {
+    var fast = document.getElementById('model-fast').value.trim();
+    var thinking = document.getElementById('model-thinking').value.trim();
+    var deepseek = document.getElementById('model-deepseek').value.trim();
+    if (!fast || !thinking || !deepseek) {
+      setModelStatus('All three model fields are required.', 'error');
+      return;
+    }
+    setModelStatus('Saving…', 'loading');
+    google.script.run
+      .withSuccessHandler(function () { setModelStatus('Model configuration saved.', 'info'); })
+      .withFailureHandler(function (e) { setModelStatus('Error saving: ' + e.message, 'error'); })
+      .saveModelConfig(fast, thinking, deepseek);
+  }
+
+  var cachedModels = null;
+
+  function refreshAvailableModels(force) {
+    if (!force && cachedModels) {
+      populateDropdowns(cachedModels);
+      setModelStatus('Loaded from cache. Found ' + cachedModels.length + ' model(s).', 'info');
+      return;
     }
 
-    function setMergeProgress(msg) {
-      document.getElementById('merge-progress').textContent = msg;
-    }
+    setModelStatus('Fetching available models…', 'loading');
+    google.script.run
+      .withSuccessHandler(function (models) {
+        cachedModels = models;
+        populateDropdowns(models);
+        setModelStatus('Found ' + models.length + ' model(s).', 'info');
+      })
+      .withFailureHandler(function (e) { setModelStatus('Error: ' + e.message, 'error'); })
+      .listAvailableModels();
+  }
 
-    /** Wraps google.script.run in a Promise for sequential async calls. */
-    function runServer(fnName) {
-      var args = Array.prototype.slice.call(arguments, 1);
-      return new Promise(function(resolve, reject) {
-        var call = google.script.run
-          .withSuccessHandler(resolve)
-          .withFailureHandler(reject);
-        call[fnName].apply(call, args);
+  function populateDropdowns(models) {
+    ['model-fast', 'model-thinking', 'model-deepseek'].forEach(function (id) {
+      var select = document.getElementById(id);
+      var currentVal = select.value;
+      select.innerHTML = '';
+      models.forEach(function (m) {
+        var opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m;
+        select.appendChild(opt);
       });
-    }
-
-    // ── Setup ──────────────────────────────────────────────
-
-    function setupTabs() {
-      setStatus('Initialising standard tabs…', 'loading');
-      google.script.run
-        .withSuccessHandler(function() {
-          setStatus('Standard tabs created.', 'info');
-        })
-        .withFailureHandler(function(e) { setStatus('Error: ' + e.message, 'error'); })
-        .setupStandardTabs();
-    }
-
-    function openApiKeyDialog() {
-      var key = prompt('Enter your Gemini API key:');
-      if (!key) return;
-      setStatus('Saving API key…', 'loading');
-      google.script.run
-        .withSuccessHandler(function() { setStatus('API key saved.', 'info'); })
-        .withFailureHandler(function(e) { setStatus('Error: ' + e.message, 'error'); })
-        .saveApiKey(key);
-    }
-
-    // ── Architect ──────────────────────────────────────────
-
-    function runArchitectExample() {
-      setStatus('Generating example content…', 'loading');
-      google.script.run
-        .withSuccessHandler(function() { setStatus('Example content written to tabs.', 'info'); })
-        .withFailureHandler(function(e) { setStatus('Error: ' + e.message, 'error'); })
-        .architectGenerateExample();
-    }
-
-    function runArchitectInstructions() {
-      setStatus('Architect generating StyleProfile…', 'loading');
-      google.script.run
-        .withSuccessHandler(function() { setStatus('StyleProfile Scratch tab updated.', 'info'); })
-        .withFailureHandler(function(e) { setStatus('Error: ' + e.message, 'error'); })
-        .architectGenerateInstructions();
-    }
-
-    // ── Stylist ────────────────────────────────────────────
-
-    function runStylistExample() {
-      setStatus('Writing EarTune example…', 'loading');
-      google.script.run
-        .withSuccessHandler(function() { setStatus('EarTune example written.', 'info'); })
-        .withFailureHandler(function(e) { setStatus('Error: ' + e.message, 'error'); })
-        .stylistGenerateExample();
-    }
-
-    function runStylistInstructions() {
-      setStatus('Stylist generating instructions…', 'loading');
-      google.script.run
-        .withSuccessHandler(function() { setStatus('EarTune Scratch tab updated.', 'info'); })
-        .withFailureHandler(function(e) { setStatus('Error: ' + e.message, 'error'); })
-        .stylistGenerateInstructions();
-    }
-
-    // ── Active tab display ─────────────────────────────────────
-
-    var earTuneActiveTab = null;
-    var auditActiveTab = null;
-
-    function loadActiveTabFor(agentKey, elementId) {
-      google.script.run
-        .withSuccessHandler(function(name) {
-          var label = document.getElementById(elementId);
-          if (name) {
-            label.textContent = 'Active tab: ' + name;
-            if (agentKey === 'ear-tune') earTuneActiveTab = name;
-            if (agentKey === 'audit') auditActiveTab = name;
-          } else {
-            label.textContent = 'Active tab: (unknown)';
-          }
-        })
-        .withFailureHandler(function() {
-          document.getElementById(elementId).textContent = 'Active tab: (error)';
-        })
-        .getActiveTabName();
-    }
-
-    function refreshActiveTab(agentKey) {
-      var elementId = agentKey === 'ear-tune' ? 'ear-tune-active-tab' : 'audit-active-tab';
-      loadActiveTabFor(agentKey, elementId);
-    }
-
-    function runEarTune() {
-      if (!earTuneActiveTab) {
-        setStatus('Click ↻ to detect the active tab first.', 'error');
-        return;
+      if (models.includes(currentVal)) {
+        select.value = currentVal;
       }
-      setStatus('Running Ear-Tune on "' + earTuneActiveTab + '"…', 'loading');
-      google.script.run
-        .withSuccessHandler(function() {
-          setStatus('Ear-Tune annotations applied to "' + earTuneActiveTab + '".', 'info');
-        })
-        .withFailureHandler(function(e) { setStatus('Error: ' + e.message, 'error'); })
-        .stylistAnnotateTab(earTuneActiveTab);
-    }
-
-    // ── Auditor ────────────────────────────────────────────
-
-    function runAuditorExample() {
-      setStatus('Writing TechnicalAudit example…', 'loading');
-      google.script.run
-        .withSuccessHandler(function() { setStatus('TechnicalAudit example written.', 'info'); })
-        .withFailureHandler(function(e) { setStatus('Error: ' + e.message, 'error'); })
-        .auditorGenerateExample();
-    }
-
-    function runAuditorInstructions() {
-      setStatus('Auditor generating instructions…', 'loading');
-      google.script.run
-        .withSuccessHandler(function() { setStatus('TechnicalAudit Scratch tab updated.', 'info'); })
-        .withFailureHandler(function(e) { setStatus('Error: ' + e.message, 'error'); })
-        .auditorGenerateInstructions();
-    }
-
-    function runAudit() {
-      if (!auditActiveTab) {
-        setStatus('Click ↻ to detect the active tab first.', 'error');
-        return;
-      }
-      setStatus('Running Technical Audit on "' + auditActiveTab + '"…', 'loading');
-      google.script.run
-        .withSuccessHandler(function() {
-          setStatus('Audit annotations applied to "' + auditActiveTab + '".', 'info');
-        })
-        .withFailureHandler(function(e) { setStatus('Error: ' + e.message, 'error'); })
-        .auditorAnnotateTab(auditActiveTab);
-    }
-
-    // ── Comment Agent ──────────────────────────────────────
-
-    function runProcessComments() {
-      setStatus('Processing @AI comment threads…', 'loading');
-      google.script.run
-        .withSuccessHandler(function(result) {
-          var msg = result.message ||
-            ('Replied: ' + result.replied + ', Skipped: ' + result.skipped);
-          setStatus(msg, result.replied > 0 ? 'info' : 'loading');
-        })
-        .withFailureHandler(function(e) { setStatus('Error: ' + e.message, 'error'); })
-        .commentProcessorRun();
-    }
-
-    function runCommentExample() {
-      setStatus('Writing Comment Instructions example…', 'loading');
-      google.script.run
-        .withSuccessHandler(function() { setStatus('Comment Instructions example written.', 'info'); })
-        .withFailureHandler(function(e) { setStatus('Error: ' + e.message, 'error'); })
-        .commentAgentGenerateExample();
-    }
-
-    function runCommentInstructions() {
-      setStatus('Generating Comment Instructions…', 'loading');
-      google.script.run
-        .withSuccessHandler(function() { setStatus('Comment Instructions Scratch tab updated.', 'info'); })
-        .withFailureHandler(function(e) { setStatus('Error: ' + e.message, 'error'); })
-        .commentAgentGenerateInstructions();
-    }
-
-    // ── Merge Tabs ─────────────────────────────────────────
-
-    function loadSavedMergeNames() {
-      google.script.run
-        .withSuccessHandler(function(names) {
-          document.getElementById('merge-tab-names').value = names.join(', ');
-          setMergeProgress(names.length ? 'Loaded ' + names.length + ' saved tab name(s).' : 'No saved names found.');
-        })
-        .withFailureHandler(function(e) { setMergeStatus('Error loading: ' + e.message, 'error'); })
-        .getMergeTabNames();
-    }
-
-    function saveMergeNames() {
-      var csv = document.getElementById('merge-tab-names').value;
-      google.script.run
-        .withSuccessHandler(function() { setMergeProgress('Tab names saved.'); })
-        .withFailureHandler(function(e) { setMergeStatus('Error saving: ' + e.message, 'error'); })
-        .saveMergeTabs(csv);
-    }
-
-    async function runMergeNow() {
-      var raw = document.getElementById('merge-tab-names').value || '';
-      var names = raw.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
-      if (!names.length) {
-        setMergeStatus('Enter at least one tab name to merge.', 'error');
-        return;
-      }
-
-      var btn = document.getElementById('mergeNowBtn');
-      btn.disabled = true;
-      setMergeStatus('', '');
-      setMergeProgress('Clearing MergedContent…');
-
-      var succeeded = 0, failed = 0;
-      var errors = [];
-
-      try {
-        var clearRes = await runServer('clearMergeTabContent');
-        if (!clearRes || !clearRes.ok) {
-          setMergeStatus(
-            'Cannot start merge: ' + (clearRes && clearRes.message ? clearRes.message : 'Could not clear destination tab.'),
-            'error'
-          );
-          return;
-        }
-
-        for (var i = 0; i < names.length; i++) {
-          var name = names[i];
-          setMergeProgress('Merging ' + (i + 1) + ' / ' + names.length + ': "' + name + '"…');
-          try {
-            var res = await runServer('mergeOneTabIntoMergeContent', name);
-            if (res && res.ok) {
-              succeeded++;
-            } else {
-              failed++;
-              errors.push('"' + (res.name || name) + '": ' + (res.message || 'Unknown error'));
-            }
-          } catch (err) {
-            failed++;
-            errors.push('"' + name + '": ' + (err.message || String(err)));
-          }
-        }
-
-        if (errors.length) {
-          setMergeStatus(
-            'Merge complete with errors.\nOK: ' + succeeded + '  Failed: ' + failed + '\n\n' + errors.join('\n'),
-            'error'
-          );
-          setMergeProgress('');
-        } else {
-          setMergeProgress('');
-          setMergeStatus('Merged ' + succeeded + ' tab(s) into MergedContent.', 'info');
-        }
-      } finally {
-        btn.disabled = false;
-      }
-    }
-
-    loadActiveTabFor('ear-tune', 'ear-tune-active-tab');
-    loadActiveTabFor('audit', 'audit-active-tab');
-    loadModelConfig();
-
-    // ── Model Configuration ────────────────────────────────
-
-    function setModelStatus(msg, type) {
-      var el = document.getElementById('model-status');
-      el.textContent = msg;
-      el.className = 'status-box' + (type ? ' ' + type : '');
-    }
-
-    function loadModelConfig() {
-      google.script.run
-        .withSuccessHandler(function(cfg) {
-          document.getElementById('model-fast').value     = cfg.fast     || '';
-          document.getElementById('model-thinking').value = cfg.thinking || '';
-          document.getElementById('model-deepseek').value = cfg.deepseek || '';
-        })
-        .withFailureHandler(function(e) { setModelStatus('Error loading config: ' + e.message, 'error'); })
-        .getModelConfig();
-    }
-
-    function saveModelConfig() {
-      var fast     = document.getElementById('model-fast').value.trim();
-      var thinking = document.getElementById('model-thinking').value.trim();
-      var deepseek = document.getElementById('model-deepseek').value.trim();
-      if (!fast || !thinking || !deepseek) {
-        setModelStatus('All three model fields are required.', 'error');
-        return;
-      }
-      setModelStatus('Saving…', 'loading');
-      google.script.run
-        .withSuccessHandler(function() { setModelStatus('Model configuration saved.', 'info'); })
-        .withFailureHandler(function(e) { setModelStatus('Error saving: ' + e.message, 'error'); })
-        .saveModelConfig(fast, thinking, deepseek);
-    }
-
-    function refreshAvailableModels() {
-      setModelStatus('Fetching available models…', 'loading');
-      google.script.run
-        .withSuccessHandler(function(models) {
-          var dl = document.getElementById('model-suggestions');
-          dl.innerHTML = '';
-          models.forEach(function(name) {
-            var opt = document.createElement('option');
-            opt.value = name;
-            dl.appendChild(opt);
-          });
-          setModelStatus('Found ' + models.length + ' model(s). Click a field and type to filter.', 'info');
-        })
-        .withFailureHandler(function(e) { setModelStatus('Error: ' + e.message, 'error'); })
-        .listAvailableModels();
-    }
-  </script>
+    });
+  }
+</script>

@@ -8,6 +8,8 @@
 //   - Structural: thesis→observation→formalization pattern for Architect
 // ============================================================
 
+import { TestThread } from '../helpers/prompts';
+
 export const FIXTURES = {
 
   MERGED_CONTENT: `
@@ -125,3 +127,74 @@ export const INTEGRATION_SYSTEM_PROMPT =
   'You are an AI editorial assistant for a manuscript about the Chid Axiom ' +
   '(consciousness as the sole ground of physics). ' +
   'Respond concisely and return JSON that exactly matches the provided schema.';
+
+// ── Multi-thread fixtures ─────────────────────────────────────────────────────
+
+/**
+ * Builds an array of TestThread objects for batch integration tests.
+ * Each thread gets a unique threadId derived from the provided base and index.
+ */
+export function makeThreads(
+  base: Omit<TestThread, 'threadId'>,
+  count: number,
+  idPrefix = 'thread'
+): TestThread[] {
+  return Array.from({ length: count }, (_, i) => ({
+    ...base,
+    threadId: `${idPrefix}-${String(i + 1).padStart(3, '0')}`,
+    // Slightly vary agentRequest so threads are meaningfully distinct
+    agentRequest: count > 1
+      ? `${base.agentRequest} (${i + 1}/${count})`
+      : base.agentRequest,
+  }));
+}
+
+/** Two threads anchored to CHAPTER_1 — for anchor-tab subgrouping tests. */
+export const CHAPTER_1_THREADS: TestThread[] = [
+  {
+    threadId:     'ch1-thread-001',
+    selectedText: 'The eigenstate emerges, definite and irreversible.',
+    agentRequest: 'Is this phrasing consistent with the Chid Axiom framework?',
+    conversation: [
+      { role: 'User', authorName: 'Author', content: '@AI Is this phrasing consistent?' },
+    ],
+  },
+  {
+    threadId:     'ch1-thread-002',
+    selectedText: 'consciousness is this',
+    agentRequest: 'Clarify the ontological claim here.',
+    conversation: [
+      { role: 'User', authorName: 'Author', content: '@AI Clarify the ontological claim.' },
+    ],
+  },
+];
+
+/** One thread with no anchor tab (null anchorTabName) — tests fallback behaviour. */
+export const NULL_ANCHOR_THREAD: TestThread = {
+  threadId:     'null-anchor-thread-001',
+  selectedText: 'The Chid Axiom fills this gap.',
+  agentRequest: 'Summarise the significance of this claim.',
+  conversation: [
+    { role: 'User', authorName: 'Author', content: '@AI Summarise this.' },
+  ],
+};
+
+/** Two threads for ArchitectAgent (no anchor needed). */
+export const ARCHITECT_THREADS: TestThread[] = [
+  {
+    threadId:     'arch-thread-001',
+    selectedText: 'The Chid Axiom asserts that consciousness is the irreducible ground',
+    agentRequest: 'Does this thesis statement match the structural pattern described in StyleProfile?',
+    conversation: [
+      { role: 'User', authorName: 'Author', content: '@architect Check structural pattern.' },
+    ],
+  },
+  {
+    threadId:     'arch-thread-002',
+    selectedText: 'Orthodox quantum mechanics offers no mechanism for this collapse.',
+    agentRequest: 'Is the transition from observation to formalization clear here?',
+    conversation: [
+      { role: 'User', authorName: 'Author', content: '@architect Is the transition clear?' },
+    ],
+  },
+];

@@ -19,9 +19,9 @@
 #   chmod +x deploy.sh && ./deploy.sh [flags]
 #
 # Flags:
-#   --skip-tests        Skip all tests (unit + integration + E2E). Push only.
+#   --skip-tests        Skip all integration + E2E tests. Push only.
 #                       Use for emergency hotfixes — the pushed code is unverified.
-#   --skip-integration  Skip steps 2 and E2E. Unit tests still run.
+#   --skip-integration  Skip integration + E2E tests. Unit tests still run.
 #                       Use when you have not changed any agent or Drive/Docs logic.
 #   --skip-e2e          Skip E2E only. Unit + integration tests still run.
 # =============================================================================

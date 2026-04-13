@@ -117,6 +117,35 @@ const TabMerger = (() => {
   }
 
   /**
+   * Merges an array of tab names into MergedContent in one single execution context.
+   * This prevents DocumentApp from crashing the UI due to multiple rapid-fire syncs.
+   */
+  function mergeAllTabs(tabNames: string[]): { ok: boolean; successes: number; errors: string[] } {
+    if (!Array.isArray(tabNames) || tabNames.length === 0) {
+      return { ok: false, successes: 0, errors: ['No tabs provided.'] };
+    }
+
+    const clearRes = clearDestination();
+    if (!clearRes.ok) {
+      return { ok: false, successes: 0, errors: [clearRes.message || 'Failed to clear destination.'] };
+    }
+
+    let successes = 0;
+    const errors: string[] = [];
+
+    for (const name of tabNames) {
+      const res = mergeOneTab(name);
+      if (res.ok) {
+        successes++;
+      } else {
+        errors.push(`"${name}": ${res.message}`);
+      }
+    }
+
+    return { ok: errors.length === 0, successes, errors };
+  }
+
+  /**
    * Returns the saved list of tab names to merge (document-scoped property).
    * The user-properties fallback is a migration shim: older versions of this
    * add-on stored the tab list in user properties, while saveTabNames() now
@@ -142,5 +171,5 @@ const TabMerger = (() => {
     return { ok: true };
   }
 
-  return { mergeOneTab, clearDestination, getSavedTabNames, saveTabNames };
+  return { mergeOneTab, clearDestination, mergeAllTabs, getSavedTabNames, saveTabNames };
 })();

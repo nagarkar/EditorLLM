@@ -25,7 +25,7 @@ Click **Process @AI Comments** in the sidebar (green button in the Comment Agent
 The system scans all comment threads and:
 - Finds threads where the **last message** starts with a recognised `@tag`.
 - Routes `@AI` threads to the Comment Agent.
-- Routes `@architect`, `@eartune`, `@stylist`, `@audit`, `@auditor` to their respective agents.
+- Routes `@architect`, `@eartune`, `@ear-tune`, `@audit`, `@auditor` to their respective agents.
 - Posts a reply to each processed thread.
 - Shows a summary: "Replied: 3, Skipped: 1".
 
@@ -73,8 +73,8 @@ When the Comment Agent processes a thread, it uses:
 |---|---|---|
 | `@AI` | Comment Agent | Free-form reply (no doc changes) |
 | `@architect` | Structural Architect | Architectural analysis or StyleProfile update |
-| `@eartune` | Audio Stylist | Rhythmic rewrite of selected passage |
-| `@stylist` | Audio Stylist | Same as `@eartune` |
+| `@eartune` | Audio EarTune | Rhythmic rewrite of selected passage |
+| `@ear-tune` | Audio EarTune | Hyphenated alias for `@eartune` |
 | `@audit` | Logical Auditor | Technical audit of selected passage |
 | `@auditor` | Logical Auditor | Same as `@audit` |
 
