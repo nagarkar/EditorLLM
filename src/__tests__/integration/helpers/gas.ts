@@ -138,7 +138,15 @@ function httpsPostSync_(
       JSON.stringify(url),
     ].join(' ');
 
-    const step1Out = execSync(step1Cmd, { encoding: 'utf8', timeout: 180_000 });
+    let step1Out: string;
+    try {
+      step1Out = execSync(step1Cmd, { encoding: 'utf8', timeout: 360_000 });
+    } catch (e: any) {
+      // execSync timeout/signal errors have circular .error references that
+      // crash Jest's messageParent JSON serialization in worker mode.
+      // Re-throw a clean, non-circular Error.
+      throw new Error(`httpsPostSync_ step 1 failed: ${e?.message ?? e}`);
+    }
 
     // Parse headers + status from step 1
     const step1Lines = step1Out.split('\n');
@@ -159,7 +167,12 @@ function httpsPostSync_(
         JSON.stringify(location),
       ].join(' ');
 
-      const step2Out = execSync(step2Cmd, { encoding: 'utf8', timeout: 120_000 });
+      let step2Out: string;
+      try {
+        step2Out = execSync(step2Cmd, { encoding: 'utf8', timeout: 120_000 });
+      } catch (e: any) {
+        throw new Error(`httpsPostSync_ step 2 failed: ${e?.message ?? e}`);
+      }
       const step2Lines = step2Out.split('\n');
       const step2Status = parseInt((step2Lines.pop() ?? '0').trim(), 10) || 0;
       const text = step2Lines.join('\n');

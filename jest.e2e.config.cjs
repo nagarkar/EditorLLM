@@ -28,7 +28,15 @@ module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
-  testMatch: ['**/__tests__/integration/e2e.test.ts'],
+  // Matches e2e.1-e2e.8 split files, excluding e2e.6 (no-key) which runs
+  // serially via jest.e2e-serial.config.cjs because it modifies global GAS
+  // ScriptProperties (GEMINI_API_KEY) and must not overlap with Gemini calls.
+  // The legacy e2e.test.ts is excluded here too — it still works standalone
+  // but is superseded by these numbered files.
+  testMatch: [
+    '**/__tests__/integration/e2e.[12345].*.test.ts',
+    '**/__tests__/integration/e2e.[78].*.test.ts',
+  ],
   testPathIgnorePatterns: ['/node_modules/'],
   moduleFileExtensions: ['ts', 'js'],
   setupFilesAfterEnv: ['<rootDir>/jest.integration.setup.js'],
@@ -42,11 +50,17 @@ module.exports = {
     }],
   },
   transformIgnorePatterns: ['/node_modules/'],
-  // E2E involves a real GAS execution + Gemini API call — allow 5 minutes.
-  testTimeout: 5 * 60 * 1000,
+  // Each file runs as a separate worker. Allow up to 10 minutes per test
+  // (thinking-tier agents + GAS boot overhead).
+  testTimeout: 10 * 60 * 1000,
+  // Run up to 4 test files in parallel. Each file gets its own worker so
+  // GAS executions overlap. E2E 5 (multi-thread, slowest ~150 s) now runs
+  // concurrently with the other suites rather than waiting behind them.
+  maxWorkers: 4,
   forceExit: true,
-  // Write a human-readable summary to .last_e2e_test_results after every run
-  // so the AI assistant can read failures directly without copy-paste.
+  // Force verbose test-name output even when stdout is piped (e.g. | tee).
+  verbose: true,
+  // Write a human-readable summary to .last_e2e_test_results after every run.
   reporters: [
     'default',
     ['<rootDir>/jest.file-reporter.cjs', { outputFile: '.last_e2e_test_results.txt' }],
