@@ -4,6 +4,11 @@
 
 const DocOps = (() => {
 
+  // ── Execution-scoped registry cache ─────────────────────────────────────────
+  // Avoids re-fetching the entire tab tree from the REST API on every call.
+  // Invalidated only when we know the tree has changed (tab creation).
+  let cachedRegistry_: Map<string, string> | null = null;
+
   function getDoc_(): GoogleAppsScript.Document.Document {
     return DocumentApp.getActiveDocument();
   }
@@ -52,10 +57,15 @@ const DocOps = (() => {
    * Uses a fields mask so only tabProperties/childTabs metadata is returned — no body
    * content — keeping the request fast regardless of document size.
    *
+   * Results are cached for the duration of the script execution. Call
+   * invalidateRegistryCache_() before re-fetching after tab mutations.
+   *
    * includeTabsContent=true is still required for the `tabs` array to be populated at
    * all; the fields mask then prunes everything except the structural metadata.
    */
   function fetchTabRegistry_(): Map<string, string> {
+    if (cachedRegistry_) return cachedRegistry_;
+
     const docId = getDoc_().getId();
     const t0 = Date.now();
     Tracer.info(`[DocOps] fetchTabRegistry_: fetching tab metadata for doc ${docId}`);
@@ -73,15 +83,20 @@ const DocOps = (() => {
         const props = t.tabProperties;
         if (props?.title && props?.tabId) {
           registry.set(props.title, props.tabId);
-          Tracer.info(`[DocOps] fetchTabRegistry_:  depth=${depth} title="${props.title}" id=${props.tabId}`);
         }
         index_(t.childTabs ?? [], depth + 1);
       }
     }
     index_(doc.tabs ?? [], 0);
 
+    cachedRegistry_ = registry;
     Tracer.info(`[DocOps] fetchTabRegistry_: found ${registry.size} tab(s) in ${Date.now() - t0}ms`);
     return registry;
+  }
+
+  /** Invalidates the execution-scoped registry cache so the next fetch is fresh. */
+  function invalidateRegistryCache_(): void {
+    cachedRegistry_ = null;
   }
 
   /**
@@ -111,10 +126,14 @@ const DocOps = (() => {
     let newTabId = response?.replies?.[0]?.addDocumentTab?.tab?.tabProperties?.tabId as string | undefined;
 
     if (!newTabId) {
-      // Fallback: re-fetch the registry to find the newly created tab by title
+      // Fallback: invalidate cache and re-fetch to find the newly created tab
       Tracer.warn(`[DocOps] createTabViaApi_: reply missing tabId — re-fetching registry for "${title}"`);
+      invalidateRegistryCache_();
       const fresh = fetchTabRegistry_();
       newTabId = fresh.get(title);
+    } else {
+      // Fast path succeeded — add to the cached registry without re-fetching
+      if (cachedRegistry_) cachedRegistry_.set(title, newTabId);
     }
 
     Tracer.info(`[DocOps] createTabViaApi_: "${title}" → id=${newTabId ?? 'MISSING'} (${Date.now() - t0}ms)`);
@@ -132,9 +151,16 @@ const DocOps = (() => {
 
   /**
    * Ensures the canonical standard tabs exist in the document.
-   * Uses a pure REST API approach with an in-memory registry so that tabs
-   * created earlier in the same execution are immediately available as parents
-   * for subsequent subtab creation — no DocumentApp cache involvement.
+   *
+   * Two-phase approach for performance:
+   *   1. Fetch the full tab registry once.
+   *   2. Collect all missing tabs, grouped by parent.
+   *   3. Create root-level missing tabs first (sequentially, since children
+   *      need the parent ID to exist).
+   *   4. Batch all children of each parent into a single batchUpdate call.
+   *   5. Do one final re-fetch to resolve any missing IDs.
+   *
+   * This reduces the number of REST API round-trips from O(n) to O(parents+1).
    */
   function ensureStandardTabs(): void {
     const t0 = Date.now();
@@ -142,40 +168,93 @@ const DocOps = (() => {
 
     // Seed registry from REST API (authoritative, never stale)
     const registry = fetchTabRegistry_();
-    Tracer.info(`[DocOps] ensureStandardTabs: registry seeded with ${registry.size} tab(s): [${[...registry.keys()].join(', ')}]`);
+    Tracer.info(`[DocOps] ensureStandardTabs: registry seeded with ${registry.size} tab(s)`);
 
-    function ensureTab_(title: string, parentTitle?: string): void {
-      if (registry.has(title)) {
-        Tracer.info(`[DocOps] ensureTab_: "${title}" already exists — skip`);
-        return;
-      }
-      const parentTabId = parentTitle ? registry.get(parentTitle) : undefined;
-      if (parentTitle && !parentTabId) {
-        throw new Error(
-          `Cannot create tab "${title}": parent tab "${parentTitle}" was not found.`
-        );
-      }
-      const newTabId = createTabViaApi_(title, parentTabId);
-      // Track immediately so subsequent calls in this run can use it as a parent
-      registry.set(title, newTabId);
+    // Desired tabs: [title, parentTitle | undefined]
+    const desired: [string, string | undefined][] = [
+      [TAB_NAMES.MERGED_CONTENT, undefined],
+      [TAB_NAMES.AGENTIC_INSTRUCTIONS, undefined],
+      [TAB_NAMES.AGENTIC_SCRATCH, undefined],
+      [TAB_NAMES.STYLE_PROFILE, TAB_NAMES.AGENTIC_INSTRUCTIONS],
+      [TAB_NAMES.EAR_TUNE, TAB_NAMES.AGENTIC_INSTRUCTIONS],
+      [TAB_NAMES.TECHNICAL_AUDIT, TAB_NAMES.AGENTIC_INSTRUCTIONS],
+      [TAB_NAMES.TETHER_INSTRUCTIONS, TAB_NAMES.AGENTIC_INSTRUCTIONS],
+      [TAB_NAMES.COMMENT_INSTRUCTIONS, TAB_NAMES.AGENTIC_INSTRUCTIONS],
+      [`${TAB_NAMES.STYLE_PROFILE} Scratch`, TAB_NAMES.AGENTIC_SCRATCH],
+      [`${TAB_NAMES.EAR_TUNE} Scratch`, TAB_NAMES.AGENTIC_SCRATCH],
+      [`${TAB_NAMES.TECHNICAL_AUDIT} Scratch`, TAB_NAMES.AGENTIC_SCRATCH],
+      [`${TAB_NAMES.TETHER_INSTRUCTIONS} Scratch`, TAB_NAMES.AGENTIC_SCRATCH],
+      [`${TAB_NAMES.COMMENT_INSTRUCTIONS} Scratch`, TAB_NAMES.AGENTIC_SCRATCH],
+    ];
+
+    // Filter to only missing tabs
+    const missing = desired.filter(([title]) => !registry.has(title));
+    if (missing.length === 0) {
+      Tracer.info(`[DocOps] ensureStandardTabs: all tabs present — done in ${Date.now() - t0}ms`);
+      return;
     }
 
-    ensureTab_(TAB_NAMES.MERGED_CONTENT);
-    ensureTab_(TAB_NAMES.AGENTIC_INSTRUCTIONS);
-    ensureTab_(TAB_NAMES.AGENTIC_SCRATCH);
-    ensureTab_(TAB_NAMES.STYLE_PROFILE, TAB_NAMES.AGENTIC_INSTRUCTIONS);
-    ensureTab_(TAB_NAMES.EAR_TUNE, TAB_NAMES.AGENTIC_INSTRUCTIONS);
-    ensureTab_(TAB_NAMES.TECHNICAL_AUDIT, TAB_NAMES.AGENTIC_INSTRUCTIONS);
-    ensureTab_(TAB_NAMES.TETHER_INSTRUCTIONS, TAB_NAMES.AGENTIC_INSTRUCTIONS);
-    ensureTab_(TAB_NAMES.COMMENT_INSTRUCTIONS, TAB_NAMES.AGENTIC_INSTRUCTIONS);
+    Tracer.info(`[DocOps] ensureStandardTabs: ${missing.length} tab(s) to create`);
 
-    // Eagerly pre-allocate Scratch tabs under Agentic Scratch to bypass DocumentApp thread caching 
-    // when executing downstream DocumentTab write operations via MarkdownService.
-    ensureTab_(`${TAB_NAMES.STYLE_PROFILE} Scratch`, TAB_NAMES.AGENTIC_SCRATCH);
-    ensureTab_(`${TAB_NAMES.EAR_TUNE} Scratch`, TAB_NAMES.AGENTIC_SCRATCH);
-    ensureTab_(`${TAB_NAMES.TECHNICAL_AUDIT} Scratch`, TAB_NAMES.AGENTIC_SCRATCH);
-    ensureTab_(`${TAB_NAMES.TETHER_INSTRUCTIONS} Scratch`, TAB_NAMES.AGENTIC_SCRATCH);
-    ensureTab_(`${TAB_NAMES.COMMENT_INSTRUCTIONS} Scratch`, TAB_NAMES.AGENTIC_SCRATCH);
+    // Separate into root and child tabs
+    const rootMissing = missing.filter(([, parent]) => !parent);
+    const childMissing = missing.filter(([, parent]) => !!parent);
+
+    // Phase 1: create root tabs (one at a time since each may be a parent for Phase 2)
+    for (const [title] of rootMissing) {
+      const newId = createTabViaApi_(title);
+      registry.set(title, newId);
+    }
+
+    // Phase 2: batch children by parent
+    const byParent = new Map<string, string[]>();
+    for (const [title, parent] of childMissing) {
+      if (!byParent.has(parent!)) byParent.set(parent!, []);
+      byParent.get(parent!)!.push(title);
+    }
+
+    const docId = getDoc_().getId();
+    for (const [parentTitle, titles] of byParent) {
+      const parentTabId = registry.get(parentTitle);
+      if (!parentTabId) {
+        throw new Error(`Cannot batch-create children: parent "${parentTitle}" has no ID`);
+      }
+
+      Tracer.info(`[DocOps] ensureStandardTabs: batch-creating ${titles.length} tab(s) under "${parentTitle}"`);
+
+      const requests = titles.map(title => ({
+        addDocumentTab: {
+          tabProperties: { title, parentTabId },
+        },
+      })) as unknown as GoogleAppsScript.Docs.Schema.Request[];
+
+      const response = Docs.Documents!.batchUpdate({ requests }, docId) as any;
+
+      // Try to extract IDs from replies
+      const replies = response?.replies ?? [];
+      let needRefetch = false;
+      for (let i = 0; i < titles.length; i++) {
+        const tabId = replies[i]?.addDocumentTab?.tab?.tabProperties?.tabId;
+        if (tabId) {
+          registry.set(titles[i], tabId);
+          if (cachedRegistry_) cachedRegistry_.set(titles[i], tabId);
+        } else {
+          needRefetch = true;
+        }
+      }
+
+      // If any replies were missing IDs, do one re-fetch for this batch
+      if (needRefetch) {
+        Tracer.warn(`[DocOps] ensureStandardTabs: some batch replies missing tabId — re-fetching registry`);
+        invalidateRegistryCache_();
+        const fresh = fetchTabRegistry_();
+        for (const title of titles) {
+          if (!registry.has(title) && fresh.has(title)) {
+            registry.set(title, fresh.get(title)!);
+          }
+        }
+      }
+    }
 
     Tracer.info(`[DocOps] ensureStandardTabs: done in ${Date.now() - t0}ms`);
   }
@@ -216,7 +295,18 @@ const DocOps = (() => {
         tab = freshDoc.getTab(existingTabId);
       }
       if (tab) return tab.asDocumentTab();
-      throw new Error(`Tab "${name}" exists in REST (id=${existingTabId}) but DocumentApp cannot access it.`);
+
+      // Last resort: delete the inaccessible tab and fall through to creation below.
+      // This handles deeply nested child tabs that DocumentApp can never access from
+      // its frozen start-of-execution snapshot.
+      Tracer.warn(`[DocOps] getOrCreateTab: "${name}" (id=${existingTabId}) inaccessible — deleting and recreating`);
+      try {
+        const docId = getDoc_().getId();
+        const deleteReq = { deleteDocumentTab: { tabId: existingTabId } } as unknown as GoogleAppsScript.Docs.Schema.Request;
+        Docs.Documents!.batchUpdate({ requests: [deleteReq] }, docId);
+      } catch (delErr: any) {
+        Tracer.warn(`[DocOps] getOrCreateTab: delete failed: ${delErr.message} — proceeding to create anyway`);
+      }
     }
 
     // Slow path: create the tab

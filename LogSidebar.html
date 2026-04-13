@@ -36,59 +36,30 @@
       color: #6200ea;
     }
 
-    .log-header-subtitle {
-      font-size: 10px;
-      color: #78909c;
-    }
-
-    /* ── Job pill bar ───────────────────────────────────────── */
-    .job-bar {
+    /* ── Job selector ──────────────────────────────────────── */
+    .job-selector {
       display: flex;
-      gap: 4px;
+      align-items: center;
+      gap: 6px;
       padding: 6px 10px;
       border-bottom: 1px solid #e0e0e0;
       background: #f0f0f5;
-      overflow-x: auto;
       flex-shrink: 0;
-      min-height: 32px;
     }
-    .job-bar::-webkit-scrollbar { height: 3px; }
-    .job-bar::-webkit-scrollbar-thumb { background: #bbb; border-radius: 3px; }
 
-    .job-pill {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      padding: 3px 9px;
-      border-radius: 12px;
-      font-size: 10px;
-      white-space: nowrap;
-      cursor: pointer;
+    .job-select {
+      flex: 1;
+      padding: 4px 8px;
       border: 1px solid #d0d0d8;
+      border-radius: 6px;
+      font-size: 11px;
+      font-family: inherit;
       background: #fff;
-      color: #555;
-      transition: all 0.15s;
-      flex-shrink: 0;
+      color: #333;
+      cursor: pointer;
+      min-width: 0;
     }
-    .job-pill:hover { border-color: #6200ea; color: #6200ea; }
-    .job-pill.active {
-      background: #6200ea;
-      color: #fff;
-      border-color: #6200ea;
-    }
-    .job-pill .pill-icon { font-size: 10px; }
-    .job-pill .pill-label {
-      max-width: 130px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .no-jobs {
-      font-size: 10px;
-      color: #9e9e9e;
-      padding: 2px 4px;
-      font-style: italic;
-    }
+    .job-select:focus { outline: none; border-color: #6200ea; }
 
     /* ── Spinner ─────────────────────────────────────────────── */
     .spinner {
@@ -106,20 +77,29 @@
     .log-toolbar {
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 5px 12px;
+      gap: 4px;
+      padding: 5px 10px;
       border-bottom: 1px solid #eeeeee;
       background: #fafafa;
       flex-shrink: 0;
     }
 
-    .toolbar-btn {
-      border: none; border-radius: 4px;
-      padding: 3px 9px; font-size: 11px;
-      cursor: pointer; background: #ede7f6; color: #4527a0;
+    .icon-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px; height: 28px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+      background: #ede7f6;
+      color: #4527a0;
       transition: background 0.15s;
+      flex-shrink: 0;
     }
-    .toolbar-btn:hover { background: #d1c4e9; }
+    .icon-btn:hover { background: #d1c4e9; }
+    .icon-btn.active { background: #6200ea; color: #fff; }
 
     .log-count {
       margin-left: auto;
@@ -184,16 +164,19 @@
     <button style="border:none; border-radius:4px; padding:3px 8px; font-size:10px; cursor:pointer; background:#ede7f6; color:#4527a0;" onclick="google.script.run.showSidebar()">⚡ Main</button>
   </div>
 
-  <!-- ── Job pill bar ────────────────────────────────────────── -->
-  <div class="job-bar" id="job-bar">
-    <span class="no-jobs" id="no-jobs">No jobs yet…</span>
+  <!-- ── Job selector (dropdown) ─────────────────────────────── -->
+  <div class="job-selector">
+    <select class="job-select" id="job-select" onchange="onJobSelectChange()">
+      <option value="">— No jobs yet —</option>
+    </select>
   </div>
 
-  <!-- ── Toolbar ──────────────────────────────────────────────── -->
+  <!-- ── Toolbar (icon buttons) ──────────────────────────────── -->
   <div class="log-toolbar">
-    <button class="toolbar-btn" onclick="refreshJobs()">🔄 Refresh</button>
-    <button class="toolbar-btn" onclick="clearPanel()">Clear</button>
-    <button class="toolbar-btn" onclick="toggleAutoScroll()" id="autoscroll-btn">⬇ Auto-scroll ON</button>
+    <button class="icon-btn" onclick="refreshJobs()" title="Refresh jobs">🔄</button>
+    <button class="icon-btn" onclick="clearPanel()" title="Clear log view">🧹</button>
+    <button class="icon-btn" onclick="closeEmptyJobs()" title="Close empty jobs">🗑️</button>
+    <button class="icon-btn" onclick="toggleAutoScroll()" id="autoscroll-btn" title="Toggle auto-scroll">⬇</button>
     <span class="log-count" id="log-count">0 entries</span>
   </div>
 
@@ -220,12 +203,12 @@
 
     // ── DOM helpers ────────────────────────────────────────────
 
-    function panel()   { return document.getElementById('log-panel'); }
-    function empty()   { return document.getElementById('log-empty'); }
-    function footer()  { return document.getElementById('log-footer'); }
-    function spinner() { return document.getElementById('spinner'); }
-    function countEl() { return document.getElementById('log-count'); }
-    function jobBar()  { return document.getElementById('job-bar'); }
+    function panel()     { return document.getElementById('log-panel'); }
+    function empty()     { return document.getElementById('log-empty'); }
+    function footer()    { return document.getElementById('log-footer'); }
+    function spinner()   { return document.getElementById('spinner'); }
+    function countEl()   { return document.getElementById('log-count'); }
+    function jobSelect() { return document.getElementById('job-select'); }
 
     function setFooter(msg, cls) {
       var el = footer();
@@ -281,14 +264,16 @@
 
     function toggleAutoScroll() {
       autoScroll = !autoScroll;
-      document.getElementById('autoscroll-btn').textContent =
-        (autoScroll ? '⬇ Auto-scroll ON' : '⏸ Auto-scroll OFF');
+      var btn = document.getElementById('autoscroll-btn');
+      btn.textContent = autoScroll ? '⬇' : '⏸';
+      btn.title = autoScroll ? 'Auto-scroll ON — click to pause' : 'Auto-scroll OFF — click to resume';
+      if (autoScroll) btn.classList.add('active');
+      else btn.classList.remove('active');
     }
 
-    // ── Job pill bar ───────────────────────────────────────────
+    // ── Job dropdown ──────────────────────────────────────────
 
     function statusIcon(jobId) {
-      // Look up job status from our cached list — we'll update async
       var meta = jobs.find(function(j) { return j.id === jobId; });
       if (!meta) return '⟳';
       if (meta._done && meta._error) return '✕';
@@ -296,39 +281,31 @@
       return '⟳';
     }
 
-    function statusClass(jobId) {
-      var meta = jobs.find(function(j) { return j.id === jobId; });
-      if (!meta) return '';
-      if (meta._done && meta._error) return ' pill-error';
-      if (meta._done)                return ' pill-done';
-      return ' pill-running';
-    }
-
-    function renderJobBar() {
-      var bar = jobBar();
-      bar.innerHTML = '';
+    function renderJobDropdown() {
+      var sel = jobSelect();
+      sel.innerHTML = '';
       if (!jobs.length) {
-        bar.innerHTML = '<span class="no-jobs">No jobs yet…</span>';
+        var opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = '— No jobs yet —';
+        sel.appendChild(opt);
         return;
       }
       jobs.forEach(function(job) {
-        var pill = document.createElement('div');
-        pill.className = 'job-pill' + (job.id === activeJobId ? ' active' : '');
-        pill.onclick = function() { selectJob(job.id); };
-
-        var icon = document.createElement('span');
-        icon.className = 'pill-icon';
-        icon.textContent = statusIcon(job.id);
-
-        var label = document.createElement('span');
-        label.className = 'pill-label';
-        label.textContent = job.label;
-        label.title = job.label + ' (' + job.startedAt + ')';
-
-        pill.appendChild(icon);
-        pill.appendChild(label);
-        bar.appendChild(pill);
+        var opt = document.createElement('option');
+        opt.value = job.id;
+        opt.textContent = statusIcon(job.id) + ' ' + job.label + '  (' + job.startedAt + ')';
+        if (job.id === activeJobId) opt.selected = true;
+        sel.appendChild(opt);
       });
+    }
+
+    function onJobSelectChange() {
+      var sel = jobSelect();
+      var jobId = sel.value;
+      if (jobId && jobId !== activeJobId) {
+        selectJob(jobId);
+      }
     }
 
     // ── Job selection ──────────────────────────────────────────
@@ -339,7 +316,7 @@
       lastSeq = 0;
       entryCount = 0;
       clearPanel();
-      renderJobBar();
+      renderJobDropdown();
       stopLogPolling();
 
       // Load all existing entries for this job
@@ -352,7 +329,7 @@
           google.script.run
             .withSuccessHandler(function(status) {
               updateJobMeta(jobId, status);
-              renderJobBar();
+              renderJobDropdown();
               if (status && status.done) {
                 showJobDone(status);
               } else {
@@ -390,6 +367,43 @@
       }
     }
 
+    // ── Close empty jobs ──────────────────────────────────────
+
+    function closeEmptyJobs() {
+      setFooter('Removing empty jobs…', '');
+      google.script.run
+        .withSuccessHandler(function(remainingJobs) {
+          // Preserve _done/_error metadata
+          var oldMap = {};
+          jobs.forEach(function(j) { oldMap[j.id] = j; });
+          remainingJobs.forEach(function(j) {
+            if (oldMap[j.id]) {
+              j._done  = oldMap[j.id]._done;
+              j._error = oldMap[j.id]._error;
+            }
+          });
+          jobs = remainingJobs;
+
+          // If active job was removed, switch to newest or clear
+          var activeStillExists = jobs.some(function(j) { return j.id === activeJobId; });
+          if (!activeStillExists) {
+            activeJobId = null;
+            clearPanel();
+            stopLogPolling();
+            if (jobs.length) {
+              selectJob(jobs[0].id);
+            } else {
+              setFooter('All jobs removed.', '');
+            }
+          }
+          renderJobDropdown();
+        })
+        .withFailureHandler(function(e) {
+          setFooter('Error: ' + (e.message || e), 'error');
+        })
+        .removeEmptyJobs();
+    }
+
     // ── Polling ────────────────────────────────────────────────
 
     function stopLogPolling() {
@@ -420,7 +434,7 @@
         .withSuccessHandler(function(status) {
           if (jid !== activeJobId) return;
           updateJobMeta(jid, status);
-          renderJobBar();
+          renderJobDropdown();
           if (status && status.done) {
             // Final log fetch
             google.script.run
@@ -461,7 +475,7 @@
 
           var previousNewest = jobs.length ? jobs[0].id : null;
           jobs = serverJobs;
-          renderJobBar();
+          renderJobDropdown();
 
           // Auto-select the newest job when:
           //  - no job is selected yet
@@ -482,7 +496,7 @@
         google.script.run
           .withSuccessHandler(function(status) {
             updateJobMeta(job.id, status);
-            renderJobBar();
+            renderJobDropdown();
           })
           .withFailureHandler(function() {})
           .getJobStatus(job.id);
@@ -493,6 +507,8 @@
 
     function init() {
       setFooter('Connecting…', '');
+      // Set initial autoscroll state
+      document.getElementById('autoscroll-btn').classList.add('active');
       pollJobList();
       listTimer = setInterval(function() {
         pollJobList();

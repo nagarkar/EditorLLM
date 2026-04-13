@@ -38,7 +38,8 @@ function onOpen(): void {
       .addItem('Process Active Tab', 'tetherAnnotateTab'))
     .addSeparator()
     .addItem('Process @AI Comments', 'commentProcessorRun')
-    .addItem('Clear Annotations', 'clearAllAnnotations')
+    .addItem('Clear All Annotations', 'clearAllAnnotations')
+    .addItem('Clear Active Tab Annotations', 'clearActiveTabAnnotations')
     .addToUi();
 }
 
@@ -248,6 +249,26 @@ function clearAllAnnotations(): void {
   }, true);
 }
 
+function clearActiveTabAnnotations(): void {
+  runTrackedJob_('Clear Active Tab Annotations', () => {
+    const tabName = getActiveTabName();
+    if (!tabName) {
+      Tracer.warn('[clearActiveTabAnnotations] no active tab detected');
+      return;
+    }
+    const tabId = DocOps.getTabIdByName(tabName);
+    if (!tabId) {
+      Tracer.warn(`[clearActiveTabAnnotations] tab "${tabName}" has no ID`);
+      return;
+    }
+    const prefixes = ['[Architect]', '[EarTune]', '[Auditor]', '[Tether]', '[EditorLLM] '];
+    Tracer.info(`[clearActiveTabAnnotations] clearing tab "${tabName}" (id=${tabId})`);
+    CollaborationService.clearAgentAnnotations(tabId, prefixes);
+    CollaborationService.clearTabHighlights(tabName);
+    Tracer.info(`[clearActiveTabAnnotations] done`);
+  });
+}
+
 
 /**
  * Web app entry point for E2E testing.
@@ -364,6 +385,20 @@ function getJobStatus(jobId: string): { label: string; done: boolean; error: str
 /** Returns all tracked jobs (newest first) for the sidebar job picker. */
 function getJobList(): JobMeta[] {
   return Tracer.getJobList();
+}
+
+/** Removes jobs that have zero log entries. Returns remaining jobs. */
+function removeEmptyJobs(): JobMeta[] {
+  const allJobs = Tracer.getJobList();
+  const emptyIds: string[] = [];
+  for (const job of allJobs) {
+    const logs = Tracer.getLogs(job.id, 0);
+    if (!logs || logs.length === 0) {
+      emptyIds.push(job.id);
+    }
+  }
+  if (emptyIds.length === 0) return allJobs;
+  return Tracer.removeJobs(emptyIds);
 }
 
 // Tab Merger

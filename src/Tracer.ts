@@ -267,5 +267,32 @@ const Tracer = (() => {
     } catch (_) { /* ignore */ }
   }
 
-  return { info, warn, error, startJob, finishJob, failJob, getJobList, getJobStatus, getLogs, clearAll };
+  /**
+   * Removes the specified job IDs from the registry and cleans up their cache keys.
+   * Returns the remaining job list.
+   */
+  function removeJobs(idsToRemove: string[]): JobMeta[] {
+    try {
+      const c = cache_();
+      const rawJobs = c.get(JOBS_KEY);
+      let jobs: JobMeta[] = rawJobs ? JSON.parse(rawJobs) : [];
+      const removeSet = new Set(idsToRemove);
+      for (const id of idsToRemove) {
+        cleanupJob_(id);
+      }
+      jobs = jobs.filter(j => !removeSet.has(j.id));
+      c.put(JOBS_KEY, JSON.stringify(jobs), CACHE_TTL);
+
+      // If the active job was removed, clear it
+      const active = getActiveJobId_();
+      if (active && removeSet.has(active)) {
+        c.remove(ACTIVE_KEY);
+      }
+      return jobs;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  return { info, warn, error, startJob, finishJob, failJob, getJobList, getJobStatus, getLogs, clearAll, removeJobs };
 })();
