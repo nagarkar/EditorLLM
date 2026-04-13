@@ -191,6 +191,7 @@
 
   <!-- ── Toolbar ──────────────────────────────────────────────── -->
   <div class="log-toolbar">
+    <button class="toolbar-btn" onclick="refreshJobs()">🔄 Refresh</button>
     <button class="toolbar-btn" onclick="clearPanel()">Clear</button>
     <button class="toolbar-btn" onclick="toggleAutoScroll()" id="autoscroll-btn">⬇ Auto-scroll ON</button>
     <span class="log-count" id="log-count">0 entries</span>
@@ -458,24 +459,16 @@
             }
           });
 
-          var hadJobs = jobs.length;
+          var previousNewest = jobs.length ? jobs[0].id : null;
           jobs = serverJobs;
           renderJobBar();
 
-          // Auto-select the newest job if we don't have one selected
-          // or if a brand new job appeared
-          if (!activeJobId || (serverJobs[0] && serverJobs[0].id !== activeJobId && !hadJobs)) {
-            selectJob(serverJobs[0].id);
-          } else if (serverJobs[0] && serverJobs[0].id !== activeJobId) {
-            // A new job appeared but user is viewing an old one.
-            // Fetch status for the new job to update the pill icon.
-            google.script.run
-              .withSuccessHandler(function(status) {
-                updateJobMeta(serverJobs[0].id, status);
-                renderJobBar();
-              })
-              .withFailureHandler(function() {})
-              .getJobStatus(serverJobs[0].id);
+          // Auto-select the newest job when:
+          //  - no job is selected yet
+          //  - a brand-new job appeared (newest id changed)
+          var newestId = serverJobs[0] ? serverJobs[0].id : null;
+          if (newestId && (!activeJobId || newestId !== previousNewest)) {
+            selectJob(newestId);
           }
         })
         .withFailureHandler(function() { /* ignore */ })
@@ -505,6 +498,13 @@
         pollJobList();
         refreshAllStatuses();
       }, LIST_MS);
+    }
+
+    /** Manual refresh — re-fetches job list immediately. */
+    function refreshJobs() {
+      setFooter('Refreshing…', '');
+      pollJobList();
+      refreshAllStatuses();
     }
 
     init();

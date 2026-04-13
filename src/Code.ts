@@ -114,7 +114,7 @@ function setupStandardTabs(): void {
 }
 
 // ── Helper: wrap any menu action with job tracking ──────────
-function runTrackedJob_(label: string, action: () => void, openSidebar = false): void {
+function runTrackedJob_(label: string, action: () => void, openSidebar = true): void {
   Tracer.startJob(label);
   if (openSidebar) showLogSidebar();
   try {
