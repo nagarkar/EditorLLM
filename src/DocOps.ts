@@ -286,27 +286,28 @@ const DocOps = (() => {
       Tracer.info(`[DocOps] getOrCreateTab: "${name}" found in REST registry (id=${existingTabId}) — skipping create`);
       let tab = getDoc_().getTab(existingTabId);
       if (tab) return tab.asDocumentTab();
-      // Retry with fresh Document handle if getTab fails on stale cache
+      // Retry with fresh Document handle. Child tabs created by ensureStandardTabs()
+      // in the same GAS execution may take several seconds to propagate to the
+      // DocumentApp service even when visible in the REST API immediately.
       Tracer.warn(`[DocOps] getOrCreateTab: getTab(${existingTabId}) returned null — retrying with fresh handle`);
-      let retries = 3;
+      let retries = 6;
       while (!tab && retries-- > 0) {
-        Utilities.sleep(1000);
+        Utilities.sleep(3000);
         const freshDoc = DocumentApp.openById(getDoc_().getId());
         tab = freshDoc.getTab(existingTabId);
       }
       if (tab) return tab.asDocumentTab();
 
-      // Last resort: delete the inaccessible tab and fall through to creation below.
-      // This handles deeply nested child tabs that DocumentApp can never access from
-      // its frozen start-of-execution snapshot.
-      Tracer.warn(`[DocOps] getOrCreateTab: "${name}" (id=${existingTabId}) inaccessible — deleting and recreating`);
-      try {
-        const docId = getDoc_().getId();
-        const deleteReq = { deleteDocumentTab: { tabId: existingTabId } } as unknown as GoogleAppsScript.Docs.Schema.Request;
-        Docs.Documents!.batchUpdate({ requests: [deleteReq] }, docId);
-      } catch (delErr: any) {
-        Tracer.warn(`[DocOps] getOrCreateTab: delete failed: ${delErr.message} — proceeding to create anyway`);
-      }
+      // Retries exhausted — the tab exists in the REST API but DocumentApp cannot
+      // see it within this execution. Do NOT attempt to delete and recreate: the
+      // tab is real, and a duplicate-name create would fail immediately.
+      // Instruct the caller to retry the operation in a fresh execution.
+      throw new Error(
+        `Tab "${name}" (id=${existingTabId}) exists in the document but could not be ` +
+        `accessed via DocumentApp after multiple retries. ` +
+        `This typically happens on first-run setup when many tabs are created at once. ` +
+        `Please wait a few seconds and try the operation again.`
+      );
     }
 
     // Slow path: create the tab
