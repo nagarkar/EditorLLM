@@ -23,6 +23,38 @@ const DEFAULT_MODELS: Record<string, string> = {
   deepseek: 'gemini-2.0-flash-thinking-exp-01-21',
 };
 
+// ── Text extraction helpers ────────────────────────────────────────────────
+
+/**
+ * If the LLM wraps a plain-markdown response inside a JSON code fence
+ * (e.g. ```json\n{"markdown":"..."}\n```) despite being asked for bare text,
+ * this helper extracts the markdown value. Returns the original string when
+ * no JSON wrapper is detected, so plain responses pass through unchanged.
+ *
+ * Mirrors GeneralPurposeAgent.extractMarkdownFromJsonWrapper_() in production.
+ */
+function extractPlainText(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('#') || !trimmed.startsWith('`')) return trimmed;
+
+  const fenceMatch = trimmed.match(/^```(?:json)?\s*\n?([\s\S]*?)```\s*$/);
+  if (!fenceMatch) return trimmed;
+
+  try {
+    const parsed = JSON.parse(fenceMatch[1].trim());
+    if (typeof parsed === 'string') return parsed;
+    if (parsed && typeof parsed === 'object') {
+      // Accept any top-level string value — LLM uses inconsistent key names
+      // ("markdown", "updated_instructions", etc.)
+      for (const val of Object.values(parsed)) {
+        if (typeof val === 'string' && val.trim().length > 0) return val;
+      }
+    }
+  } catch (_) { /* not JSON — return raw */ }
+
+  return trimmed;
+}
+
 // ── JSON extraction helpers ────────────────────────────────────────────────
 
 /**
@@ -79,6 +111,64 @@ function extractJson(raw: string): any {
   }
 
   throw new Error(`Unable to extract JSON: ${raw.slice(0, 300)}`);
+}
+
+/**
+ * Calls the Gemini API synchronously and returns the raw text response.
+ * No JSON schema — use this for prompts that request plain markdown output.
+ * Mirrors GeminiService.generateText() / callTextApi_() in production.
+ */
+export function callGeminiText(
+  systemPrompt: string,
+  userPrompt: string,
+  opts: Omit<GeminiCallOptions, '_retryCount'> = {}
+): string {
+  const { XMLHttpRequest } = require('xmlhttprequest');
+
+  const tier = opts.tier ?? 'fast';
+  const apiKey = opts.apiKeyOverride ?? INTEGRATION_CONFIG.geminiApiKey;
+  const model =
+    opts.model ??
+    INTEGRATION_CONFIG.models[tier as keyof typeof INTEGRATION_CONFIG.models] ??
+    DEFAULT_MODELS[tier] ??
+    DEFAULT_MODELS.fast;
+  const url = `${API_BASE}/${model}:generateContent?key=${apiKey}`;
+
+  const payload: any = {
+    system_instruction: { parts: [{ text: systemPrompt }] },
+    contents: [{ parts: [{ text: userPrompt }], role: 'user' }],
+    generationConfig: {},
+  };
+  if (tier === 'thinking') {
+    payload.generationConfig.thinkingConfig = { thinkingBudget: 8192 };
+  }
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', url, false);
+  xhr.setRequestHeader('Content-Type', 'application/json');
+  xhr.send(JSON.stringify(payload));
+
+  const raw: string = xhr.responseText;
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`Gemini response is not valid JSON (HTTP ${xhr.status}): ${raw.slice(0, 300)}`);
+  }
+
+  if (parsed.error) {
+    throw new Error(
+      `Gemini API error ${parsed.error.code ?? xhr.status}: ${parsed.error.message ?? raw.slice(0, 200)}`
+    );
+  }
+
+  const parts: any[] = parsed?.candidates?.[0]?.content?.parts ?? [];
+  const textPart = parts.find((p: any) => !p.thought && p.text);
+  if (!textPart?.text) {
+    throw new Error(`No text content in Gemini response: ${raw.slice(0, 300)}`);
+  }
+  // Strip JSON wrapper if the LLM ignores the "plain text" instruction.
+  return extractPlainText(textPart.text as string);
 }
 
 export interface GeminiCallOptions {

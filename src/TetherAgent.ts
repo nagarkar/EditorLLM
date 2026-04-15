@@ -110,67 +110,15 @@ Ensure each reason explains the specific factual discrepancy or alignment.
     ].join('\\n'));
   }
 
-  handleCommentThreads(threads: CommentThread[]): ThreadReply[] {
-    const agentName = this.constructor.name;
-    Tracer.info(`[${agentName}] handleCommentThreads: received ${threads.length} thread(s)`);
-
-    // Shared instruction context — same for every subgroup.
-    const styleProfile = this.getTabContent_(TAB_NAMES.STYLE_PROFILE);
-    const tetherInstructions = this.getTabContent_(TAB_NAMES.TETHER_INSTRUCTIONS);
-
-    // Subgroup by anchorTabName so each chunk shares one passage context.
-    const subgroups = new Map<string | null, CommentThread[]>();
-    for (const thread of threads) {
-      const key = thread.anchorTabName;
-      if (!subgroups.has(key)) subgroups.set(key, []);
-      subgroups.get(key)!.push(thread);
-    }
-
-    Tracer.info(`[${agentName}] handleCommentThreads: ${subgroups.size} subgroup(s) by anchor tab`);
-
-    const allReplies: ThreadReply[] = [];
-
-    for (const [anchorTabName, subThreads] of subgroups) {
-      // Null anchor → no shared passage; agent falls back to per-thread selectedText.
-      const passageContext = anchorTabName
-        ? this.getTabContent_(anchorTabName)
-        : '';
-
-      for (let i = 0; i < subThreads.length; i += TetherAgent.CHUNK_SIZE) {
-        const chunk = subThreads.slice(i, i + TetherAgent.CHUNK_SIZE);
-        const chunkNum = Math.floor(i / TetherAgent.CHUNK_SIZE) + 1;
-        Tracer.info(
-          `[${agentName}] handleCommentThreads: anchor=${anchorTabName ?? '(none)'} ` +
-          `chunk ${chunkNum} size=${chunk.length}`
-        );
-
-        try {
-          const userPrompt = this.generateCommentResponsesPrompt({
-            styleProfile,
-            tetherInstructions,
-            passageContext,
-            threads: chunk,
-          });
-
-          const raw = this.callGemini_(
-            this.SYSTEM_PROMPT,
-            userPrompt,
-            this.batchReplySchema_(),
-            MODEL.THINKING
-          );
-          const replies = this.normaliseBatchReplies_(chunk, raw, agentName);
-          allReplies.push(...replies);
-        } catch (e: any) {
-          Tracer.error(
-            `[${agentName}] handleCommentThreads: anchor=${anchorTabName ?? '(none)'} ` +
-            `chunk ${chunkNum} failed — ${e.message}`
-          );
-        }
-      }
-    }
-
-    Tracer.info(`[${agentName}] handleCommentThreads: returning ${allReplies.length} reply/replies`);
-    return allReplies;
+  protected commentChunkSize_() { return TetherAgent.CHUNK_SIZE; }
+  protected commentModelTier_() { return MODEL.THINKING; }
+  protected buildCommentPrompt_(chunk: CommentThread[], passageContext: string): string {
+    return this.generateCommentResponsesPrompt({
+      styleProfile:        this.getTabContent_(TAB_NAMES.STYLE_PROFILE),
+      tetherInstructions:  this.getTabContent_(TAB_NAMES.TETHER_INSTRUCTIONS),
+      passageContext,
+      threads: chunk,
+    });
   }
 
   /**
@@ -181,6 +129,7 @@ Ensure each reason explains the specific factual discrepancy or alignment.
     super.generateInstructions();
     // W1: read instruction tabs as markdown; manuscript stays plain text
     const styleProfile = this.getTabMarkdown_(TAB_NAMES.STYLE_PROFILE);
+    this.assertStyleProfileValid_(styleProfile);
     const existing = this.getTabMarkdown_(TAB_NAMES.TETHER_INSTRUCTIONS);
     const manuscript = this.getTabContent_(TAB_NAMES.MERGED_CONTENT);
 
@@ -193,8 +142,7 @@ Ensure each reason explains the specific factual discrepancy or alignment.
     const geminiResult = this.callGemini_(
       this.SYSTEM_PROMPT,
       userPrompt,
-      this.instructionUpdateSchema_(),
-      MODEL.THINKING
+      { schema: this.instructionUpdateSchema_(), tier: MODEL.THINKING }
     ) as { proposed_full_text: string };
 
     const update: RootUpdate = {
@@ -207,29 +155,19 @@ Ensure each reason explains the specific factual discrepancy or alignment.
   }
 
   /**
-   * Writes example TetherInstructions to the TetherInstructions tab.
-   */
-  generateExample(): void {
-    super.generateExample();
-    MarkdownService.markdownToTab(
-      this.EXAMPLE_CONTENT,
-      TAB_NAMES.TETHER_INSTRUCTIONS,
-      TAB_NAMES.AGENTIC_INSTRUCTIONS
-    );
-  }
-
-  /**
    * Workflow 2: full-tab tether validation sweep.
    * Highlights and comments every passage with a reference issue or alignment opportunity.
    * Clears previous agent annotations on the tab before adding new ones.
    */
   annotateTab(tabName: string): void {
+    const agentName = this.constructor.name;
     const passage = this.getTabContent_(tabName);
     if (!passage.trim()) {
       throw new Error(`Tab "${tabName}" is empty. Nothing to validate.`);
     }
 
     const styleProfile = this.getTabContent_(TAB_NAMES.STYLE_PROFILE);
+    this.assertStyleProfileValid_(styleProfile);
     const tetherInstructions = this.getTabContent_(TAB_NAMES.TETHER_INSTRUCTIONS);
 
     const userPrompt = this.generateTabAnnotationPrompt({
@@ -242,14 +180,14 @@ Ensure each reason explains the specific factual discrepancy or alignment.
     const geminiResult = this.callGemini_(
       this.SYSTEM_PROMPT,
       userPrompt,
-      this.annotationSchema_(),
-      MODEL.THINKING
+      { schema: this.annotationSchema_(), tier: MODEL.THINKING }
     ) as { operations: Operation[] };
 
+    const validOps = this.validateAndFilterOperations_(geminiResult.operations, passage, agentName);
     const update: RootUpdate = {
       workflow_type: 'content_annotation',
       target_tab: tabName,
-      operations: geminiResult.operations,
+      operations: validOps,
       agent_name: '[Tether]'
     };
 

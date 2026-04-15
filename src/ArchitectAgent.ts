@@ -73,9 +73,10 @@ parsed and written as formatted Google Docs content. Formatting rules:
     ].join(' '));
   }
 
-  generateInstructionPrompt(opts: { manuscript: string }): string {
+  generateInstructionPrompt(opts: { manuscript: string; styleProfile: string }): string {
     return this.buildStandardPrompt({
       'Manuscript (excerpt)': opts.manuscript.slice(0, 20000),
+      'Current Style Profile (if any)': opts.styleProfile,
     }, [
       `Analyse the writing style above and produce a comprehensive StyleProfile.`,
       `Return a JSON object with:`,
@@ -83,63 +84,32 @@ parsed and written as formatted Google Docs content. Formatting rules:
     ].join('\\n'));
   }
 
-  handleCommentThreads(threads: CommentThread[]): ThreadReply[] {
-    const agentName = this.constructor.name;
-    Tracer.info(`[${agentName}] handleCommentThreads: received ${threads.length} thread(s)`);
-
-    // Shared context is the same for every thread — read once, reuse across chunks.
-    const manuscript = this.getTabContent_(TAB_NAMES.MERGED_CONTENT);
-    const styleProfile = this.getTabContent_(TAB_NAMES.STYLE_PROFILE);
-
-    const allReplies: ThreadReply[] = [];
-
-    for (let i = 0; i < threads.length; i += ArchitectAgent.CHUNK_SIZE) {
-      const chunk = threads.slice(i, i + ArchitectAgent.CHUNK_SIZE);
-      const chunkNum = Math.floor(i / ArchitectAgent.CHUNK_SIZE) + 1;
-      Tracer.info(`[${agentName}] handleCommentThreads: chunk ${chunkNum} size=${chunk.length}`);
-
-      try {
-        const userPrompt = this.generateCommentResponsesPrompt({
-          styleProfile,
-          manuscript,
-          threads: chunk,
-        });
-
-        const raw = this.callGemini_(
-          this.SYSTEM_PROMPT,
-          userPrompt,
-          this.batchReplySchema_(),
-          MODEL.THINKING
-        );
-        const replies = this.normaliseBatchReplies_(chunk, raw, agentName);
-        allReplies.push(...replies);
-      } catch (e: any) {
-        Tracer.error(`[${agentName}] handleCommentThreads: chunk ${chunkNum} failed — ${e.message}`);
-      }
-    }
-
-    Tracer.info(`[${agentName}] handleCommentThreads: returning ${allReplies.length} reply/replies`);
-    return allReplies;
+  protected commentChunkSize_() { return ArchitectAgent.CHUNK_SIZE; }
+  protected commentModelTier_() { return MODEL.THINKING; }
+  protected buildCommentPrompt_(chunk: CommentThread[], _passageContext: string): string {
+    // Architect reads its own context — manuscript + styleProfile — rather than
+    // the anchor-tab passage context used by other agents.
+    return this.generateCommentResponsesPrompt({
+      styleProfile: this.getTabContent_(TAB_NAMES.STYLE_PROFILE),
+      manuscript:   this.getTabContent_(TAB_NAMES.MERGED_CONTENT),
+      threads: chunk,
+    });
   }
 
-  /**
-   * Reads MergedContent and generates a full StyleProfile via Gemini.
-   * Routes the result to StyleProfile Scratch via instruction_update.
-   */
   generateInstructions(): void {
     super.generateInstructions();
     const manuscript = this.getTabContent_(TAB_NAMES.MERGED_CONTENT);
     if (!manuscript.trim()) {
       throw new Error('MergedContent tab is empty. Add manuscript content before generating.');
     }
+    const styleProfile = this.getTabMarkdown_(TAB_NAMES.STYLE_PROFILE);
 
-    const userPrompt = this.generateInstructionPrompt({ manuscript });
+    const userPrompt = this.generateInstructionPrompt({ manuscript, styleProfile });
 
     const geminiResult = this.callGemini_(
       this.SYSTEM_PROMPT,
       userPrompt,
-      this.instructionUpdateSchema_(),
-      MODEL.THINKING
+      { schema: this.instructionUpdateSchema_(), tier: MODEL.THINKING }
     ) as { proposed_full_text: string };
 
     const update: RootUpdate = {
@@ -149,22 +119,10 @@ parsed and written as formatted Google Docs content. Formatting rules:
     };
 
     CollaborationService.processUpdate(update);
-  }
 
-  /**
-   * Populates MergedContent (only when empty) and StyleProfile Scratch with
-   * example content so users can see the expected shape of each tab.
-   *
-   * MergedContent is the user's manuscript — it is never overwritten when it
-   * already has content.  StyleProfile Scratch is a generated artefact and is
-   * always safe to refresh with a fresh example.
-   */
-  generateExample(): void {
-    super.generateExample();
-    MarkdownService.markdownToTab(
-      this.EXAMPLE_CONTENT,
-      TAB_NAMES.STYLE_PROFILE,
-      TAB_NAMES.AGENTIC_INSTRUCTIONS
-    );
+    // §4.1 LLM-as-judge quality evaluation — runs after the StyleProfile is
+    // written so the score reflects the actual generated content.
+    // Uses MODEL.FAST to keep latency low; score persisted to DocumentProperties.
+    this.evaluateStyleProfile_(geminiResult.proposed_full_text);
   }
 }

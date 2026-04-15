@@ -83,7 +83,7 @@ const TAB_NAMES = {
   EAR_TUNE: 'EarTune Instructions',
   TECHNICAL_AUDIT: 'Audit Instructions',
   TETHER_INSTRUCTIONS: 'TetherInstructions',
-  COMMENT_INSTRUCTIONS: 'Comment Instructions',
+  GENERAL_PURPOSE_INSTRUCTIONS: 'General Purpose Instructions',
 } as const;
 
 /** Background color applied to annotated passages. */
@@ -99,7 +99,7 @@ const AGENT_COMMENT_PREFIX = '[EditorLLM] ';
 
 /**
  * A single message in a Drive comment thread.
- * Shared by CommentAgent and CommentProcessor.
+ * Shared by GeneralPurposeAgent and CommentProcessor.
  */
 interface CommentMessage {
   role: 'User' | 'AI';
@@ -128,3 +128,56 @@ interface ThreadReply {
   threadId: string;
   content: string;
 }
+
+// ── CollaborationHelpers ambient declarations ─────────────────────────────────
+// These functions are defined (and exported for tests) in CollaborationHelpers.ts.
+// The declarations here let the flat-scope tsc build resolve them in
+// CollaborationService.ts without an import statement.
+declare function findTextOrFallback_(
+  body: GoogleAppsScript.Document.Body,
+  matchText: string
+): GoogleAppsScript.Document.RangeElement | null;
+
+declare function matchesAgentPrefix_(
+  content: string,
+  agentPrefix: string | string[]
+): boolean;
+
+declare function highlightRangeElement_(
+  rangeEl: GoogleAppsScript.Document.RangeElement,
+  color: string
+): void;
+
+declare function highlightNamedRange_(
+  namedRange: GoogleAppsScript.Document.NamedRange,
+  color: string
+): void;
+
+declare function clearNamedRangeHighlights_(
+  namedRange: GoogleAppsScript.Document.NamedRange
+): number;
+
+declare const MAX_COMMENT_CHARS: number;
+
+declare function buildCommentContent_(
+  agentPrefix: string,
+  matchText: string,
+  commentBody: string,
+  bookmarkUrl: string
+): { content: string; truncated: boolean };
+
+declare function resolveWorkflowType_(
+  update: RootUpdate
+): 'instruction_update' | 'content_annotation';
+
+// ── StringProcessor ambient declarations ──────────────────────────────────────
+// Defined (and exported for tests) in StringProcessor.ts.
+declare function createStringArray(csvString: string): string[];
+
+// ── TabMergerHelpers ambient declarations ─────────────────────────────────────
+// Defined (and exported for tests) in TabMergerHelpers.ts.
+declare function sanitizePlatformError_(message: string): string;
+
+// ── CommentProcessorHelpers ambient declarations ──────────────────────────────
+// Defined (and exported for tests) in CommentProcessorHelpers.ts.
+declare function normaliseTagWord_(w: string): string;

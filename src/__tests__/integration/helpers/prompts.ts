@@ -36,11 +36,17 @@ function formatThreadsForBatch(threads: TestThread[]): string {
 
 export function buildArchitectInstructionsPrompt(opts: {
   manuscript: string;
+  styleProfile: string;
 }): string {
   return `
 MANUSCRIPT (excerpt):
 ---
 ${opts.manuscript.slice(0, 20000)}
+---
+
+CURRENT STYLE PROFILE (if any):
+---
+${opts.styleProfile}
 ---
 
 ## Instructions\n\nAnalyse the writing style above and produce a comprehensive StyleProfile.
@@ -289,9 +295,9 @@ export function buildAuditBatchPrompt(opts: {
   ).trim();
 }
 
-// ── CommentAgent ──────────────────────────────────────────────────────────────
+// ── GeneralPurposeAgent ──────────────────────────────────────────────────────────────
 
-export function buildCommentAgentInstructionsPrompt(opts: {
+export function buildGeneralPurposeAgentInstructionsPrompt(opts: {
   styleProfile:         string;
   existingInstructions: string;
 }): string {
@@ -301,31 +307,26 @@ STYLE PROFILE:
 ${opts.styleProfile.slice(0, 3000)}
 ---
 
-CURRENT COMMENT INSTRUCTIONS (if any):
+CURRENT GENERAL PURPOSE INSTRUCTIONS (if any):
 ---
 ${opts.existingInstructions.slice(0, 2000)}
 ---
 
-## Instructions\n\nGenerate an updated Comment Instructions system prompt that guides the AI to
+## Instructions
+
+Generate an updated General Purpose Instructions system prompt that guides the AI to
 respond to in-document "@AI" comment threads in a voice consistent with this
 manuscript's StyleProfile.
 
-Return a JSON object with:
-- proposed_full_text: the complete new Comment Instructions — MUST be valid
-  GitHub-Flavored Markdown. Required sections (## H2 headings):
-    ## Response Style
-    ## Scope
-    ## Sign-off
-    ## Example Thread
-  Use - bullet points for rules, **bold** for key constraints. Every section
-  must start with a ## heading. Include a concrete example exchange in
-  ## Example Thread using > blockquotes.
-- operations: one per section being added or changed, each with a verbatim
-  match_text from proposed_full_text and a reason.
+Return the complete instructions as plain GitHub-Flavored Markdown, starting directly
+with the first ## heading. Do NOT wrap the response in JSON or any other format.
+Required sections (## H2 headings): ## Response Style, ## Scope, ## Sign-off, ## Example Thread.
+Use - bullet points for rules, **bold** for key constraints.
+Include a concrete example exchange in ## Example Thread using > blockquotes.
 `.trim();
 }
 
-export function buildCommentAgentBatchPrompt(opts: {
+export function buildGeneralPurposeAgentBatchPrompt(opts: {
   anchorContent: string;
   threads:       TestThread[];
 }): string {

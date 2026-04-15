@@ -212,7 +212,7 @@ Coverage per agent:
 | ArchitectAgent | ✓ 3 tests — thinking model | N/A (no annotateTab) | ✓ 4 tests — thinking model |
 | EarTuneAgent | ✓ 4 tests — fast model | ✓ 5 tests — fast model | ✓ 4 tests — fast model |
 | AuditAgent | ✓ 4 tests — thinking model | ✓ 5 tests — thinking model | ✓ 5 tests — thinking model |
-| CommentAgent | ✓ 4 tests — fast model | N/A (no annotateTab) | ✓ 6 tests — fast model |
+| GeneralPurposeAgent | ✓ 4 tests — fast model | N/A (no annotateTab) | ✓ 6 tests — fast model |
 
 Tests that use the **thinking model** (`gemini-2.5-pro`) have a 120 s timeout per test. Fast model tests have a 60 s timeout. Expect a full integration run to take 5–15 minutes depending on API latency.
 
@@ -225,7 +225,7 @@ npx jest --config jest.integration.config.cjs collaboration.integration
 npx jest --config jest.integration.config.cjs architect.integration
 npx jest --config jest.integration.config.cjs eartune.integration
 npx jest --config jest.integration.config.cjs audit.integration
-npx jest --config jest.integration.config.cjs commentAgent.integration
+npx jest --config jest.integration.config.cjs generalPurposeAgent.integration
 ```
 
 Or use the full path if you prefer to be explicit:
@@ -335,7 +335,7 @@ npm run test:e2e -- -t "multi-thread" # one test, no redeploy
 `deploy.sh` runs the complete test pyramid before pushing. Use it before merging or releasing:
 
 ```bash
-./deploy.sh
+./scripts/deploy.sh
 ```
 
 Steps in order:
@@ -350,13 +350,13 @@ Steps in order:
 
 ```bash
 # Skip integration + E2E (only unit tests + push)
-./deploy.sh --skip-integration
+./scripts/deploy.sh --skip-integration
 
 # Skip E2E only
-./deploy.sh --skip-e2e
+./scripts/deploy.sh --skip-e2e
 
 # Emergency hotfix — no tests, build + push only
-./deploy.sh --skip-tests
+./scripts/deploy.sh --skip-tests
 ```
 
 | Scenario | Command |
@@ -364,9 +364,9 @@ Steps in order:
 | Changed GAS code, quick check | `./gas-redeploy.sh` |
 | Changed GAS code, one failing test | `./gas-redeploy.sh --test "pattern"` |
 | Changed test helpers only | `npm run test:e2e -- -t "pattern"` |
-| Full staging pipeline | `./deploy.sh` |
+| Full staging pipeline | `./scripts/deploy.sh` |
 | Push without running tests | `./gas-redeploy.sh --no-e2e` |
-| Ready to release | `./deploy_prod.sh` |
+| Ready to release | `./scripts/deploy_prod.sh` |
 
 ### Deploy to production (versioned)
 
@@ -395,7 +395,7 @@ bash deploy_prod.sh --dry-run
 │   ├── ArchitectAgent.ts         # W1 + W3 — style profile and structural review
 │   ├── EarTuneAgent.ts           # W1 + W2 + W3 — ear-tune rhythm annotation
 │   ├── AuditAgent.ts             # W1 + W2 + W3 — technical/physics audit
-│   ├── CommentAgent.ts           # W1 + W3 — @AI comment thread replies
+│   ├── GeneralPurposeAgent.ts           # W1 + W3 — @AI comment thread replies
 │   ├── CollaborationService.ts   # Drive comment CRUD, annotation routing
 │   ├── CommentProcessor.ts       # Polls Drive comments, routes to agents
 │   ├── DocOps.ts                 # Tab read/write helpers
@@ -424,7 +424,7 @@ bash deploy_prod.sh --dry-run
 │       ├── architect.integration.test.ts
 │       ├── eartune.integration.test.ts
 │       ├── audit.integration.test.ts
-│       ├── commentAgent.integration.test.ts
+│       ├── generalPurposeAgent.integration.test.ts
 │       ├── collaboration.integration.test.ts
 │       └── e2e.test.ts           # Full E2E: @AI comment → agent reply via web app doPost()
 │
@@ -456,6 +456,6 @@ Every agent implements up to three workflows:
 |----------|-------------|---------|--------|
 | **W1** instruction_update | `generateInstructions()` | "Regenerate" button in sidebar → reviews Scratch tab → replaces the agent's Instructions tab | `{ proposed_full_text, operations }` |
 | **W2** content_annotation | `annotateTab(tabName)` | "Run" button in sidebar (uses the active tab) | `{ operations }` — adds Drive comments, no text replacement |
-| **W3** comment thread reply | `handleCommentThread()` | `@agent` tag in a Drive comment thread | `{ reply }` or `{ response }` (CommentAgent) — reply only, no doc changes |
+| **W3** comment thread reply | `handleCommentThread()` | `@agent` tag in a Drive comment thread | `{ reply }` or `{ response }` (GeneralPurposeAgent) — reply only, no doc changes |
 
-ArchitectAgent and CommentAgent have no W2 (`annotateTab`). CommentAgent W3 returns `{ response }` instead of `{ reply }`.
+ArchitectAgent and GeneralPurposeAgent have no W2 (`annotateTab`). GeneralPurposeAgent W3 returns `{ response }` instead of `{ reply }`.

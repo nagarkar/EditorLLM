@@ -54,7 +54,7 @@ elapsed() {
   echo $(( end - START_TIME ))s
 }
 
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR/.."
 
 # ── Guard: .clasp.json must exist with a real scriptId ───────────────────────
 section "Pre-flight checks"

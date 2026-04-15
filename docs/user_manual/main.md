@@ -13,7 +13,8 @@ EditorLLM is an AI-augmented editing workspace for Google Docs. It provides a te
 5. [Logical Auditor (Technical Audit)](05-logical-auditor.md)
 6. [Comment Agent (@AI Responder)](06-comment-agent.md)
 7. [Review Workflow: Scratch Tabs & Annotations](07-review-workflow.md)
-8. [Troubleshooting](08-troubleshooting.md)
+9. [External Anchor (Tether Agent)](09-tether-agent.md)
+10. [Troubleshooting](08-troubleshooting.md)
 
 ---
 
@@ -50,9 +51,33 @@ Click **Initialize Tabs** in the Setup section of the sidebar. This creates the 
 | StyleProfile | Under Agentic Instructions | The generated style guide |
 | EarTune | Under Agentic Instructions | Ear-Tune system prompt |
 | TechnicalAudit | Under Agentic Instructions | Audit rules |
+| TetherInstructions | Under Agentic Instructions | External fact-checking and alignment rules |
 | Comment Instructions | Under Agentic Instructions | Instructions for the @AI comment responder |
 
 You only need to do this once per document. Re-running it is safe — existing tabs are not overwritten.
+
+## Agent Instruction Generation (W1)
+
+Every agent can regenerate its own "system prompt" or instruction tab (e.g., the Structural Architect produces the `StyleProfile`). When you click **Generate** in an agent's sidebar section, the agent reads specific tabs as context to inform the new instructions.
+
+| Agent | Tab Context Used for Generation | Format Read |
+|---|---|---|
+| **Structural Architect** | `MergedContent`, `StyleProfile` | Plain Text / **Markdown** |
+| **Audio EarTune** | `StyleProfile`, `EarTune` | **Markdown** |
+| **Logical Auditor** | `StyleProfile`, `TechnicalAudit`, `MergedContent` (First 6,000 chars) | **Markdown** / Plain |
+| **Comment Agent** | `StyleProfile`, `Comment Instructions` | **Markdown** |
+| **External Anchor** | `StyleProfile`, `TetherInstructions`, `MergedContent` (First 6,000 chars) | **Markdown** / Plain |
+
+### Recursive Instruction Loop
+
+EditorLLM implements a **recursive feedback loop**. When you generate new instructions:
+1. The agent reads your **existing instructions** (if any) and incorporates them into its reasoning.
+2. The **old instructions** are backed up to a corresponding **Scratch** tab (e.g., `StyleProfile Scratch`).
+3. The **newly generated instructions** are written directly to the root instruction tab (e.g., `StyleProfile`).
+
+This ensures that any manual refinements you make to the instructions are preserved and refined in the next iteration, rather than being "forgotten".
+
+> **Note:** Reading tabs as **Markdown** allows the agent to see the exact structure (headings, bolding, bullet points) of your existing instructions, leading to more consistent regenerations.
 
 ### Set Your Gemini API Key
 
@@ -151,12 +176,6 @@ The Structural Architect analyses your manuscript and produces a **StyleProfile*
 
 ## Sidebar Actions
 
-### Generate Example
-
-Click **Generate Example** to populate the MergedContent and StyleProfile tabs with sample content. This shows you the expected shape of each tab before you use your own manuscript.
-
-Use this when you're setting up EditorLLM for the first time and want to see what the output looks like.
-
 ### Generate (StyleProfile)
 
 Click **Generate** to run the full StyleProfile generation:
@@ -233,10 +252,6 @@ The EarTune will:
 - Propose rhythmic rewrites via the Gemini API.
 - Apply each rewrite directly to the tab using the Docs API.
 - Highlight changed passages in yellow and add comments with the reasoning.
-
-### Generate Example
-
-Click **Generate Example** to write sample EarTune instructions to the EarTune tab. Useful for seeing the expected format.
 
 ### Generate (EarTune Instructions)
 
@@ -316,10 +331,6 @@ The Auditor will:
 - Send the passage to Gemini (thinking tier) for thorough analysis.
 - Apply corrections directly to the tab where issues are found.
 - Highlight each corrected passage in yellow and add a comment citing the specific axiom or rule violated.
-
-### Generate Example
-
-Click **Generate Example** to write sample TechnicalAudit instructions to the TechnicalAudit tab.
 
 ### Generate (Audit Instructions)
 
@@ -416,10 +427,6 @@ The AI only responds when the **last message** in the thread starts with `@AI`. 
 
 ## Sidebar Actions
 
-### Generate Example
-
-Click **Generate Example** to write sample Comment Instructions to the Comment Instructions tab. This shows the expected format.
-
 ### Generate (Comment Instructions)
 
 Click **Generate** to regenerate the Comment Instructions system prompt:
@@ -451,6 +458,8 @@ When the Comment Agent processes a thread, it uses:
 | `@ear-tune` | Audio EarTune | Hyphenated alias for `@eartune` |
 | `@audit` | Logical Auditor | Technical audit of selected passage |
 | `@auditor` | Logical Auditor | Same as `@audit` |
+| `@tether` | External Anchor | Factual validation or alignment opportunity |
+| `@ref` | External Anchor | Alias for `@tether` |
 
 All tags are case-insensitive: `@AI`, `@ai`, `@Ai` all work.
 
@@ -612,7 +621,7 @@ For detailed debugging, open the Apps Script editor:
 
 Key log prefixes:
 - `[CommentProcessor]` — comment routing, thread parsing, dispatch
-- `[ArchitectAgent]`, `[EarTuneAgent]`, `[AuditAgent]`, `[CommentAgent]` — per-agent Gemini calls and context
+- `[ArchitectAgent]`, `[EarTuneAgent]`, `[AuditAgent]`, `[GeneralPurposeAgent]` — per-agent Gemini calls and context
 - `[DocOps]` — tab creation and registry operations
 
 ## Performance

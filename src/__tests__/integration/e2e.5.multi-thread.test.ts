@@ -1,16 +1,48 @@
 // ============================================================
 // E2E 5: multi-thread routing — @ai + @architect + @audit in one run
 //
-// Creates three comments with different agent tags, calls
-// commentProcessorRun() once, and asserts each thread was handled.
+// PURPOSE
+// -------
+// Proves that a single commentProcessorRun() call correctly dispatches
+// comments tagged with different agents (@ai, @architect, @audit) to
+// the appropriate agent handler. Validates that the byAgent map in the
+// response reflects at least one dispatch per agent type.
 //
-// Uses LONG_TIMEOUT because @architect and @audit call the thinking-tier
-// model (GEMINI_THINKING_MODEL). In .env.integration this is set to
-// gemini-2.5-flash to stay within the GAS 6-minute execution cap.
+// WORKFLOW
+// --------
+//   1. seedTestEnvironment() → seeds API key and model overrides.
+//   2. Creates three comments on the first tab:
+//      a) @AI — routed to GeneralPurposeAgent (fast tier)
+//      b) @architect — routed to ArchitectAgent (thinking tier)
+//      c) @audit — routed to AuditAgent (thinking tier)
+//   3. Calls commentProcessorRun() via doPost.
+//   4. Asserts:
+//      - result.replied >= 3
+//      - result.byAgent has entries for @ai, @architect, and @audit
+//      - Each comment thread has >= 1 agent reply with EditorLLM prefix
+//   5. afterAll deletes all three test comments.
 //
-// Note: this test was previously timing out at 183 s (the 3-minute
-// execSync limit) because it was waiting for 4 preceding slow suites
-// before running. As a standalone parallel file it runs immediately.
+// TIMEOUT CONSTRAINT
+// ------------------
+// @architect and @audit use the thinking-tier model (GEMINI_THINKING_MODEL).
+// In .env.integration this is set to gemini-2.5-flash to stay within the
+// GAS 6-minute execution cap. Uses LONG_TIMEOUT (10 min) because this
+// single GAS call processes 3 agents sequentially.
+//
+// PARALLELISM NOTE
+// ----------------
+// This is typically the longest-running E2E file (~230-250s). In the
+// parallel batch, E2E 3 also calls commentProcessorRun() concurrently.
+// GAS queues the calls; reducing from 3 concurrent callers (E2E 1+3+5)
+// to 2 (E2E 3+5) reduced wall time from 349s to 244s.
+//
+// EXECUTION MODEL
+// ---------------
+//   • Run via: npm run test:e2e-parallel (included in parallel batch)
+//   • Requires: GEMINI_API_KEY, GOOGLE_DOC_ID, GOOGLE_TOKEN, webAppUrl
+//   • GAS calls: 1 commentProcessorRun (~230-250s)
+//   • Reply polling: up to 30s after processAll for Drive eventual consistency
+//   • Automatically skipped when credentials are absent
 // ============================================================
 
 import { fetchTabs, createComment, deleteComment, getCommentWithReplies } from './helpers/drive';

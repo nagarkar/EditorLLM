@@ -9,13 +9,14 @@
 // (the test:e2e script runs the parallel batch first, then this config)
 
 module.exports = {
+  rootDir: '../../',
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/integration/e2e.6.*.test.ts'],
   testPathIgnorePatterns: ['/node_modules/'],
   moduleFileExtensions: ['ts', 'js'],
-  setupFilesAfterEnv: ['<rootDir>/jest.integration.setup.js'],
+  setupFilesAfterEnv: ['<rootDir>/config/jest/jest.integration.setup.js'],
   transform: {
     '^.+\\.ts$': ['ts-jest', {
       tsconfig: {
@@ -33,6 +34,6 @@ module.exports = {
   verbose: true,
   reporters: [
     'default',
-    ['<rootDir>/jest.file-reporter.cjs', { outputFile: '.last_e2e_serial_test_results.txt' }],
+    ['<rootDir>/config/jest/jest.file-reporter.cjs', { outputFile: '.last_e2e_serial_test_results.txt' }],
   ],
 };

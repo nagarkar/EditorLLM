@@ -25,6 +25,7 @@
 //           webAppUrl (in .clasp.json)
 
 module.exports = {
+  rootDir: '../../',
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
@@ -39,7 +40,7 @@ module.exports = {
   ],
   testPathIgnorePatterns: ['/node_modules/'],
   moduleFileExtensions: ['ts', 'js'],
-  setupFilesAfterEnv: ['<rootDir>/jest.integration.setup.js'],
+  setupFilesAfterEnv: ['<rootDir>/config/jest/jest.integration.setup.js'],
   transform: {
     '^.+\\.ts$': ['ts-jest', {
       tsconfig: {
@@ -63,6 +64,6 @@ module.exports = {
   // Write a human-readable summary to .last_e2e_test_results after every run.
   reporters: [
     'default',
-    ['<rootDir>/jest.file-reporter.cjs', { outputFile: '.last_e2e_test_results.txt' }],
+    ['<rootDir>/config/jest/jest.file-reporter.cjs', { outputFile: '.last_e2e_test_results.txt' }],
   ],
 };

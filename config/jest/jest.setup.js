@@ -5,16 +5,50 @@ const path = require('path');
 
 // The PromptBuilders requirement has been deprecated.
 
+const mockNamedRange = {
+  getRange: jest.fn().mockReturnValue({ getRangeElements: jest.fn().mockReturnValue([]) }),
+  remove: jest.fn(),
+  getName: jest.fn().mockReturnValue('annotation_mock-bookmark-id'),
+};
+
+const mockBookmark = {
+  getId: jest.fn().mockReturnValue('mock-bookmark-id'),
+  remove: jest.fn(),
+};
+
+const mockRange = {
+  addElement: jest.fn().mockReturnThis(),
+  build: jest.fn().mockReturnValue({ getRangeElements: jest.fn().mockReturnValue([]) }),
+};
+
 const mockBody = {
   getText: jest.fn().mockReturnValue(''),
   clear: jest.fn(),
   appendParagraph: jest.fn(),
   findText: jest.fn().mockReturnValue(null),
+  // Used by clearTabHighlights_
+  getNumChildren: jest.fn().mockReturnValue(0),
+  getChild: jest.fn().mockReturnValue(null),
+  // Used by TabMerger
+  appendTable: jest.fn().mockReturnValue({
+    appendTableRow: jest.fn().mockReturnValue({
+      appendTableCell: jest.fn(),
+    }),
+  }),
+  appendListItem: jest.fn(),
+  appendPageBreak: jest.fn(),
 };
 
 const mockDocumentTab = {
   getBody: jest.fn().mockReturnValue(mockBody),
   getId: jest.fn().mockReturnValue('mock-tab-id'),
+  // Used by annotateOperation_ (step 1: bookmark + named range)
+  newPosition: jest.fn().mockReturnValue({}),
+  addBookmark: jest.fn().mockReturnValue(mockBookmark),
+  newRange: jest.fn().mockReturnValue(mockRange),
+  addNamedRange: jest.fn().mockReturnValue(mockNamedRange),
+  // Used by deleteAnnotation_ (named-range lookup)
+  getNamedRanges: jest.fn().mockReturnValue([]),
 };
 
 const mockTab = {
@@ -29,6 +63,8 @@ const mockDocument = {
   addTab: jest.fn().mockReturnValue(mockTab),
   getId: jest.fn().mockReturnValue('mock-doc-id'),
   getName: jest.fn().mockReturnValue('Mock Document'),
+  // Used by deleteAnnotation_ (document-scoped bookmark lookup)
+  getBookmark: jest.fn().mockReturnValue(null),
 };
 
 global.DocumentApp = {
@@ -112,6 +148,7 @@ global.Drive = {
 
 global.PropertiesService.getDocumentProperties = jest.fn().mockReturnValue({
   getProperty: jest.fn().mockReturnValue(null),
+  getProperties: jest.fn().mockReturnValue({}),
   setProperty: jest.fn(),
   deleteProperty: jest.fn(),
 });
@@ -154,6 +191,12 @@ function createMockCache() {
       }, this);
       return result;
     },
+    putAll(entries, ttl) {
+      const expiresAt = ttl ? Date.now() + ttl * 1000 : Infinity;
+      Object.keys(entries).forEach(function(k) {
+        store.set(k, { value: String(entries[k]), expiresAt });
+      });
+    },
     remove(key) { store.delete(key); },
     removeAll(keys) { keys.forEach(function(k) { store.delete(k); }); },
   };
@@ -183,6 +226,34 @@ global.Tracer = {
 global.Utilities = {
   sleep: jest.fn(),
 };
+
+// ── DocOps stub ───────────────────────────────────────────────────────────────
+// CollaborationService calls DocOps.getTabByName() inside clearTabHighlights_
+// (color-sweep fallback) and DocOps.getTabIdByName() / DocOps.tabExists() in
+// other paths. Return safe null/false defaults so the fallback is a no-op in
+// tests that don't set up real tabs.
+global.DocOps = {
+  getTabByName:   jest.fn().mockReturnValue(null),
+  getTabIdByName: jest.fn().mockReturnValue(null),
+  tabExists:      jest.fn().mockReturnValue(false),
+  ensureStandardTabs: jest.fn(),
+};
+
+// Expose mockDocumentTab on global so vm-based collaboration tests can pass it
+// as the docTab argument to clearAgentAnnotations_ (new 5-param signature).
+global.mockDocumentTab = mockDocumentTab;
+
+// Expose mockNamedRange and mockBookmark so annotateOperation_ / deleteAnnotation_
+// tests can assert on remove(), getRange(), getId() calls without re-creating the
+// objects (they are the same instances returned by mockDocumentTab.addNamedRange /
+// addBookmark and by mockDocumentTab.getNamedRanges).
+global.mockNamedRange = mockNamedRange;
+global.mockBookmark   = mockBookmark;
+
+// HIGHLIGHT_COLOR is defined in Types.ts and used by CollaborationService.ts as a
+// fallback when PropertiesService returns null. Tests that run the compiled service
+// in a vm context need this constant in their global scope.
+global.HIGHLIGHT_COLOR = '#FFD966';
 
 // ── MarkdownService pure-function stubs ────────────────────────────────────
 // These implement the same logic as the private helpers in MarkdownService.ts.

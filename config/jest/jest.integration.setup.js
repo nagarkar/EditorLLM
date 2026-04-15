@@ -13,7 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const envFile = path.join(__dirname, '.env.integration');
+const envFile = path.join(__dirname, '..', '..', '.env.integration');
 if (fs.existsSync(envFile)) {
   const lines = fs.readFileSync(envFile, 'utf8').split('\n');
   for (const line of lines) {

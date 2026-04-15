@@ -29,19 +29,15 @@ The EarTune will:
 - Apply each rewrite directly to the tab using the Docs API.
 - Highlight changed passages in yellow and add comments with the reasoning.
 
-### Generate Example
-
-Click **Generate Example** to write sample EarTune instructions to the EarTune tab. Useful for seeing the expected format.
-
 ### Generate (EarTune Instructions)
 
 Click **Generate** to regenerate the EarTune system prompt:
 
-1. The EarTune reads the current StyleProfile.
+1. The EarTune reads the current **StyleProfile** and your **existing EarTune** instructions.
 2. It produces updated EarTune instructions that incorporate the rhythm and cadence patterns specific to your manuscript.
-3. The result is written to an **EarTune Scratch** review tab.
+3. The result is written directly to the **EarTune** tab, with your previous version backed up to **EarTune Scratch**.
 
-Review and accept or edit the instructions before the next Ear-Tune run.
+Manual refinements you make to the EarTune tab are preserved and refined in subsequent generations (recursive feedback).
 
 ## Comment Routing: `@eartune` or `@eartune`
 
@@ -72,11 +68,16 @@ The EarTune will:
 
 ## What It Reads
 
-| Tab | Why |
-|---|---|
-| StyleProfile | Voice and rhythm constraints |
-| EarTune | Specific sonic optimisation rules |
-| Active tab / anchor tab | The prose to optimise |
+| Workflow | Tab | Format | Why |
+|---|---|---|---|
+| **Generate (W1)** | StyleProfile | Markdown | Voice and rhythm patterns to mirror |
+| **Generate (W1)** | EarTune | Markdown | Existing rules to be refined |
+| **Ear-Tune (W2)** | StyleProfile | Plain Text | Voice and rhythm constraints |
+| **Ear-Tune (W2)** | EarTune | Plain Text | Sonic optimization rules |
+| **Ear-Tune (W2)** | Active Tab | Plain Text | The prose to optimize |
+| **Comments (W3)** | StyleProfile | Plain Text | Voice and rhythm constraints |
+| **Comments (W3)** | EarTune | Plain Text | Sonic optimization rules |
+| **Comments (W3)** | Anchor Tab | Plain Text | Passage context for the comment |
 
 ## Model Tier
 

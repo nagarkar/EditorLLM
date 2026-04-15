@@ -175,8 +175,10 @@
   <div class="log-toolbar">
     <button class="icon-btn" onclick="refreshJobs()" title="Refresh jobs">🔄</button>
     <button class="icon-btn" onclick="clearPanel()" title="Clear log view">🧹</button>
-    <button class="icon-btn" onclick="closeEmptyJobs()" title="Close empty jobs">🗑️</button>
+    <button class="icon-btn" onclick="closeCompletedJobs()" title="Close completed jobs">🗑️</button>
     <button class="icon-btn" onclick="toggleAutoScroll()" id="autoscroll-btn" title="Toggle auto-scroll">⬇</button>
+    <button class="icon-btn" onclick="copyJobLogs()" title="Copy this job's logs to clipboard">📋</button>
+    <button class="icon-btn" onclick="copyAllLogs()" title="Copy ALL session logs to clipboard">📥</button>
     <span class="log-count" id="log-count">0 entries</span>
   </div>
 
@@ -284,14 +286,17 @@
     function renderJobDropdown() {
       var sel = jobSelect();
       sel.innerHTML = '';
-      if (!jobs.length) {
+      // Only show running (incomplete) jobs in the dropdown.
+      // Completed jobs are hidden — use "Close Completed Jobs" to remove them.
+      var visibleJobs = jobs.filter(function(j) { return !j._done; });
+      if (!visibleJobs.length) {
         var opt = document.createElement('option');
         opt.value = '';
-        opt.textContent = '— No jobs yet —';
+        opt.textContent = jobs.length ? '— All jobs completed —' : '— No jobs yet —';
         sel.appendChild(opt);
         return;
       }
-      jobs.forEach(function(job) {
+      visibleJobs.forEach(function(job) {
         var opt = document.createElement('option');
         opt.value = job.id;
         opt.textContent = statusIcon(job.id) + ' ' + job.label + '  (' + job.startedAt + ')';
@@ -367,13 +372,13 @@
       }
     }
 
-    // ── Close empty jobs ──────────────────────────────────────
+    // ── Close completed jobs ───────────────────────────────────
 
-    function closeEmptyJobs() {
-      setFooter('Removing empty jobs…', '');
+    function closeCompletedJobs() {
+      setFooter('Removing completed jobs…', '');
       google.script.run
         .withSuccessHandler(function(remainingJobs) {
-          // Preserve _done/_error metadata
+          // Preserve _done/_error metadata from previously known jobs
           var oldMap = {};
           jobs.forEach(function(j) { oldMap[j.id] = j; });
           remainingJobs.forEach(function(j) {
@@ -384,24 +389,26 @@
           });
           jobs = remainingJobs;
 
-          // If active job was removed, switch to newest or clear
+          // If the active job was removed, switch to the newest running job or clear
           var activeStillExists = jobs.some(function(j) { return j.id === activeJobId; });
           if (!activeStillExists) {
             activeJobId = null;
             clearPanel();
             stopLogPolling();
-            if (jobs.length) {
-              selectJob(jobs[0].id);
+            var runningJobs = jobs.filter(function(j) { return !j._done; });
+            if (runningJobs.length) {
+              selectJob(runningJobs[0].id);
             } else {
-              setFooter('All jobs removed.', '');
+              setFooter('No running jobs.', '');
             }
           }
           renderJobDropdown();
+          setFooter('Completed jobs removed.', 'success');
         })
         .withFailureHandler(function(e) {
           setFooter('Error: ' + (e.message || e), 'error');
         })
-        .removeEmptyJobs();
+        .removeCompletedJobs();
     }
 
     // ── Polling ────────────────────────────────────────────────
@@ -429,48 +436,24 @@
         .withFailureHandler(function() { /* ignore */ })
         .getLogsSince(jid, capturedSeq);
 
-      // Also check if the job finished
-      google.script.run
-        .withSuccessHandler(function(status) {
-          if (jid !== activeJobId) return;
-          updateJobMeta(jid, status);
-          renderJobDropdown();
-          if (status && status.done) {
-            // Final log fetch
-            google.script.run
-              .withSuccessHandler(function(finalEntries) {
-                if (jid !== activeJobId) return;
-                if (finalEntries && finalEntries.length) appendEntries(finalEntries);
-                stopLogPolling();
-                showJobDone(status);
-              })
-              .withFailureHandler(function() {
-                stopLogPolling();
-                showJobDone(status);
-              })
-              .getLogsSince(jid, lastSeq);
-          }
-        })
-        .withFailureHandler(function() { /* ignore */ })
-        .getJobStatus(jid);
+      // Status for the active job is now handled by pollJobDashboard()
     }
 
-    // ── Job list polling ───────────────────────────────────────
+    // ── Job dashboard polling (Unified) ────────────────────────
 
-    function pollJobList() {
+    function pollJobDashboard() {
       google.script.run
         .withSuccessHandler(function(serverJobs) {
-          if (!serverJobs || !serverJobs.length) return;
+          if (!serverJobs || !serverJobs.length) {
+            jobs = [];
+            renderJobDropdown();
+            return;
+          }
 
-          // Preserve _done/_error metadata we already have
-          var oldMap = {};
-          jobs.forEach(function(j) { oldMap[j.id] = j; });
-
+          // serverJobs now includes .done and .error directly
           serverJobs.forEach(function(j) {
-            if (oldMap[j.id]) {
-              j._done  = oldMap[j.id]._done;
-              j._error = oldMap[j.id]._error;
-            }
+            j._done = j.done;
+            j._error = j.error;
           });
 
           var previousNewest = jobs.length ? jobs[0].id : null;
@@ -484,23 +467,23 @@
           if (newestId && (!activeJobId || newestId !== previousNewest)) {
             selectJob(newestId);
           }
+
+          // Decide whether to keep log polling for the current active job
+          var current = jobs.find(function(j) { return j.id === activeJobId; });
+          if (current) {
+            if (current._done) {
+              if (pollTimer) {
+                // One last log fetch? pollLogs already does getLogsSince
+                stopLogPolling();
+                showJobDone(current);
+              }
+            } else {
+              if (!pollTimer) startLogPolling();
+            }
+          }
         })
         .withFailureHandler(function() { /* ignore */ })
-        .getJobList();
-    }
-
-    // Also periodically refresh status for all jobs not yet done
-    function refreshAllStatuses() {
-      jobs.forEach(function(job) {
-        if (job._done) return;
-        google.script.run
-          .withSuccessHandler(function(status) {
-            updateJobMeta(job.id, status);
-            renderJobDropdown();
-          })
-          .withFailureHandler(function() {})
-          .getJobStatus(job.id);
-      });
+        .getJobDashboard();
     }
 
     // ── Initialise ─────────────────────────────────────────────
@@ -509,18 +492,89 @@
       setFooter('Connecting…', '');
       // Set initial autoscroll state
       document.getElementById('autoscroll-btn').classList.add('active');
-      pollJobList();
+      pollJobDashboard();
       listTimer = setInterval(function() {
-        pollJobList();
-        refreshAllStatuses();
+        pollJobDashboard();
       }, LIST_MS);
     }
 
     /** Manual refresh — re-fetches job list immediately. */
     function refreshJobs() {
       setFooter('Refreshing…', '');
-      pollJobList();
-      refreshAllStatuses();
+      pollJobDashboard();
+    }
+
+    // ── Copy helpers ───────────────────────────────────────────
+
+    /**
+     * Formats a LogEntry array as plain text lines.
+     * Format: "HH:MM:SS.mmm LEVEL  message"
+     */
+    function formatLogsAsText(entries) {
+      return entries.map(function(e) {
+        return (e.ts || '') + '  ' + (e.level || 'INFO').padEnd(5) + '  ' + (e.msg || '');
+      }).join('\n');
+    }
+
+    /**
+     * Writes text to clipboard. Uses navigator.clipboard when available,
+     * falls back to execCommand('copy') for the GAS sidebar iframe context.
+     */
+    function copyToClipboard(text, label) {
+      function fallback() {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+          document.execCommand('copy');
+          setFooter((label || 'Logs') + ' copied (' + text.split('\n').length + ' lines).', 'success');
+        } catch (_) {
+          setFooter('Copy failed — select text manually.', 'error');
+        }
+        document.body.removeChild(ta);
+      }
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() {
+          setFooter((label || 'Logs') + ' copied (' + text.split('\n').length + ' lines).', 'success');
+        }, function() { fallback(); });
+      } else {
+        fallback();
+      }
+    }
+
+    /** Copies the currently visible job's log entries from the DOM. */
+    function copyJobLogs() {
+      var entries = panel().querySelectorAll('.log-entry');
+      if (!entries.length) { setFooter('No log entries to copy.', ''); return; }
+      var lines = [];
+      entries.forEach(function(div) {
+        var ts  = div.querySelector('.log-ts')  ? div.querySelector('.log-ts').textContent  : '';
+        var lvl = div.querySelector('.log-level') ? div.querySelector('.log-level').textContent : '';
+        // message text is the last text node in the div
+        var msg = '';
+        div.childNodes.forEach(function(node) {
+          if (node.nodeType === 3) msg += node.textContent; // text node
+        });
+        lines.push((ts + '  ' + lvl.padEnd(5) + '  ' + msg.trim()));
+      });
+      copyToClipboard(lines.join('\n'), 'Job logs');
+    }
+
+    /** Fetches ALL session logs from the server and copies them to clipboard. */
+    function copyAllLogs() {
+      setFooter('Fetching all session logs…', '');
+      google.script.run
+        .withSuccessHandler(function(entries) {
+          if (!entries || !entries.length) { setFooter('No session logs found.', ''); return; }
+          copyToClipboard(formatLogsAsText(entries), 'All session logs');
+        })
+        .withFailureHandler(function(e) {
+          setFooter('Error fetching logs: ' + (e.message || e), 'error');
+        })
+        .getAllSessionLogs();
     }
 
     init();

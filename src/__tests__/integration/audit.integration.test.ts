@@ -1,13 +1,48 @@
 // ============================================================
 // AuditAgent integration tests — real Gemini API calls.
 //
-// Workflow coverage:
-//   W1 (generateInstructions) — instruction_update → { proposed_full_text, operations }
-//   W2 (annotateTab)          — content_annotation → { operations }
-//   W3 (handleCommentThreads) — batch reply → { responses: [{threadId, reply}] }
+// PURPOSE
+// -------
+// Validates the Gemini prompt↔model contract for AuditAgent: given
+// technical audit prompts and structured JSON schemas, the model
+// returns correct shapes, detects planted errors, and grounds its
+// annotations in verbatim passage text. Tests call Gemini REST
+// directly from Node — no GAS deployment required.
 //
-// All tests use the thinking model (gemini-2.5-pro).
-// Individual test timeout is set to 120 s.
+// WORKFLOW COVERAGE (see BaseAgent for workflow definitions)
+// ----------------------------------------------------------
+//   W1 (generateInstructions)
+//     • Sends StyleProfile + manuscript + existing audit instructions →
+//       model produces a TechnicalAudit prompt with proposed_full_text.
+//     • Schema: INSTRUCTION_UPDATE_SCHEMA → { proposed_full_text }
+//     • Edge cases: empty existing audit, empty manuscript.
+//
+//   W2 (annotateTab)
+//     • Sends a passage to audit → model returns { operations: [{match_text, reason}] }
+//     • Schema: ANNOTATION_SCHEMA → { operations }
+//     • Key assertions:
+//       - Detects planted Born-rule exponent error (|³ should be |²)
+//       - Every match_text is a verbatim substring of the passage (grounding)
+//       - Does NOT return proposed_full_text (W2 is annotation-only)
+//       - Handles very short passages gracefully
+//
+//   W3 (handleCommentThreads)
+//     • Single-thread: validates threadId, non-empty reply, signature,
+//       absence of mutation fields, and Born-rule detection in reply text.
+//     • Edge case: empty audit instructions still produce a valid reply.
+//
+// PLANTED ERRORS (in fixtures/testDocument.ts)
+// ---------------------------------------------
+//   • CHAPTER_1 contains P = |⟨a_n|ψ⟩|³ — exponent should be 2 per Born rule.
+//   • TECHNICAL_AUDIT explicitly states "exponent MUST be 2, not 3".
+//   • Both W2 and W3 tests assert the model detects this error.
+//
+// EXECUTION MODEL
+// ---------------
+//   • Run via: npm run test:integration
+//   • Requires: GEMINI_API_KEY in .env.integration
+//   • Model tier: thinking (slower but more reliable for technical reasoning)
+//   • Timeout: 120s per test
 // ============================================================
 
 import { callGemini } from './helpers/gemini';
@@ -84,124 +119,74 @@ describe('AuditAgent — W1: generateInstructions (instruction_update)', () => {
 
 describe('AuditAgent — W2: annotateTab (content_annotation)', () => {
 
-  it('returns an operations array when given a passage to audit', () => {
-    const userPrompt = buildAuditAnnotatePrompt({
-      styleProfile:      FIXTURES.STYLE_PROFILE,
-      auditInstructions: FIXTURES.TECHNICAL_AUDIT,
-      passage:           FIXTURES.CHAPTER_1,
-      tabName:           'Chapter 1',
-    });
-    const result = callGemini(
+  // Five tests below assert different properties of the same CHAPTER_1 response.
+  // One shared beforeAll call replaces five identical callGemini() invocations.
+  let w2Result: any;
+
+  beforeAll(() => {
+    w2Result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
+      buildAuditAnnotatePrompt({
+        styleProfile:      FIXTURES.STYLE_PROFILE,
+        auditInstructions: FIXTURES.TECHNICAL_AUDIT,
+        passage:           FIXTURES.CHAPTER_1,
+        tabName:           'Chapter 1',
+      }),
       ANNOTATION_SCHEMA,
       { tier: TIER }
     );
-
-    expect(Array.isArray(result.operations)).toBe(true);
-    expect(result.operations.length).toBeGreaterThan(0);
   }, TIMEOUT);
 
-  it('each annotation operation has non-empty match_text and reason', () => {
-    const userPrompt = buildAuditAnnotatePrompt({
-      styleProfile:      FIXTURES.STYLE_PROFILE,
-      auditInstructions: FIXTURES.TECHNICAL_AUDIT,
-      passage:           FIXTURES.CHAPTER_1,
-      tabName:           'Chapter 1',
-    });
-    const result = callGemini(
-      INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
-      ANNOTATION_SCHEMA,
-      { tier: TIER }
-    );
+  it('returns an operations array when given a passage to audit', () => {
+    expect(Array.isArray(w2Result.operations)).toBe(true);
+    expect(w2Result.operations.length).toBeGreaterThan(0);
+  });
 
-    for (const op of result.operations) {
+  it('each annotation operation has non-empty match_text and reason', () => {
+    for (const op of w2Result.operations) {
       expect(typeof op.match_text).toBe('string');
       expect(op.match_text.trim().length).toBeGreaterThan(0);
       expect(typeof op.reason).toBe('string');
       expect(op.reason.trim().length).toBeGreaterThan(0);
     }
-  }, TIMEOUT);
+  });
 
   it('detects the planted Born-rule exponent error (|³ should be |²) in CHAPTER_1', () => {
     // CHAPTER_1 contains: "P = |⟨a_n|ψ⟩|³"
     // TECHNICAL_AUDIT states exponent MUST be 2, not 3.
-    const userPrompt = buildAuditAnnotatePrompt({
-      styleProfile:      FIXTURES.STYLE_PROFILE,
-      auditInstructions: FIXTURES.TECHNICAL_AUDIT,
-      passage:           FIXTURES.CHAPTER_1,
-      tabName:           'Chapter 1',
-    });
-    const result = callGemini(
-      INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
-      ANNOTATION_SCHEMA,
-      { tier: TIER }
-    );
-
-    // At least one operation should flag the exponent error.
-    const hasExponentFlag = result.operations.some((op: any) =>
+    const hasExponentFlag = w2Result.operations.some((op: any) =>
       /exponent|born|³|cube|probability|\|²|\|3/i.test(
         op.match_text + ' ' + op.reason
       )
     );
     expect(hasExponentFlag).toBe(true);
-  }, TIMEOUT);
+  });
 
   it('each W2 match_text is a verbatim substring of the annotated passage', () => {
     // Verifies the model is grounding its flags in the actual text, not hallucinating.
-    const passage = FIXTURES.CHAPTER_1;
-    const userPrompt = buildAuditAnnotatePrompt({
-      styleProfile:      FIXTURES.STYLE_PROFILE,
-      auditInstructions: FIXTURES.TECHNICAL_AUDIT,
-      passage,
-      tabName:           'Chapter 1',
-    });
-    const result = callGemini(
-      INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
-      ANNOTATION_SCHEMA,
-      { tier: TIER }
-    );
-
     const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-    const normalizedPassage = normalize(passage);
-    for (const op of result.operations) {
+    const normalizedPassage = normalize(FIXTURES.CHAPTER_1);
+    for (const op of w2Result.operations) {
       const found = normalize(op.match_text).length > 0 &&
         normalizedPassage.includes(normalize(op.match_text));
       expect(found).toBe(true);
     }
-  }, TIMEOUT);
+  });
 
   it('does NOT return proposed_full_text (W2 is annotation-only)', () => {
-    const userPrompt = buildAuditAnnotatePrompt({
-      styleProfile:      FIXTURES.STYLE_PROFILE,
-      auditInstructions: FIXTURES.TECHNICAL_AUDIT,
-      passage:           FIXTURES.CHAPTER_1,
-      tabName:           'Chapter 1',
-    });
-    const result = callGemini(
-      INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
-      ANNOTATION_SCHEMA,
-      { tier: TIER }
-    );
-
-    expect(result.proposed_full_text).toBeUndefined();
-    expect(result.workflow_type).toBeUndefined();
-  }, TIMEOUT);
+    expect(w2Result.proposed_full_text).toBeUndefined();
+    expect(w2Result.workflow_type).toBeUndefined();
+  });
 
   it('returns valid schema response even when passage is very short', () => {
-    const userPrompt = buildAuditAnnotatePrompt({
-      styleProfile:      FIXTURES.STYLE_PROFILE,
-      auditInstructions: FIXTURES.TECHNICAL_AUDIT,
-      passage:           'Ĥψ = Eψ is correct.',
-      tabName:           'Chapter 1',
-    });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
+      buildAuditAnnotatePrompt({
+        styleProfile:      FIXTURES.STYLE_PROFILE,
+        auditInstructions: FIXTURES.TECHNICAL_AUDIT,
+        passage:           'Ĥψ = Eψ is correct.',
+        tabName:           'Chapter 1',
+      }),
       ANNOTATION_SCHEMA,
       { tier: TIER }
     );

@@ -3,21 +3,12 @@
 // Not an agent — a standalone utility class (IIFE module).
 // Ported and adapted from the Youtube project's TabProcessor.
 // ============================================================
-
 const TabMerger = (() => {
   const TABS_PROPERTY_KEY = 'mergeTabNames';
 
   // --- Private helpers ---
-
-  function sanitizePlatformError_(message: string): string {
-    return String(message || '')
-      .replace(
-        /Service Documents failed while accessing document with id [^.\n]+\.?/gi,
-        'Document access error.'
-      )
-      .replace(/document with id [A-Za-z0-9_-]{20,}\.?/gi, 'document.')
-      .trim();
-  }
+  // sanitizePlatformError_ lives in TabMergerHelpers.ts (exported for tests,
+  // ambient-declared in Types.ts for flat-scope type resolution).
 
   function getElementPreview_(element: GoogleAppsScript.Document.Element): string {
     try {

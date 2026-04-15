@@ -15,7 +15,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLASP_JSON="$SCRIPT_DIR/.clasp.json"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CLASP_JSON="$REPO_DIR/.clasp.json"
 REUSE=false
 
 # ── Parse flags ──────────────────────────────────────────────────────────────
@@ -66,7 +67,7 @@ else
   echo "  This will update .clasp.json with the new scriptId."
   echo ""
 
-  cd "$SCRIPT_DIR"
+  cd "$REPO_DIR"
 
   # Build dist/ first so clasp create has files to reference
   if [[ ! -d "dist" ]]; then
@@ -81,9 +82,9 @@ else
 
   info "Script project created."
 
-  # clasp create writes .clasp.json into rootDir (dist/) — move it to root
-  if [[ -f "$SCRIPT_DIR/dist/.clasp.json" && ! -f "$CLASP_JSON" ]]; then
-    mv "$SCRIPT_DIR/dist/.clasp.json" "$CLASP_JSON"
+  # clasp create writes .clasp.json into rootDir (dist/) — move it to repo root
+  if [[ -f "$REPO_DIR/dist/.clasp.json" && ! -f "$CLASP_JSON" ]]; then
+    mv "$REPO_DIR/dist/.clasp.json" "$CLASP_JSON"
     info "Moved .clasp.json from dist/ to project root"
   fi
 fi

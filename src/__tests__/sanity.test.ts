@@ -53,7 +53,7 @@ describe('TAB_NAMES constants', () => {
     STYLE_PROFILE: 'StyleProfile',
     EAR_TUNE: 'EarTune',
     TECHNICAL_AUDIT: 'TechnicalAudit',
-    COMMENT_INSTRUCTIONS: 'Comment Instructions',
+    GENERAL_PURPOSE_INSTRUCTIONS: 'General Purpose Instructions',
   };
 
   Object.entries(EXPECTED).forEach(([key, value]) => {
@@ -207,7 +207,7 @@ describe('Comment routing types', () => {
       'StyleProfile',
       'EarTune',
       'TechnicalAudit',
-      'Comment Instructions',
+      'General Purpose Instructions',
     ];
     expect(tabValues).not.toContain(sentinel);
   });
@@ -241,7 +241,7 @@ describe('Agent tag and contextKeys declarations', () => {
     expect(expectedTags.length).toBeGreaterThan(0);
   });
 
-  it('CommentAgent declares tags = ["@ai"]', () => {
+  it('GeneralPurposeAgent declares tags = ["@ai"]', () => {
     const expectedTags = ['@ai'];
     expectedTags.forEach(t => {
       expect(typeof t).toBe('string');
@@ -267,8 +267,8 @@ describe('Agent tag and contextKeys declarations', () => {
     expect(expected.length).toBeGreaterThan(0);
   });
 
-  it('CommentAgent contextKeys is non-empty and does not include COMMENT_ANCHOR_TAB', () => {
-    const expected = ['MergedContent', 'Comment Instructions'];
+  it('GeneralPurposeAgent contextKeys is non-empty and does not include COMMENT_ANCHOR_TAB', () => {
+    const expected = ['MergedContent', 'General Purpose Instructions'];
     expect(expected.length).toBeGreaterThan(0);
     expect(expected).not.toContain('__comment_anchor_tab__');
   });

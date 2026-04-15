@@ -6,22 +6,11 @@ The Structural Architect analyses your manuscript and produces a **StyleProfile*
 
 ## Sidebar Actions
 
-### Generate Example
-
-Click **Generate Example** to populate the MergedContent and StyleProfile tabs with sample content. This shows you the expected shape of each tab before you use your own manuscript.
-
-Use this when you're setting up EditorLLM for the first time and want to see what the output looks like.
-
-### Generate (StyleProfile)
-
-Click **Generate** to run the full StyleProfile generation:
-
-1. The Architect reads the **MergedContent** tab (up to 20,000 characters).
-2. It sends the text to Gemini (thinking tier) with instructions to analyse voice, rhythm, vocabulary, structure, and motifs.
-3. The result is written to a **StyleProfile Scratch** review tab.
-4. Each style dimension is highlighted and annotated with comments explaining the reasoning.
-
-**After generation:** Review the StyleProfile Scratch tab. If you approve, copy its content to the StyleProfile tab. If not, edit or regenerate.
+### Workflow 1: Instructions (StyleProfile)
+1.  **Generate:** Click **Generate** in the Sidebar. The Architect reads `MergedContent` (your manuscript) and your **existing** `StyleProfile` (if any) to synthesise a comprehensive set of rules.
+2.  **Review:** Open the `StyleProfile` tab to review the proposed rules.
+3.  **Refine:** Edit the markdown in `StyleProfile` directly. The next time you click **Generate**, your manual changes will be incorporated (recursive feedback).
+4.  **Backup:** Each generation moves the previous rules to `StyleProfile Scratch`.
 
 ## Comment Routing: `@architect`
 
@@ -48,9 +37,11 @@ The Architect will:
 
 ## What It Reads
 
-| Tab | Why |
-|---|---|
-| MergedContent | The source manuscript to analyse |
+| Workflow | Tab | Format | Why |
+|---|---|---|---|
+| **Generate (W1)** | MergedContent | Plain Text | Analyzes the full manuscript to derive a StyleProfile |
+| **Comments (W3)** | MergedContent | Plain Text | High-level manuscript context for structural questions |
+| **Comments (W3)** | StyleProfile | Plain Text | Voice and thematic constraints |
 
 ## Model Tier
 

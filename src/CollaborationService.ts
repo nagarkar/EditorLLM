@@ -2,56 +2,55 @@
 // CollaborationService.ts — Matching, highlighting, and
 // commenting engine for the Collaborative Tab Update System.
 // ============================================================
+/// <reference path="./CollaborationHelpers.ts" />
 
 const CollaborationService = (() => {
 
-  // --- Matching logic ---
+  // findTextOrFallback_, highlightRangeElement_, highlightNamedRange_,
+  // clearNamedRangeHighlights_, matchesAgentPrefix_, buildCommentContent_,
+  // and MAX_COMMENT_CHARS live in CollaborationHelpers.ts and are available
+  // here via GAS flat scope (no import needed).
+
+  // Named-range key prefix. Every annotation stores its text range under
+  // `NAMED_RANGE_PREFIX + bookmarkId` so the deletion path can find and
+  // clear exactly the highlighted span without a whole-tab color sweep.
+  const NAMED_RANGE_PREFIX = 'annotation_';
+
+  // Per-annotation record built during the Drive comment collect phase and
+  // consumed by the per-annotation mutation phase.
+  interface AnnotationRecord {
+    commentId:    string;
+    content:      string;
+    bookmarkId:   string | null;   // null → old-style annotation, no named range
+    commentTabId: string | undefined;
+  }
+
+  // ── Tab map ────────────────────────────────────────────────────────────────
 
   /**
-   * Tries to find matchText in the body.
-   * Falls back to the very first non-whitespace word if not found.
+   * Builds a map of tabId → { docTab, title } by walking the full tab tree.
+   * Used by clearAgentAnnotationsBulk_ so it can look up DocumentTab objects
+   * when processing comments across multiple tabs in a single pass.
    */
-  function findTextOrFallback_(
-    body: GoogleAppsScript.Document.Body,
-    matchText: string
-  ): GoogleAppsScript.Document.RangeElement | null {
-    // Escape special regex characters in the LLM's matchText before passing to findText
-    const escapedMatch = matchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const exact = body.findText(escapedMatch);
-    if (exact) return exact;
-
-    Tracer.warn(
-      `CollaborationService: match_text "${matchText}" not found — falling back to first word.`
-    );
-    return body.findText('\\S+');
+  function buildTabMap_(): Map<string, { docTab: GoogleAppsScript.Document.DocumentTab; title: string }> {
+    const map = new Map<string, { docTab: GoogleAppsScript.Document.DocumentTab; title: string }>();
+    const walk = (tabs: GoogleAppsScript.Document.Tab[]): void => {
+      for (const tab of tabs) {
+        map.set(tab.getId(), { docTab: tab.asDocumentTab(), title: tab.getTitle() });
+        walk(tab.getChildTabs());
+      }
+    };
+    walk(DocumentApp.getActiveDocument().getTabs());
+    return map;
   }
 
-  // --- Highlighting ---
-
-  function highlightRangeElement_(
-    rangeEl: GoogleAppsScript.Document.RangeElement,
-    color: string
-  ): void {
-    const el = rangeEl.getElement();
-    if (el.getType() !== DocumentApp.ElementType.TEXT) return;
-
-    const textEl = el.asText();
-    const start = rangeEl.getStartOffset();
-    const end = rangeEl.getEndOffsetInclusive();
-    textEl.setBackgroundColor(start, end, color);
-    textEl.setBold(start, end, true);
-  }
-
-  // --- Comment via Drive API ---
-
-  /** Drive API practical character limit per comment/reply. */
-  const MAX_COMMENT_CHARS = 3900;
+  // ── Comment via Drive API ──────────────────────────────────────────────────
 
   /**
-   * Adds a Drive comment anchored to the given tab.
-   * Every agent comment is prefixed with AGENT_COMMENT_PREFIX so it can be
-   * distinguished from user comments when clearing annotations.
-   * Content is hard-clamped to MAX_COMMENT_CHARS to avoid Drive API errors.
+   * Creates a Drive comment anchored to the given tab.
+   * Returns the new comment ID on success, or null on failure (error is logged).
+   * Callers MUST check the return value and roll back any already-created
+   * document state (bookmark, named range) if null is returned.
    */
   function addTabComment_(
     tabId: string,
@@ -60,25 +59,18 @@ const CollaborationService = (() => {
     agentPrefix: string,
     bookmarkUrl: string,
     docId: string
-  ): void {
-
-    let finalContent = bookmarkUrl
-      ? `${agentPrefix} "${matchText}": ${commentBody}: ${bookmarkUrl}`
-      : `${agentPrefix} "${matchText}": ${commentBody}`;
-
-    if (finalContent.length > MAX_COMMENT_CHARS) {
-      const suffix = bookmarkUrl ? `… [truncated]: ${bookmarkUrl}` : '… [truncated]';
-      finalContent = finalContent.slice(0, MAX_COMMENT_CHARS - suffix.length) + suffix;
+  ): string | null {
+    const { content: finalContent, truncated } = buildCommentContent_(
+      agentPrefix, matchText, commentBody, bookmarkUrl
+    );
+    if (truncated) {
       Tracer.warn(
-        `CollaborationService: comment truncated to ${MAX_COMMENT_CHARS} chars — ` +
-        `original was ${(bookmarkUrl
-          ? `${agentPrefix} "${matchText}": ${commentBody}: ${bookmarkUrl}`
-          : `${agentPrefix} "${matchText}": ${commentBody}`).length} chars`
+        `CollaborationService: comment truncated to ${MAX_COMMENT_CHARS} chars.`
       );
     }
 
     try {
-      Drive.Comments.create(
+      const result = (Drive.Comments as any).create(
         {
           content: finalContent,
           // Anchor format is reverse-engineered from the Drive API v3 comment
@@ -93,35 +85,216 @@ const CollaborationService = (() => {
             r: 'head',
             a: [{ lt: { tb: { id: tabId } } }],
           }),
-        } as any,
+        },
         docId,
-        { fields: 'id' } as any
-      );
+        { fields: 'id' }
+      ) as { id?: string };
+      return result?.id ?? null;
     } catch (e) {
       Tracer.error(`CollaborationService: Drive comment failed — ${e}`);
+      return null;
     }
   }
 
   // --- Clear agent annotations ---
 
-  function clearAgentAnnotations_(tabId: string, agentPrefix: string | string[]): void {
-    const docId = DocumentApp.getActiveDocument().getId();
-    Tracer.info(`[CollaborationService] clearAgentAnnotations_: clearing agent comments on tab ${tabId}`);
-    let pageToken: string | undefined;
-    let deleted = 0;
+  // ── Shared per-annotation mutation ────────────────────────────────────────
 
-    // In order to avoid pagination shift bugs caused by deleting items from
-    // the collection synchronously from within a batched paginator, we separate
-    // fetching into a pre-loop.
-    const commentsToDelete: string[] = [];
-    const commentsContent: string[] = [];
-    const bookmarksToRemove: string[] = [];
+  /**
+   * Applies the per-annotation deletion sequence for one AnnotationRecord.
+   * Returns true when the Drive comment was successfully deleted, false when a
+   * recoverable error aborted the sequence so the caller can retry next run.
+   *
+   * Structure: three exclusive branches handle named-range cleanup, then a
+   * shared bookmark-removal block runs for any annotation that has a bookmarkId,
+   * then the Drive comment is always deleted last.
+   *
+   *   Branch A — bookmarkId + docTab (new-style annotation, normal case)
+   *     Named range found → clear highlights, remove range (abort on failure).
+   *     Named range absent → set needsColorSweep flag (old-style fallback).
+   *     Either way, bookmark removal and Drive deletion proceed below.
+   *
+   *   Branch B — bookmarkId but docTab=null (orphan: tab unknown)
+   *     Named-range work requires a tab → skipped with a warning.
+   *     actDoc.getBookmark() IS document-scoped, so bookmark removal still runs.
+   *     No color sweep scheduled (no tab name available).
+   *
+   *   Branch C — no bookmarkId (very old annotation style)
+   *     Set needsColorSweep flag. No bookmark to remove.
+   *
+   * After the branches:
+   *   Bookmark removal — attempted whenever bookmarkId is non-null.
+   *     actDoc.getBookmark() works across all tabs without a docTab reference.
+   *     Abort on failure (leaves comment intact for retry).
+   *   Drive comment delete — always the final step; log on failure, ok=false.
+   *
+   * Returns a result object so callers can accumulate per-pass totals:
+   *   ok          — true when the Drive comment was deleted; false = aborted (retry next run).
+   *   namedRanges — named ranges removed (0 or 1 per annotation).
+   *   bookmarks   — bookmarks removed (0 or 1 per annotation).
+   *   highlights  — TEXT element runs whose highlight formatting was cleared.
+   */
+  function deleteAnnotation_(
+    ann: AnnotationRecord,
+    docTab: GoogleAppsScript.Document.DocumentTab | null,
+    docId: string,
+    needsColorSweep: { value: boolean }
+  ): { ok: boolean; namedRanges: number; bookmarks: number; highlights: number } {
+    const actDoc = DocumentApp.getActiveDocument();
+    let namedRangesRemoved = 0;
+    let bookmarksRemoved   = 0;
+    let highlightsCleared  = 0;
+
+    if (ann.bookmarkId && docTab) {
+      const key         = `${NAMED_RANGE_PREFIX}${ann.bookmarkId}`;
+      const namedRanges = docTab.getNamedRanges(key);
+
+      if (namedRanges.length > 0) {
+        // ── New-style annotation: precise named-range clearing ───────────────
+        const nr = namedRanges[0];
+        try {
+          highlightsCleared = clearNamedRangeHighlights_(nr);
+          nr.remove();
+          namedRangesRemoved = 1;
+        } catch (e) {
+          Tracer.error(
+            `[CollaborationService] deleteAnnotation_: named-range clear failed ` +
+            `for key "${key}" — ${e}. Aborting this annotation; it will be retried on next clear.`
+          );
+          return { ok: false, namedRanges: namedRangesRemoved, bookmarks: 0, highlights: highlightsCleared };
+        }
+      } else {
+        // Named range is absent — old-style annotation or creation failure.
+        // ⚠ FALLBACK path: watch for this in logs. More than the very
+        // occasional occurrence indicates a bug in annotation creation.
+        Tracer.warn(
+          `[CollaborationService] deleteAnnotation_: no named range found for key "${key}". ` +
+          `Old-style annotation or creation bug — will fall back to whole-tab color sweep. ` +
+          `If this appears frequently, investigate annotateOperation_.`
+        );
+        needsColorSweep.value = true;
+      }
+    } else if (ann.bookmarkId && !docTab) {
+      // docTab is null (tab unknown — orphan comment). Named-range work cannot
+      // proceed without the tab, but actDoc.getBookmark() is document-scoped and
+      // will find the bookmark across all tabs. We still clean it up below.
+      // No color sweep scheduled — we have no tab name to sweep.
+      Tracer.warn(
+        `[CollaborationService] deleteAnnotation_: docTab unavailable for comment ` +
+        `with bookmarkId=${ann.bookmarkId} — skipping named-range cleanup, will still remove bookmark.`
+      );
+    } else if (!ann.bookmarkId) {
+      // No bookmark URL in comment body → very old annotation style.
+      // ⚠ FALLBACK path: watch for this in logs. More than the very
+      // occasional occurrence indicates a bug in annotation creation.
+      Tracer.warn(
+        `[CollaborationService] deleteAnnotation_: comment has no bookmark URL ` +
+        `(content: "${ann.content.slice(0, 60)}"). ` +
+        `Falling back to whole-tab color sweep. If frequent, indicates a creation bug.`
+      );
+      needsColorSweep.value = true;
+    }
+
+    // Remove the bookmark when one exists.
+    // actDoc.getBookmark() is document-scoped — it works regardless of which tab
+    // the annotation is on, so we attempt removal even when docTab is null.
+    if (ann.bookmarkId) {
+      const bookmark = actDoc.getBookmark(ann.bookmarkId);
+      if (bookmark) {
+        try {
+          bookmark.remove();
+          bookmarksRemoved = 1;
+        } catch (e) {
+          Tracer.error(
+            `[CollaborationService] deleteAnnotation_: bookmark remove failed for ` +
+            `${ann.bookmarkId} — ${e}. Aborting to preserve the comment record for retry.`
+          );
+          return { ok: false, namedRanges: namedRangesRemoved, bookmarks: 0, highlights: highlightsCleared };
+        }
+      }
+    }
+
+    // Delete the Drive comment.
+    try {
+      (Drive.Comments as any).remove(docId, ann.commentId);
+      return { ok: true, namedRanges: namedRangesRemoved, bookmarks: bookmarksRemoved, highlights: highlightsCleared };
+    } catch (e) {
+      Tracer.error(
+        `[CollaborationService] deleteAnnotation_: Drive comment delete failed ` +
+        `for ${ann.commentId} — ${e}`
+      );
+      return { ok: false, namedRanges: namedRangesRemoved, bookmarks: bookmarksRemoved, highlights: highlightsCleared };
+    }
+  }
+
+  // ── collect-phase helper ───────────────────────────────────────────────────
+
+  /**
+   * Extracts the tab ID for a Drive comment using a two-pass strategy.
+   *
+   * Pass 1 — bookmark URL embedded in the comment body (new-style annotations):
+   *   annotateOperation_ appends the bookmark URL to every comment it creates,
+   *   e.g. `…?tab=t.abc123#bookmark=…`.  Parsing `?tab=` from the content is
+   *   fast, reliable, and works even when the Drive anchor JSON is absent.
+   *
+   * Pass 2 — Drive anchor JSON (old-style annotations and fallback):
+   *   Drive attaches an `anchor` field to each comment as a JSON blob of the
+   *   form `{"r":"head","a":[{"lt":{"tb":{"id":"t.abc123"}}}]}`.  This is the
+   *   only source of tab attribution for comments written before the bookmark
+   *   URL was embedded in the body.
+   *
+   * Returns undefined when both passes fail (e.g. document-level comment with
+   * no text anchor and no bookmark URL).  Callers treat undefined as an orphan
+   * and log a warning before deleting the comment.
+   */
+  function resolveCommentTabId_(content: string, anchor: string): string | undefined {
+    const tabFromBookmark = content.match(/[?&]tab=([^#&\s]+)/);
+    if (tabFromBookmark) return tabFromBookmark[1];
+    try {
+      const parsed = JSON.parse(anchor ?? '{}');
+      return parsed?.a?.[0]?.lt?.tb?.id as string | undefined;
+    } catch (_) { return undefined; }
+  }
+
+  /**
+   * @param tabId          Target tab — only comments on this tab are deleted.
+   * @param tabName        Tab display name — used for the fallback color sweep.
+   * @param docTab         DocumentTab for this tab — used to look up named ranges.
+   * @param agentPrefix    Prefix(es) to match per-tab comments against.
+   * @param globalPrefixes Optional prefix(es) that are deleted document-wide,
+   *                       bypassing the tab ID check. Use for legacy prefixes
+   *                       (e.g. '[EditorLLM] ') that were written without
+   *                       per-tab attribution across all prior sessions.
+   */
+  function clearAgentAnnotations_(
+    tabId: string,
+    tabName: string,
+    docTab: GoogleAppsScript.Document.DocumentTab,
+    agentPrefix: string | string[],
+    globalPrefixes?: string | string[]
+  ): void {
+    const docId      = DocumentApp.getActiveDocument().getId();
+    const prefixList = Array.isArray(agentPrefix) ? agentPrefix : [agentPrefix];
+    const globalList = globalPrefixes
+      ? (Array.isArray(globalPrefixes) ? globalPrefixes : [globalPrefixes])
+      : [];
+    const allPrefixes = [...prefixList, ...globalList];
+    Tracer.info(
+      `[CollaborationService] clearAgentAnnotations_: clearing tab ${tabId} ` +
+      `prefixes=${JSON.stringify(prefixList)} globalPrefixes=${JSON.stringify(globalList)}`
+    );
+
+    // ── Collect phase ─────────────────────────────────────────────────────
+    // Fetch all comments first to avoid pagination-shift bugs from in-loop deletion.
+    let pageToken: string | undefined;
+    let skippedWrongTab = 0;
+    const skippedExamples: string[] = [];
+    const annotations: AnnotationRecord[] = [];
 
     do {
-      // Drive Advanced Service is configured as v3 (appsscript.json).
       const resp = (Drive.Comments as any).list(docId, {
         maxResults: 100,
-        pageToken: pageToken,
+        pageToken,
         includeDeleted: false,
         fields: 'nextPageToken,comments',
       }) as any;
@@ -129,67 +302,93 @@ const CollaborationService = (() => {
       for (const comment of resp.comments ?? []) {
         const content = comment.content ?? '';
 
-        // Only consider comments written by this agent.
-        const matchPrefix = Array.isArray(agentPrefix)
-          ? agentPrefix.some(p => content.startsWith(p))
-          : content.startsWith(agentPrefix);
-
-        if (!matchPrefix) continue;
-
-        // Determine which tab this comment belongs to.
-        const tabFromBookmark = content.match(/[?&]tab=([^#&\s]+)/);
-        if (tabFromBookmark) {
-          if (tabFromBookmark[1] !== tabId) continue;
-        } else {
-          // TODO: Remove this. If we are not setting the anchor in this application when 
-          // adding comments, we don't expect to see anything here.
-          try {
-            const anchor = JSON.parse(comment.anchor ?? '{}');
-            const anchorTabId = anchor?.a?.[0]?.lt?.tb?.id;
-            if (anchorTabId !== tabId) continue;
-          } catch (_) {
-            continue;
+        if (!matchesAgentPrefix_(content, allPrefixes)) {
+          if (content.slice(0, 25).includes(']')) {
+            Tracer.warn(
+              `[CollaborationService] clearAgentAnnotations_: ` +
+              `skipped near-match comment "${content.slice(0, 120)}" ` +
+              `(no prefix matched from ${JSON.stringify(allPrefixes)})`
+            );
           }
+          continue;
         }
 
-        commentsToDelete.push(comment.id);
-        commentsContent.push(content);
-        const match = content.match(/#bookmark=([\w.-]+)/);
-        if (match && match[1]) {
-          bookmarksToRemove.push(match[1]);
+        const commentTabId = resolveCommentTabId_(content, comment.anchor ?? '');
+        const isGlobal     = globalList.length > 0 && matchesAgentPrefix_(content, globalList);
+
+        if (!isGlobal && commentTabId !== undefined && commentTabId !== tabId) {
+          skippedWrongTab++;
+          if (skippedExamples.length < 5) {
+            skippedExamples.push(`[tab=${commentTabId}] ${content.slice(0, 60)}`);
+          }
+          continue;
         }
+
+        if (commentTabId === undefined) {
+          Tracer.warn(
+            `[CollaborationService] clearAgentAnnotations_: ` +
+            `could not determine tab for comment "${content.slice(0, 80)}…" — deleting as orphan`
+          );
+        }
+
+        const bm = content.match(/#bookmark=([\w.-]+)/);
+        annotations.push({
+          commentId:    comment.id,
+          content,
+          bookmarkId:   bm?.[1] ?? null,
+          commentTabId,
+        });
       }
       pageToken = resp.nextPageToken;
     } while (pageToken);
 
-    // Log all comments targeted for deletion in one shot
+    if (skippedWrongTab > 0) {
+      Tracer.info(
+        `[CollaborationService] clearAgentAnnotations_: skipped ${skippedWrongTab} comment(s) ` +
+        `on other tabs — examples: ${JSON.stringify(skippedExamples)}`
+      );
+    }
     Tracer.info(
-      `[CollaborationService] clearAgentAnnotations_: ` +
-      `found ${commentsToDelete.length} comment(s) to delete on tab ${tabId}: ` +
-      JSON.stringify(commentsToDelete.map((id, i) => ({ id, content: commentsContent[i] })))
+      `[CollaborationService] clearAgentAnnotations_: found ${annotations.length} annotation(s) to delete on tab ${tabId}`
     );
 
-    // Apply the mutations securely mapped to our extracted queue
-    const actDoc = DocumentApp.getActiveDocument();
-    for (const bId of bookmarksToRemove) {
-      try {
-        const bookmark = actDoc.getBookmark(bId);
-        if (bookmark) bookmark.remove();
-      } catch (e) {
-        Tracer.warn(`[CollaborationService] clearAgentAnnotations_: failed to clear bookmark - ${e}`);
-      }
+    // ── Mutate phase ──────────────────────────────────────────────────────
+    // Per-annotation: clear named range highlights → remove named range →
+    // remove bookmark → delete Drive comment.  Falls back to color sweep for
+    // old-style annotations that predate named ranges.
+    const needsColorSweep = { value: false };
+    let deleted     = 0;
+    let namedRanges = 0;
+    let bookmarks   = 0;
+    let highlights  = 0;
+    for (const ann of annotations) {
+      const r = deleteAnnotation_(ann, docTab, docId, needsColorSweep);
+      if (r.ok) deleted++;
+      namedRanges += r.namedRanges;
+      bookmarks   += r.bookmarks;
+      highlights  += r.highlights;
     }
 
-    for (const cId of commentsToDelete) {
-      try {
-        (Drive.Comments as any).remove(docId, cId);
-        deleted++;
-      } catch (e) {
-        Tracer.error(`[CollaborationService] clearAgentAnnotations_: failed to delete ${cId} — ${e}`);
-      }
-    }
+    const failed = annotations.length - deleted;
+    Tracer.info(
+      `[CollaborationService] clearAgentAnnotations_ summary — ` +
+      `collected: ${annotations.length}, ` +
+      `comments deleted: ${deleted}, ` +
+      `named ranges removed: ${namedRanges}, ` +
+      `bookmarks removed: ${bookmarks}, ` +
+      `highlight runs cleared: ${highlights}` +
+      (failed > 0
+        ? ` ⚠ ${failed} annotation(s) failed — will be retried on next clear`
+        : '')
+    );
 
-    Tracer.info(`[CollaborationService] clearAgentAnnotations_: deleted ${deleted} comment(s)`);
+    if (needsColorSweep.value) {
+      Tracer.warn(
+        `[CollaborationService] clearAgentAnnotations_: invoking color-sweep fallback for tab "${tabName}". ` +
+        `⚠ WATCH FOR THIS IN LOGS — frequent occurrences indicate a bug in annotation creation.`
+      );
+      clearTabHighlights_(tabName);
+    }
   }
 
   /**
@@ -197,24 +396,41 @@ const CollaborationService = (() => {
    * partitions and deletes across all requested tabIds in a single pass.
    * Use this instead of calling clearAgentAnnotations_ in a per-tab loop —
    * it reduces Drive.Comments.list() calls from O(tabs) to O(1).
+   *
+   * @param tabIds  Tabs to restrict deletion to.  Pass null to delete matching
+   *                comments from ALL tabs — the correct mode for "Clear All
+   *                Annotations" because comments may exist on deleted/renamed
+   *                tabs whose IDs are no longer in the tab registry.
    */
-  function clearAgentAnnotationsBulk_(tabIds: string[], agentPrefix: string | string[]): void {
-    if (tabIds.length === 0) return;
-    const docId = DocumentApp.getActiveDocument().getId();
-    const tabIdSet = new Set(tabIds);
+  function clearAgentAnnotationsBulk_(
+    tabIds: string[] | null,
+    agentPrefix: string | string[]
+  ): void {
+    if (tabIds !== null && tabIds.length === 0) return;
+
+    const docId      = DocumentApp.getActiveDocument().getId();
+    const tabIdSet   = tabIds ? new Set(tabIds) : null;
+    const prefixList = Array.isArray(agentPrefix) ? agentPrefix : [agentPrefix];
+
     Tracer.info(
       `[CollaborationService] clearAgentAnnotationsBulk_: ` +
-      `single Drive pass across ${tabIds.length} tab(s)`
+      (tabIdSet
+        ? `single Drive pass across ${tabIds!.length} tab(s) `
+        : `document-wide Drive pass (all tabs) `) +
+      `prefixes=${JSON.stringify(prefixList)}`
     );
 
+    // Build tabId → { docTab, title } map once for all annotation lookups.
+    const tabMap = buildTabMap_();
+
+    // ── Collect phase ─────────────────────────────────────────────────────
     let pageToken: string | undefined;
-    const commentsToDelete: string[] = [];
-    const bookmarksToRemove: string[] = [];
+    const annotations: AnnotationRecord[] = [];
 
     do {
       const resp = (Drive.Comments as any).list(docId, {
         maxResults: 100,
-        pageToken: pageToken,
+        pageToken,
         includeDeleted: false,
         fields: 'nextPageToken,comments',
       }) as any;
@@ -222,86 +438,131 @@ const CollaborationService = (() => {
       for (const comment of resp.comments ?? []) {
         const content = comment.content ?? '';
 
-        const matchPrefix = Array.isArray(agentPrefix)
-          ? agentPrefix.some(p => content.startsWith(p))
-          : content.startsWith(agentPrefix);
-        if (!matchPrefix) continue;
-
-        // Resolve tab from bookmark URL first (always present on new comments),
-        // fall back to anchor for legacy comments written before bookmark URLs.
-        const tabFromBookmark = content.match(/[?&]tab=([^#&\s]+)/);
-        let commentTabId: string | undefined;
-        if (tabFromBookmark) {
-          commentTabId = tabFromBookmark[1];
-        } else {
-          try {
-            const anchor = JSON.parse(comment.anchor ?? '{}');
-            commentTabId = anchor?.a?.[0]?.lt?.tb?.id;
-          } catch (_) { /* unparseable anchor — skip */ }
+        if (!matchesAgentPrefix_(content, agentPrefix)) {
+          if (content.slice(0, 25).includes(']')) {
+            Tracer.warn(
+              `[CollaborationService] clearAgentAnnotationsBulk_: ` +
+              `skipped near-match comment "${content.slice(0, 120)}" ` +
+              `(no prefix matched from ${JSON.stringify(prefixList)})`
+            );
+          }
+          continue;
         }
 
-        if (!commentTabId || !tabIdSet.has(commentTabId)) continue;
+        const commentTabId = resolveCommentTabId_(content, comment.anchor ?? '');
 
-        commentsToDelete.push(comment.id);
+        if (tabIdSet !== null && commentTabId !== undefined && !tabIdSet.has(commentTabId)) {
+          continue;
+        }
+
+        if (commentTabId === undefined) {
+          Tracer.warn(
+            `[CollaborationService] clearAgentAnnotationsBulk_: ` +
+            `could not determine tab for comment "${content.slice(0, 80)}…" — deleting as orphan`
+          );
+        }
+
         const bm = content.match(/#bookmark=([\w.-]+)/);
-        if (bm?.[1]) bookmarksToRemove.push(bm[1]);
+        annotations.push({
+          commentId:    comment.id,
+          content,
+          bookmarkId:   bm?.[1] ?? null,
+          commentTabId,
+        });
       }
-
       pageToken = resp.nextPageToken;
     } while (pageToken);
 
     Tracer.info(
-      `[CollaborationService] clearAgentAnnotationsBulk_: ` +
-      `found ${commentsToDelete.length} comment(s) to delete`
+      `[CollaborationService] clearAgentAnnotationsBulk_: found ${annotations.length} annotation(s) to delete`
     );
 
-    const actDoc = DocumentApp.getActiveDocument();
-    for (const bId of bookmarksToRemove) {
-      try {
-        const bookmark = actDoc.getBookmark(bId);
-        if (bookmark) bookmark.remove();
-      } catch (e) {
-        Tracer.warn(`[CollaborationService] clearAgentAnnotationsBulk_: failed to remove bookmark ${bId} — ${e}`);
+    // ── Mutate phase ──────────────────────────────────────────────────────
+    // Track which tabs need the color-sweep fallback (old-style annotations).
+    const tabsNeedingColorSweep = new Map<string, string>(); // tabId → tabTitle
+    let deleted     = 0;
+    let namedRanges = 0;
+    let bookmarks   = 0;
+    let highlights  = 0;
+
+    for (const ann of annotations) {
+      const tabEntry = ann.commentTabId ? tabMap.get(ann.commentTabId) : undefined;
+      const docTab   = tabEntry?.docTab ?? null;
+      const needsColorSweep = { value: false };
+
+      const r = deleteAnnotation_(ann, docTab, docId, needsColorSweep);
+      if (r.ok) deleted++;
+      namedRanges += r.namedRanges;
+      bookmarks   += r.bookmarks;
+      highlights  += r.highlights;
+
+      if (needsColorSweep.value && ann.commentTabId && tabEntry) {
+        tabsNeedingColorSweep.set(ann.commentTabId, tabEntry.title);
       }
     }
 
-    let deleted = 0;
-    for (const cId of commentsToDelete) {
-      try {
-        (Drive.Comments as any).remove(docId, cId);
-        deleted++;
-      } catch (e) {
-        Tracer.error(`[CollaborationService] clearAgentAnnotationsBulk_: failed to delete ${cId} — ${e}`);
+    const failed = annotations.length - deleted;
+    Tracer.info(
+      `[CollaborationService] clearAgentAnnotationsBulk_ summary — ` +
+      `collected: ${annotations.length}, ` +
+      `comments deleted: ${deleted}, ` +
+      `named ranges removed: ${namedRanges}, ` +
+      `bookmarks removed: ${bookmarks}, ` +
+      `highlight runs cleared: ${highlights}` +
+      (failed > 0
+        ? ` ⚠ ${failed} annotation(s) failed — will be retried on next clear`
+        : '')
+    );
+
+    // Fallback color sweep — one call per affected tab.
+    if (tabsNeedingColorSweep.size > 0) {
+      Tracer.warn(
+        `[CollaborationService] clearAgentAnnotationsBulk_: invoking color-sweep fallback ` +
+        `for ${tabsNeedingColorSweep.size} tab(s) with old-style annotations: ` +
+        `${JSON.stringify([...tabsNeedingColorSweep.values()])}. ` +
+        `⚠ WATCH FOR THIS IN LOGS — frequent occurrences indicate a bug in annotation creation.`
+      );
+      for (const [, title] of tabsNeedingColorSweep) {
+        clearTabHighlights_(title);
       }
     }
-
-    Tracer.info(`[CollaborationService] clearAgentAnnotationsBulk_: deleted ${deleted} comment(s)`);
   }
 
-  // --- Clear highlight formatting ---
+  // --- Clear highlight formatting (fallback) --------------------------------
 
   /**
-   * Removes agent-applied highlight formatting (background color + bold) from
-   * every text run in the given tab that matches the configured HIGHLIGHT_COLOR.
+   * Scans every text run in the given tab and clears any run whose background
+   * color matches HIGHLIGHT_COLOR (or the user-overridden value).
    *
-   * NOTE: Bold is always cleared on highlighted ranges. If the original text was
-   * bold before annotation, the bold will be lost. This is an accepted
-   * limitation since we don't track pre-annotation formatting state.
+   * ⚠ FALLBACK METHOD — this is only invoked when an annotation has no named
+   * range (i.e. it was created before the named-range approach was introduced,
+   * or annotation creation failed to record a named range). New annotations
+   * store an exact named range and are cleared precisely without this sweep.
+   *
+   * WATCH FOR THIS IN LOGS. If clearTabHighlights_ appears more than
+   * occasionally it means old-style annotations still exist in the document
+   * or there is a bug in annotateOperation_ that is failing to create named
+   * ranges. Investigate annotateOperation_ step 1 if you see it frequently.
+   *
+   * Returns true if the tab was found and swept, false if the tab was not found.
+   *
+   * NOTE: Bold is always cleared on highlighted ranges. Pre-annotation bold
+   * formatting is lost — an accepted limitation since we do not snapshot
+   * formatting state before annotation.
    */
-  function clearTabHighlights_(tabName: string): void {
+  function clearTabHighlights_(tabName: string): boolean {
     const docTab = DocOps.getTabByName(tabName);
     if (!docTab) {
       Tracer.warn(`[CollaborationService] clearTabHighlights_: tab "${tabName}" not found — skipping`);
-      return;
+      return false;
     }
-    const body = docTab.getBody();
+    const body  = docTab.getBody();
     const color = PropertiesService.getUserProperties().getProperty('HIGHLIGHT_COLOR') || HIGHLIGHT_COLOR;
     let cleared = 0;
 
     const numChildren = body.getNumChildren();
     for (let p = 0; p < numChildren; p++) {
       const para = body.getChild(p);
-      // Only Paragraph and ListItem have child Text elements
       if (para.getType() !== DocumentApp.ElementType.PARAGRAPH &&
           para.getType() !== DocumentApp.ElementType.LIST_ITEM) continue;
 
@@ -311,16 +572,15 @@ const CollaborationService = (() => {
         if (child.getType() !== DocumentApp.ElementType.TEXT) continue;
 
         const text = child.asText();
-        const len = text.getText().length;
+        const len  = text.getText().length;
         if (len === 0) continue;
 
-        // getTextAttributeIndices() returns the character offsets where any
-        // text attribute changes — one call gives us all run boundaries.
-        // This collapses O(chars) getBackgroundColor calls to O(runs).
+        // getTextAttributeIndices() returns offsets where any attribute changes —
+        // one call gives all run boundaries, collapsing O(chars) to O(runs).
         const indices: number[] = (text as any).getTextAttributeIndices();
         for (let k = 0; k < indices.length; k++) {
           const runStart = indices[k];
-          const runEnd = k + 1 < indices.length ? indices[k + 1] - 1 : len - 1;
+          const runEnd   = k + 1 < indices.length ? indices[k + 1] - 1 : len - 1;
           if (text.getBackgroundColor(runStart) === color) {
             text.setBackgroundColor(runStart, runEnd, null);
             text.setBold(runStart, runEnd, false);
@@ -330,14 +590,42 @@ const CollaborationService = (() => {
       }
     }
 
-    Tracer.info(`[CollaborationService] clearTabHighlights_: cleared ${cleared} highlighted range(s) on tab "${tabName}"`);
+    Tracer.info(
+      `[CollaborationService] clearTabHighlights_: cleared ${cleared} highlighted range(s) on tab "${tabName}"`
+    );
+    return true;
   }
 
   // --- Per-operation annotation ---
 
-  // DocumentTab (returned by Tab.asDocumentTab()) does NOT have getId().
-  // Only the parent Tab object does. tabId must be resolved by the caller
-  // via DocOps.getTabIdByName() and passed in explicitly.
+  /**
+   * Writes a single annotation for one Operation: creates a bookmark + named
+   * range, posts the Drive comment, then applies the highlight.  All three
+   * steps are strictly ordered and earlier steps are rolled back on failure so
+   * no orphaned artefacts are left behind.
+   *
+   * NOTE: DocumentTab (returned by Tab.asDocumentTab()) does NOT have getId().
+   * Only the parent Tab object does — tabId must be resolved by the caller via
+   * DocOps.getTabIdByName() and passed in explicitly.
+   *
+   * Step 1 — Bookmark + named range (DocumentApp)
+   *   The named range key `annotation_<bookmarkId>` records the exact text span
+   *   so the deletion path can clear only that range instead of sweeping the
+   *   whole tab by color.  If bookmark creation succeeds but addNamedRange
+   *   fails, the orphan bookmark is removed and we abort — no comment or
+   *   highlight is written.
+   *
+   * Step 2 — Drive comment (Drive API, most failure-prone step)
+   *   Created with the bookmark URL embedded in the body so the deletion path
+   *   can recover the bookmarkId from the comment content alone (pass 1 of
+   *   resolveCommentTabId_).  On failure the already-created bookmark and named
+   *   range are rolled back and we abort.
+   *
+   * Step 3 — Highlight (DocumentApp)
+   *   Applied last so a highlight failure never orphans a bookmark or comment.
+   *   On failure we log and continue — the comment + bookmark remain and the
+   *   annotation is functionally complete (just missing the visual cue).
+   */
   function annotateOperation_(
     docTab: GoogleAppsScript.Document.DocumentTab,
     op: Operation,
@@ -346,25 +634,65 @@ const CollaborationService = (() => {
     docId: string,
     highlightColor: string
   ): void {
-    const body = docTab.getBody();
+    const body    = docTab.getBody();
     const rangeEl = findTextOrFallback_(body, op.match_text);
     if (!rangeEl) {
-      Tracer.warn(`CollaborationService: no text found in tab for op: ${op.match_text}`);
+      Tracer.warn(`CollaborationService: no text found in tab for op: "${op.match_text}"`);
       return;
     }
 
-    let bookmarkUrl = '';
+    // ── Step 1: bookmark + named range ──────────────────────────────────────
+    let bookmarkObj: GoogleAppsScript.Document.Bookmark | null = null;
+    let namedRange:  GoogleAppsScript.Document.NamedRange | null = null;
     try {
       const pos = docTab.newPosition(rangeEl.getElement(), rangeEl.getStartOffset());
-      const bookmark = docTab.addBookmark(pos);
-      bookmarkUrl = `https://docs.google.com/document/d/${docId}/edit?tab=${tabId}#bookmark=${bookmark.getId()}`;
+      bookmarkObj = docTab.addBookmark(pos);
+
+      // Build a Range spanning the matched text so we can store and later
+      // retrieve the exact characters that were highlighted.
+      const textEl = rangeEl.getElement().asText();
+      const range  = docTab.newRange()
+        .addElement(textEl, rangeEl.getStartOffset(), rangeEl.getEndOffsetInclusive())
+        .build();
+      namedRange = docTab.addNamedRange(
+        `${NAMED_RANGE_PREFIX}${bookmarkObj.getId()}`, range
+      );
     } catch (e) {
-      Tracer.warn(`CollaborationService: failed to add bookmark - ${e}`);
+      Tracer.error(
+        `CollaborationService: step 1 (bookmark/namedRange) failed for "${op.match_text}" — ${e}. ` +
+        `Aborting annotation.`
+      );
+      try { if (bookmarkObj) bookmarkObj.remove(); } catch (_) { /* best effort */ }
+      return;
     }
 
-    highlightRangeElement_(rangeEl, highlightColor);
+    const bookmarkUrl =
+      `https://docs.google.com/document/d/${docId}/edit?tab=${tabId}` +
+      `#bookmark=${bookmarkObj.getId()}`;
 
-    addTabComment_(tabId, op.reason, op.match_text, agentPrefix, bookmarkUrl, docId);
+    // ── Step 2: Drive comment ────────────────────────────────────────────────
+    const commentId = addTabComment_(
+      tabId, op.reason, op.match_text, agentPrefix, bookmarkUrl, docId
+    );
+    if (!commentId) {
+      // addTabComment_ already logged the Drive error. Roll back document state.
+      try { namedRange.remove();   } catch (_) { /* best effort */ }
+      try { bookmarkObj.remove();  } catch (_) { /* best effort */ }
+      return;
+    }
+
+    // ── Step 3: highlight ────────────────────────────────────────────────────
+    // Runs last — a failure here does NOT orphan anything. The comment body
+    // contains the bookmark URL, and the named range records the text span, so
+    // the deletion path can still clean up completely even without a highlight.
+    try {
+      highlightNamedRange_(namedRange, highlightColor);
+    } catch (e) {
+      Tracer.error(
+        `CollaborationService: step 3 (highlight) failed for "${op.match_text}" — ${e}. ` +
+        `Comment and bookmark are intact; highlight will be missing.`
+      );
+    }
   }
 
   // --- Workflow handlers ---
@@ -411,8 +739,16 @@ const CollaborationService = (() => {
     const highlightColor = PropertiesService.getUserProperties().getProperty('HIGHLIGHT_COLOR') || HIGHLIGHT_COLOR;
 
     const agentPrefix = update.agent_name || '[Agent]';
-    clearAgentAnnotations_(targetTabId, agentPrefix);
-    clearTabHighlights_(update.target_tab!);
+    // Also clear legacy comments that were written with "[EditorLLM] " prepended
+    // (format used before the prefix simplification). Handles stale comments from
+    // prior sessions that would otherwise accumulate invisibly.
+    const legacyPrefix = `[EditorLLM] ${agentPrefix}`;
+    clearAgentAnnotations_(
+      targetTabId, update.target_tab!, targetDocTab,
+      [agentPrefix, legacyPrefix]
+    );
+    // clearTabHighlights_ is invoked automatically inside clearAgentAnnotations_
+    // as a fallback when old-style annotations without named ranges are detected.
 
     // Reverse so the first operation's comment appears at the top of the comments panel
     // (Drive shows the last-added comment first)
@@ -444,8 +780,11 @@ const CollaborationService = (() => {
 
   return {
     processUpdate,
-    clearAgentAnnotations: clearAgentAnnotations_,
+    clearAgentAnnotations:     clearAgentAnnotations_,
     clearAgentAnnotationsBulk: clearAgentAnnotationsBulk_,
+    // clearTabHighlights is kept public for explicit safety-net sweeps in
+    // clearAllAnnotations (Code.ts). It is also called internally as a fallback
+    // for old-style annotations. Returns true if the tab was found, false otherwise.
     clearTabHighlights: clearTabHighlights_,
   };
 })();

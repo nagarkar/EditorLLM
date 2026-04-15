@@ -9,15 +9,20 @@
 // `npm test` fast and network-free.
 
 module.exports = {
+  rootDir: '../../',
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/integration/**/*.test.ts'],
-  // Exclude E2E tests — they require a clasp push to have happened first.
+  // Exclude all E2E tests — they require a clasp push to have happened first.
   // Run them separately with: npm run test:e2e
-  testPathIgnorePatterns: ['/node_modules/', '/integration/e2e\\.test\\.ts$'],
+  // Matches e2e.test.ts (old monolith) AND all numbered variants
+  // (e2e.2.smoke, e2e.3.skip-routing, e2e.5, e2e.6, e2e.7, e2e.8, …).
+  // e2e.6 is serial-only (it clears GAS ScriptProperties) and must never
+  // run in parallel with other agent tests — this exclusion enforces that.
+  testPathIgnorePatterns: ['/node_modules/', '/integration/e2e\\.'],
   moduleFileExtensions: ['ts', 'js'],
-  setupFilesAfterEnv: ['<rootDir>/jest.integration.setup.js'],
+  setupFilesAfterEnv: ['<rootDir>/config/jest/jest.integration.setup.js'],
   // Allow integration tests to import from helpers using ES module syntax.
   // This overrides module:"none" from tsconfig.json for test files only.
   transform: {
@@ -40,6 +45,6 @@ module.exports = {
   // so the AI assistant can read failures directly without copy-paste.
   reporters: [
     'default',
-    ['<rootDir>/jest.file-reporter.cjs', { outputFile: '.last_integration_test_results.txt' }],
+    ['<rootDir>/config/jest/jest.file-reporter.cjs', { outputFile: '.last_integration_test_results.txt' }],
   ],
 };

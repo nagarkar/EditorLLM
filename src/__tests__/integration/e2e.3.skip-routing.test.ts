@@ -1,10 +1,39 @@
 // ============================================================
-// E2E 3: non-routable comments are skipped
+// E2E 3: skip-routing + basic @AI reply verification
 //
-// Creates one plain comment (no @tag) and one @AI comment.
-// Runs commentProcessorRun() and asserts:
-//   - plain comment gets no agent reply
-//   - @AI comment gets an agent reply
+// PURPOSE
+// -------
+// Proves that CommentProcessor correctly routes @-tagged comments
+// to agents and skips untagged ones. Also verifies end-to-end that
+// the agent reply carries the [EditorLLM] prefix and "AI Editorial
+// Assistant" signature (merged from the former E2E 1).
+//
+// WORKFLOW
+// --------
+//   1. seedTestEnvironment() → seeds API key and model overrides.
+//   2. Creates two comments on the first tab:
+//      a) plainId  — no @tag: "[E2E-skip-...] Is this well-written?"
+//      b) taggedId — @AI tag: "@AI [E2E-skip-...] Acknowledge this test."
+//   3. Calls commentProcessorRun() via doPost.
+//   4. Asserts:
+//      - processAll reports skipped >= 1 and replied >= 1
+//      - plainId has zero agent replies (correctly skipped)
+//      - taggedId has >= 1 agent reply with EditorLLM signature
+//   5. afterAll deletes both test comments.
+//
+// PARALLELISM NOTE
+// ----------------
+// In parallel mode, other workers (E2E 5) also call commentProcessorRun()
+// simultaneously. Their calls may also process taggedId, resulting in > 1
+// reply on the tagged comment. The test asserts >= 1, not exactly 1.
+// The plainId assertion (exactly 0) is safe because no @tag → no routing.
+//
+// EXECUTION MODEL
+// ---------------
+//   • Run via: npm run test:e2e-parallel (included in parallel batch)
+//   • Requires: GEMINI_API_KEY, GOOGLE_DOC_ID, GOOGLE_TOKEN, webAppUrl
+//   • GAS calls: 1 commentProcessorRun (~180-230s, main bottleneck)
+//   • Automatically skipped when credentials are absent
 // ============================================================
 
 import { fetchTabs, createComment, deleteComment, getCommentWithReplies } from './helpers/drive';

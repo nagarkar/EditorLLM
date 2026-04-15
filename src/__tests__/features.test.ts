@@ -1,15 +1,13 @@
-// Feature-level unit tests for StringProcessor and TabMerger.
+// Feature-level unit tests for StringProcessor, TabMerger, and CommentProcessor.
 // All tests run purely in Node.js — no GAS runtime required.
+//
+// Functions are imported directly from their source modules.
+// ts-jest uses config/jest/tsconfig.test.json (module:commonjs) so imports work
+// even though the GAS build uses module:none.
 
-// --------------- StringProcessor ---------------
-// createStringArray is a pure function with zero GAS dependencies.
-// Logic is reproduced inline to avoid vm/require complexity with GAS globals.
-// The compiled output in dist/StringProcessor.js must match this contract.
-
-function createStringArray(csvString: string): string[] {
-  if (!csvString || typeof csvString !== 'string') return [];
-  return csvString.split(',').map((item) => item.trim()).filter(Boolean);
-}
+import { createStringArray } from '../StringProcessor';
+import { sanitizePlatformError_ } from '../TabMergerHelpers';
+import { normaliseTagWord_ } from '../CommentProcessorHelpers';
 
 describe('createStringArray', () => {
   it('splits a comma-separated string into trimmed items', () => {
@@ -85,84 +83,70 @@ describe('TabMerger result shapes', () => {
 // The error sanitization strips internal document IDs from error messages
 // to avoid leaking sensitive data in the UI.
 
-function sanitizePlatformError(message: string): string {
-  return String(message || '')
-    .replace(
-      /Service Documents failed while accessing document with id [^.\n]+\.?/gi,
-      'Document access error.'
-    )
-    .replace(/document with id [A-Za-z0-9_-]{20,}\.?/gi, 'document.')
-    .trim();
-}
-
 describe('sanitizePlatformError', () => {
   it('strips GAS document IDs from error messages', () => {
     const raw =
       'Service Documents failed while accessing document with id 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms.';
-    const clean = sanitizePlatformError(raw);
+    const clean = sanitizePlatformError_(raw);
     expect(clean).toBe('Document access error.');
     expect(clean).not.toContain('1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms');
   });
 
   it('strips inline document IDs from generic error messages', () => {
     const raw = 'Cannot access document with id 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74.';
-    const clean = sanitizePlatformError(raw);
+    const clean = sanitizePlatformError_(raw);
     expect(clean).toBe('Cannot access document.');
   });
 
   it('passes through messages that contain no IDs', () => {
-    const clean = sanitizePlatformError('Source tab not found.');
+    const clean = sanitizePlatformError_('Source tab not found.');
     expect(clean).toBe('Source tab not found.');
   });
 
   it('handles empty input gracefully', () => {
-    expect(sanitizePlatformError('')).toBe('');
-    expect(sanitizePlatformError(null as any)).toBe('');
+    expect(sanitizePlatformError_('')).toBe('');
+    expect(sanitizePlatformError_(null as any)).toBe('');
   });
 });
 
 // --------------- Tag normalisation (punctuation stripping) ---------------
-// Mirrors the normaliseTagWord_ logic in CommentProcessor.ts.
-// These tests verify the regex used to strip trailing punctuation so that
-// "@AI:" / "@AI," / "@architect." all route to the same agent as "@AI".
-
-function normaliseTagWord(w: string): string {
-  return w.toLowerCase().replace(/[^a-z0-9@_-]+$/, '');
-}
+// Tests normaliseTagWord_ from CommentProcessorHelpers — verifies the regex
+// used to strip trailing punctuation so that "@AI:" / "@AI," / "@architect."
+// all route to the same agent as "@AI".
 
 describe('CommentProcessor tag normalisation', () => {
   it('leaves a clean tag unchanged', () => {
-    expect(normaliseTagWord('@ai')).toBe('@ai');
-    expect(normaliseTagWord('@architect')).toBe('@architect');
-    expect(normaliseTagWord('@eartune')).toBe('@eartune');
+    expect(normaliseTagWord_('@ai')).toBe('@ai');
+    expect(normaliseTagWord_('@architect')).toBe('@architect');
+    expect(normaliseTagWord_('@eartune')).toBe('@eartune');
   });
 
   it('strips a trailing colon — the most common case (@AI: ...)', () => {
-    expect(normaliseTagWord('@AI:')).toBe('@ai');
-    expect(normaliseTagWord('@architect:')).toBe('@architect');
+    expect(normaliseTagWord_('@AI:')).toBe('@ai');
+    expect(normaliseTagWord_('@architect:')).toBe('@architect');
   });
 
   it('strips other common trailing punctuation', () => {
-    expect(normaliseTagWord('@AI,')).toBe('@ai');
-    expect(normaliseTagWord('@AI.')).toBe('@ai');
-    expect(normaliseTagWord('@AI!')).toBe('@ai');
-    expect(normaliseTagWord('@AI?')).toBe('@ai');
+    expect(normaliseTagWord_('@AI,')).toBe('@ai');
+    expect(normaliseTagWord_('@AI.')).toBe('@ai');
+    expect(normaliseTagWord_('@AI!')).toBe('@ai');
+    expect(normaliseTagWord_('@AI?')).toBe('@ai');
   });
 
   it('strips multiple trailing punctuation characters', () => {
-    expect(normaliseTagWord('@AI:,')).toBe('@ai');
-    expect(normaliseTagWord('@audit...')).toBe('@audit');
+    expect(normaliseTagWord_('@AI:,')).toBe('@ai');
+    expect(normaliseTagWord_('@audit...')).toBe('@audit');
   });
 
   it('does NOT strip characters that are part of the tag itself', () => {
     // @ and - are valid inside a tag identifier
-    expect(normaliseTagWord('@ear-tune')).toBe('@ear-tune');
+    expect(normaliseTagWord_('@ear-tune')).toBe('@ear-tune');
   });
 
   it('is case-insensitive', () => {
-    expect(normaliseTagWord('@AI')).toBe('@ai');
-    expect(normaliseTagWord('@Architect')).toBe('@architect');
-    expect(normaliseTagWord('@AUDIT:')).toBe('@audit');
+    expect(normaliseTagWord_('@AI')).toBe('@ai');
+    expect(normaliseTagWord_('@Architect')).toBe('@architect');
+    expect(normaliseTagWord_('@AUDIT:')).toBe('@audit');
   });
 });
 

@@ -22,7 +22,7 @@
     "dist/EarTuneAgent.js",
     "dist/AuditAgent.js",
     "dist/TetherAgent.js",
-    "dist/CommentAgent.js",
+    "dist/GeneralPurposeAgent.js",
     "dist/MarkdownService.js",
     "dist/TabMerger.js",
     "dist/CommentProcessor.js",

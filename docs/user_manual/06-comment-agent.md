@@ -42,30 +42,33 @@ The AI only responds when the **last message** in the thread starts with `@AI`. 
 
 ## Sidebar Actions
 
-### Generate Example
-
-Click **Generate Example** to write sample Comment Instructions to the Comment Instructions tab. This shows the expected format.
-
 ### Generate (Comment Instructions)
 
 Click **Generate** to regenerate the Comment Instructions system prompt:
 
-1. The agent reads the current StyleProfile to understand the manuscript's voice.
-2. It produces a tailored set of instructions for how the AI should respond to comments.
-3. The result is written to a **Comment Instructions Scratch** review tab.
+1. The agent reads the current **StyleProfile** and your **existing** comment instructions.
+2. It produces a tailored set of instructions for how the AI should respond to comments in the author's voice.
+3. The result is written directly to the **Comment Instructions** tab, with the previous version backed up to **Comment Instructions Scratch**.
 
-Edit these instructions to fine-tune the AI's reply style, scope, and tone.
+Manual refinements to the tone or scope of replies are preserved via the recursive feedback loop.
 
 ## What Gets Used as Context
 
-When the Comment Agent processes a thread, it uses:
+### During Instruction Generation (Generate button)
 
-| Context | Source |
-|---|---|
-| System prompt | Comment Instructions tab (falls back to built-in default) |
-| Selected text | The passage the comment is anchored to |
-| Conversation history | All messages in the thread (user and AI turns) |
-| Agent request | The text after `@AI` in the last message |
+| Tab | Format | Why |
+|---|---|---|
+| StyleProfile | Markdown | Current voice and tone constraints |
+| Comment Instructions | Markdown | Existing dialogue rules to be refined |
+
+### During Comment Interaction (W3)
+
+| Context | Source | Why |
+|---|---|---|
+| System prompt | Comment Instructions | User-defined dialogue rules |
+| Selected text | Anchor location | Passage context for the query |
+| Anchor content | Anchor Tab | Full paragraph context surrounding the anchor |
+| History | Comment Thread | Previous turns in the conversation |
 
 ## Comment Tags — Full Reference
 

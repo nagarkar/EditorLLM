@@ -4,8 +4,9 @@
 // pre-flight validation, and reply posting.
 // Agents own their AI processing via handleCommentThreads().
 // ============================================================
-
 const CommentProcessor = (() => {
+  // normaliseTagWord_ lives in CommentProcessorHelpers.ts (exported for tests,
+  // ambient-declared in Types.ts for flat-scope type resolution).
   let roster_: BaseAgent[] = [];
   let tagRegistry_: Map<string, BaseAgent> = new Map();
 
@@ -50,10 +51,10 @@ const CommentProcessor = (() => {
         page++;
         const opts: any = {
           includeDeleted: false,
-          // Targeted field mask — avoids fetching htmlContent, timestamps,
-          // resolved/deleted flags, and other fields we never read.
-          // Reduces Drive API payload by ~70% on typical comment sets.
-          fields: 'nextPageToken,comments(id,content,anchor,quotedFileContent/value,context/value,replies(content,author/displayName))',
+          // GAS Drive Advanced Service rejects all field masks for comments.list
+          // other than '*' — both parentheses and slash-path syntax produce
+          // "Invalid field selection context". Fetch everything and filter in memory.
+          fields: '*',
           maxResults: 100,
         };
         if (pageToken) opts.pageToken = pageToken;
@@ -145,15 +146,6 @@ const CommentProcessor = (() => {
 
   function rosterNeedsAnchorTab_(): boolean {
     return roster_.some(a => a.contextKeys.includes(COMMENT_ANCHOR_TAB));
-  }
-
-  /**
-   * Strips trailing punctuation from a tag candidate so that "@AI:", "@AI,",
-   * "@architect." etc. all resolve to the same registry key as "@AI" / "@architect".
-   * Only trailing non-alphanumeric/non-tag characters are removed.
-   */
-  function normaliseTagWord_(w: string): string {
-    return w.toLowerCase().replace(/[^a-z0-9@_-]+$/, '');
   }
 
   /**

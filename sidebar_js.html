@@ -1,6 +1,50 @@
 <script>
   // ── Helpers ────────────────────────────────────────────
 
+  /**
+   * Fetches all session log entries from the server and copies them to clipboard.
+   * Uses execCommand fallback for the GAS sidebar iframe context.
+   */
+  function copyAllSessionLogs() {
+    setStatus('Fetching session logs…', 'loading');
+    google.script.run
+      .withSuccessHandler(function(entries) {
+        if (!entries || !entries.length) {
+          setStatus('No session logs found.', 'loading');
+          return;
+        }
+        var lines = entries.map(function(e) {
+          return (e.ts || '') + '  ' + (e.level || 'INFO').padEnd(5) + '  ' + (e.msg || '');
+        });
+        var text = lines.join('\n');
+        function fallback() {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;';
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            document.execCommand('copy');
+            setStatus('Copied ' + lines.length + ' log lines to clipboard.', 'info');
+          } catch (_) {
+            setStatus('Copy failed — try the 📋 Logs sidebar instead.', 'error');
+          }
+          document.body.removeChild(ta);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(function() {
+            setStatus('Copied ' + lines.length + ' log lines to clipboard.', 'info');
+          }, fallback);
+        } else {
+          fallback();
+        }
+      })
+      .withFailureHandler(function(e) {
+        setStatus('Error fetching logs: ' + (e.message || e), 'error');
+      })
+      .getAllSessionLogs();
+  }
+
   function setStatus(msg, type) {
     var el = document.getElementById('status');
     el.textContent = msg;
@@ -15,6 +59,13 @@
 
   function setMergeProgress(msg) {
     document.getElementById('merge-progress').textContent = msg;
+  }
+
+  function setRefreshStatus(msg, type) {
+    var el = document.getElementById('refresh-status');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'status-box' + (type ? ' ' + type : '');
   }
 
   /** Wraps google.script.run in a Promise for sequential async calls. */
@@ -44,33 +95,61 @@
     google.script.run.showApiKeyConfig();
   }
 
-  // ── Architect ──────────────────────────────────────────
+  // ── StyleProfile quality score ─────────────────────────
 
-  function runArchitectExample() {
-    setStatus('Generating example content…', 'loading');
-    google.script.run
-      .withSuccessHandler(function () { setStatus('Example content written to tabs.', 'info'); })
-      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
-      .architectGenerateExample();
+  /**
+   * Renders the LLM-as-judge StyleProfile score badge.
+   * Colour: green ≥ 4, amber 3, red ≤ 2, grey when null (not yet run).
+   */
+  function renderStyleProfileScore(data) {
+    var row    = document.getElementById('style-profile-score-row');
+    var badge  = document.getElementById('style-profile-score-badge');
+    var rationale = document.getElementById('style-profile-score-rationale');
+    if (!row || !badge) return;
+    if (data === null || data.score === null) {
+      row.style.display = 'none';
+      return;
+    }
+    var score = data.score;
+    var color = score >= 4 ? '#2e7d32' : score >= 3 ? '#e65100' : '#c62828';
+    var bg    = score >= 4 ? '#e8f5e9' : score >= 3 ? '#fff3e0' : '#ffebee';
+    badge.textContent = score + '/5';
+    badge.style.color = color;
+    badge.style.background = bg;
+    if (rationale && data.rationale) {
+      rationale.textContent = data.rationale;
+    }
+    row.style.display = 'block';
   }
 
-  function runArchitectInstructions() {
-    setStatus('Architect generating StyleProfile…', 'loading');
+  function loadStyleProfileScore() {
     google.script.run
-      .withSuccessHandler(function () { setStatus('StyleProfile Scratch tab updated.', 'info'); })
-      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
-      .architectGenerateInstructions();
+      .withSuccessHandler(renderStyleProfileScore)
+      .withFailureHandler(function () { /* silent */ })
+      .getStyleProfileScore();
+  }
+
+  // ── Architect ──────────────────────────────────────────
+
+
+  async function runArchitectInstructions() {
+    setStatus('Architect generating StyleProfile…', 'loading');
+    try {
+      await runServer('architectGenerateInstructions');
+      setStatus('StyleProfile Scratch tab updated. Fetching quality score…', 'info');
+      // Fetch and display the quality score written by evaluateStyleProfile_().
+      var scoreData = await runServer('getStyleProfileScore');
+      renderStyleProfileScore(scoreData);
+      var scoreMsg = (scoreData && scoreData.score !== null)
+        ? ' Quality: ' + scoreData.score + '/5.' : '';
+      setStatus('StyleProfile Scratch tab updated.' + scoreMsg, 'info');
+    } catch (e) {
+      setStatus('Error: ' + e.message, 'error');
+    }
   }
 
   // ── EarTune ────────────────────────────────────────────
 
-  function runEarTuneExample() {
-    setStatus('Writing EarTune example…', 'loading');
-    google.script.run
-      .withSuccessHandler(function () { setStatus('EarTune example written.', 'info'); })
-      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
-      .earTuneGenerateExample();
-  }
 
   function runEarTuneInstructions() {
     setStatus('EarTune generating instructions…', 'loading');
@@ -97,13 +176,6 @@
 
   // ── Auditor ────────────────────────────────────────────
 
-  function runAuditorExample() {
-    setStatus('Writing TechnicalAudit example…', 'loading');
-    google.script.run
-      .withSuccessHandler(function () { setStatus('TechnicalAudit example written.', 'info'); })
-      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
-      .auditorGenerateExample();
-  }
 
   function runAuditorInstructions() {
     setStatus('Auditor generating instructions…', 'loading');
@@ -128,13 +200,6 @@
 
   // ── Tether ─────────────────────────────────────────────
 
-  function runTetherExample() {
-    setStatus('Writing TetherInstructions example…', 'loading');
-    google.script.run
-      .withSuccessHandler(function () { setStatus('TetherInstructions example written.', 'info'); })
-      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
-      .tetherGenerateExample();
-  }
 
   function runTetherInstructions() {
     setStatus('Tether generating instructions…', 'loading');
@@ -157,7 +222,7 @@
     }
   }
 
-  // ── Comment Agent ──────────────────────────────────────
+  // ── General Purpose Agent ─────────────────────────────
 
   function runProcessComments() {
     setStatus('Processing @AI comment threads…', 'loading');
@@ -171,23 +236,148 @@
       .commentProcessorRun();
   }
 
-  function runCommentExample() {
-    setStatus('Writing Comment Instructions example…', 'loading');
-    google.script.run
-      .withSuccessHandler(function () { setStatus('Comment Instructions example written.', 'info'); })
-      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
-      .commentAgentGenerateExample();
-  }
 
   function runCommentInstructions() {
     setStatus('Generating Comment Instructions…', 'loading');
     google.script.run
       .withSuccessHandler(function () { setStatus('Comment Instructions Scratch tab updated.', 'info'); })
       .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
-      .commentAgentGenerateInstructions();
+      .generalPurposeAgentGenerateInstructions();
   }
 
-  // ── Merge Tabs ─────────────────────────────────────────
+  // ── Merge & Refresh ────────────────────────────────────
+
+  /**
+   * Full Instruction Refresh — can be triggered standalone or chained after merge.
+   *
+   * Step 1 (serial):   Architect generates the StyleProfile.
+   *                    All downstream agents read StyleProfile, so this must
+   *                    complete before any of them run.
+   *
+   * Step 2 (parallel): Each google.script.run call launches its own GAS server
+   *                    execution, giving genuine concurrent processing.
+   *                    Promise.allSettled() is used so one failure does not
+   *                    cancel the others — partial results are reported.
+   */
+  // Tracks whether the user has acknowledged a low-score warning for the current session.
+  var _scoreGateAcknowledged = false;
+
+  async function runFullInstructionRefresh() {
+    var refreshBtn = document.getElementById('refreshInstructionsBtn');
+    if (refreshBtn) refreshBtn.disabled = true;
+    setRefreshStatus('', '');
+
+    try {
+      // ── §4.1 Score gate: warn if StyleProfile quality is too low ──
+      if (!_scoreGateAcknowledged) {
+        var existing = await runServer('getStyleProfileScore');
+        if (existing && existing.score !== null && existing.score < 3) {
+          setRefreshStatus(
+            '⚠️ StyleProfile quality score is ' + existing.score + '/5 (< 3). ' +
+            'Consider re-running Architect → Generate first. ' +
+            'Click Refresh All again to proceed anyway.',
+            'error'
+          );
+          _scoreGateAcknowledged = true;  // allow the next click through
+          if (refreshBtn) refreshBtn.disabled = false;
+          return;
+        }
+      }
+      _scoreGateAcknowledged = false;  // reset for next use
+
+      // Start a top-level job for the refresh suite so it appears in the Log Sidebar.
+      // startJob must be awaited — we need the jobId before we can write traces.
+      var suiteJobId = await runServer('startJob', 'Instruction Refresh Suite');
+
+      // ── Helper: fire-and-forget trace ──────────────────────────────────────────
+      // Trace writes do NOT need to block the calling flow — they're cache writes.
+      // Using fire-and-forget eliminates one ~150 ms round-trip per trace call.
+      function trace(level, msg) {
+        google.script.run['trace' + (level === 'ERROR' ? 'Error' : 'Info')](msg, suiteJobId);
+      }
+
+      // ── Helper: batch trace (multiple entries, one round-trip) ─────────────────
+      // Use when several traces fire between two real work steps with no blocking
+      // needed between the individual entries.
+      function traceBatch(entries) {
+        google.script.run.batchTrace(entries.map(function(m) {
+          return { level: m.level || 'INFO', msg: m.msg, jobId: suiteJobId };
+        }));
+      }
+
+      trace('INFO', 'Starting Full Instruction Refresh flow…');
+
+      // ── Step 1: StyleProfile (serial) ──────────────────
+      setRefreshStatus('Generating StyleProfile (Architect)…', 'loading');
+      trace('INFO', 'Step 1/2: Refreshing StyleProfile (Architect)…');
+      try {
+        await runServer('architectGenerateInstructions');
+        var scoreData = await runServer('getStyleProfileScore');
+        renderStyleProfileScore(scoreData);
+        // Single trace — fire-and-forget, no await needed
+        trace('INFO', 'StyleProfile refreshed. Score: ' + (scoreData.score != null ? scoreData.score : 'N/A'));
+      } catch (e) {
+        var msg = 'StyleProfile generation failed: ' + (e.message || e);
+        trace('ERROR', msg);
+        setRefreshStatus(msg + ' — downstream refresh aborted.', 'error');
+        google.script.run.finishJob();
+        return;
+      }
+
+      // ── Step 2: Downstream agents (serial) ─────────────
+      // We run these serially to avoid "Service Documents failed" errors that
+      // commonly occur in GAS when multiple concurrent threads hit the same doc.
+      var agentSteps = [
+        { name: 'EarTune', fn: 'earTuneGenerateInstructions' },
+        { name: 'Audit',   fn: 'auditorGenerateInstructions' },
+        { name: 'Tether',  fn: 'tetherGenerateInstructions' },
+        { name: 'General Purpose', fn: 'generalPurposeAgentGenerateInstructions' }
+      ];
+
+      // Batch the step-start message with its per-agent count — one round-trip
+      // instead of two separate awaited calls.
+      trace('INFO', 'Step 2/2: Refreshing ' + agentSteps.length + ' downstream agents serially…');
+
+      var failures = [];
+      for (var i = 0; i < agentSteps.length; i++) {
+        var step = agentSteps[i];
+        var progress = '(' + (i + 1) + '/' + agentSteps.length + ')';
+        setRefreshStatus('Refreshing ' + step.name + ' instructions ' + progress + '…', 'loading');
+        // Fire-and-forget: no await — trace write never needs to block agent work
+        trace('INFO', 'Refreshing ' + step.name + ' ' + progress + '…');
+        try {
+          await runServer(step.fn);
+        } catch (e) {
+          var stepErr = step.name + ': ' + (e.message || e);
+          trace('ERROR', stepErr);
+          failures.push(stepErr);
+        }
+      }
+
+      if (failures.length === 0) {
+        // Batch the final success trace + finishJob in one call each (fire-and-forget)
+        trace('INFO', 'Full Instruction Refresh complete — success across all agents.');
+        google.script.run.finishJob();
+        setRefreshStatus('Full Instruction Refresh complete — all agents updated.', 'info');
+      } else {
+        traceBatch([
+          { level: 'ERROR', msg: 'Refresh complete with ' + failures.length + ' failure(s): ' + failures.join('; ') }
+        ]);
+        google.script.run.finishJob();
+        setRefreshStatus(
+          'Refresh complete with ' + failures.length + ' failure(s): ' + failures.join('; '),
+          'error'
+        );
+      }
+    } catch (globalErr) {
+      var globalMsg = 'Fatal crash in refresh flow: ' + (globalErr.message || globalErr);
+      google.script.run.traceError(globalMsg, suiteJobId);
+      google.script.run.finishJob();
+      setRefreshStatus(globalMsg, 'error');
+    } finally {
+      if (refreshBtn) refreshBtn.disabled = false;
+    }
+  }
 
   function loadSavedMergeNames() {
     google.script.run
@@ -199,10 +389,12 @@
       .getMergeTabNames();
   }
 
-  function saveMergeNames() {
+  function saveMergeNames(silent) {
     var csv = document.getElementById('merge-tab-names').value;
     google.script.run
-      .withSuccessHandler(function () { setMergeProgress('Tab names saved.'); })
+      .withSuccessHandler(function () {
+        if (!silent) setMergeProgress('Tab names saved.');
+      })
       .withFailureHandler(function (e) { setMergeStatus('Error saving: ' + e.message, 'error'); })
       .saveMergeTabs(csv);
   }
@@ -215,19 +407,30 @@
       return;
     }
 
+    // Auto-save the names before merging (silently to avoid masking merge progress).
+    saveMergeNames(true);
+
     var btn = document.getElementById('mergeNowBtn');
+    var refreshBtn = document.getElementById('refreshInstructionsBtn');
     btn.disabled = true;
+    if (refreshBtn) refreshBtn.disabled = true;
     setMergeStatus('', '');
-    setMergeProgress('Merging ' + names.length + ' tab(s)... Please wait.');
+    setRefreshStatus('', '');
+    setMergeProgress('Merging ' + names.length + ' tab(s)… Please wait.');
 
     try {
       var res = await runServer('runMergeAllTabs', names);
       if (res && res.ok) {
         setMergeProgress('');
         setMergeStatus('Merged ' + res.successes + ' tab(s) into MergedContent.', 'info');
+        // Chain: refresh all agent instructions now that MergedContent is up to date.
+        // runFullInstructionRefresh manages its own refreshBtn disable/enable.
+        await runFullInstructionRefresh();
       } else {
         setMergeProgress('');
-        var errMsg = 'Merge complete with errors.\nOK: ' + (res.successes || 0) + '  Failed: ' + (res.errors ? res.errors.length : 1) + '\n\n' + (res.errors ? res.errors.join('\n') : 'Unknown error');
+        var errMsg = 'Merge complete with errors.\nOK: ' + (res.successes || 0) +
+          '  Failed: ' + (res.errors ? res.errors.length : 1) +
+          '\n\n' + (res.errors ? res.errors.join('\n') : 'Unknown error');
         setMergeStatus(errMsg, 'error');
       }
     } catch (err) {
@@ -235,11 +438,17 @@
       setMergeStatus('Error: ' + err.message, 'error');
     } finally {
       btn.disabled = false;
+      // refreshBtn is already re-enabled by runFullInstructionRefresh on success;
+      // re-enable here covers the error/abort paths where the refresh never ran.
+      if (refreshBtn) refreshBtn.disabled = false;
     }
   }
 
   loadModelConfig();
   loadHighlightColor();
+  loadDebugMode();
+  loadSavedMergeNames();
+  loadStyleProfileScore();
 
   // ── Global Setting Functions ───────────────────────────
 
@@ -266,6 +475,41 @@
       el.textContent = msg;
       el.className = 'status-box' + (type ? ' ' + type : '');
     }
+  }
+
+  // ── Reusable preference helpers ────────────────────────
+
+  /**
+   * Loads a boolean server preference and sets a checkbox element.
+   * serverFn must return a boolean. Future boolean prefs need only
+   * one call to loadPrefCheckbox + one saveXxx function.
+   */
+  function loadPrefCheckbox(elementId, serverFn) {
+    google.script.run
+      .withSuccessHandler(function(val) {
+        var el = document.getElementById(elementId);
+        if (el) el.checked = !!val;
+      })
+      .withFailureHandler(function() { /* silent — non-critical */ })
+      [serverFn]();
+  }
+
+  // ── Debug Mode ─────────────────────────────────────────
+
+  function loadDebugMode() {
+    loadPrefCheckbox('debug-mode-toggle', 'getDebugMode');
+  }
+
+  function saveDebugMode(enabled) {
+    var statusEl = document.getElementById('debug-mode-status');
+    google.script.run
+      .withSuccessHandler(function() {
+        if (statusEl) { statusEl.textContent = 'Saved.'; setTimeout(function(){ statusEl.textContent = ''; }, 1500); }
+      })
+      .withFailureHandler(function(e) {
+        if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.className = 'status-box error'; }
+      })
+      .saveDebugMode(enabled);
   }
 
   // ── Model Configuration ────────────────────────────────
@@ -342,5 +586,103 @@
         select.value = currentVal;
       }
     });
+  }
+
+  // ── Multi-Tab Sweep Overlay ────────────────────────────
+
+  /** Current agentKey selected in the sweep overlay ('eartune'|'audit'|'tether'). */
+  var _sweepAgentKey = '';
+
+  function setSweepStatus(msg, type) {
+    var el = document.getElementById('sweep-status');
+    el.textContent = msg;
+    el.className = 'status-box' + (type ? ' ' + type : '');
+  }
+
+  /**
+   * Opens the sweep overlay for the given agent.
+   * Fetches all document tab names, pre-checks those in the saved merge list,
+   * then renders a checkbox list for the user to confirm.
+   */
+  function openSweepOverlay(agentKey, agentLabel) {
+    _sweepAgentKey = agentKey;
+    document.getElementById('sweep-agent-badge').textContent = agentLabel + ' Annotation Sweep';
+    document.getElementById('sweep-tab-list').innerHTML = '<span style="color:#9e9e9e;font-size:11px;">Loading tabs…</span>';
+    setSweepStatus('', '');
+    document.getElementById('sweep-confirm-btn').disabled = false;
+    document.getElementById('sweep-overlay').style.display = 'flex';
+
+    // Load all tab names AND saved merge names in parallel, then render.
+    var allTabs = null;
+    var mergeNames = null;
+
+    function maybeRender() {
+      if (allTabs === null || mergeNames === null) return;
+      var mergeSet = new Set(mergeNames);
+      var listEl = document.getElementById('sweep-tab-list');
+      if (!allTabs.length) {
+        listEl.innerHTML = '<span style="color:#9e9e9e;font-size:11px;">No tabs found.</span>';
+        return;
+      }
+      listEl.innerHTML = '';
+      allTabs.forEach(function (name) {
+        var label = document.createElement('label');
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = name;
+        cb.checked = mergeSet.has(name);
+        cb.id = 'sweep-cb-' + name.replace(/\s+/g, '-');
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(name));
+        listEl.appendChild(label);
+      });
+    }
+
+    google.script.run
+      .withSuccessHandler(function (tabs) { allTabs = tabs || []; maybeRender(); })
+      .withFailureHandler(function (e) {
+        document.getElementById('sweep-tab-list').innerHTML =
+          '<span style="color:#c62828;font-size:11px;">Error loading tabs: ' + e.message + '</span>';
+      })
+      .getTabNames();
+
+    google.script.run
+      .withSuccessHandler(function (names) { mergeNames = names || []; maybeRender(); })
+      .withFailureHandler(function () { mergeNames = []; maybeRender(); })
+      .getMergeTabNames();
+  }
+
+  function closeSweepOverlay() {
+    document.getElementById('sweep-overlay').style.display = 'none';
+  }
+
+  /** Collects checked tabs and kicks off the annotation sweep via google.script.run. */
+  async function confirmSweep() {
+    var checkboxes = document.querySelectorAll('#sweep-tab-list input[type=checkbox]:checked');
+    var selected = [];
+    checkboxes.forEach(function (cb) { selected.push(cb.value); });
+
+    if (!selected.length) {
+      setSweepStatus('Select at least one tab.', 'error');
+      return;
+    }
+
+    var btn = document.getElementById('sweep-confirm-btn');
+    btn.disabled = true;
+    setSweepStatus('Sweeping ' + selected.length + ' tab(s)… See Log Sidebar for progress.', 'loading');
+
+    try {
+      var result = await runServer('annotateSelectedTabs', _sweepAgentKey, selected);
+      if (result && result.ok) {
+        setSweepStatus('Sweep complete — ' + selected.length + ' tab(s) annotated.', 'info');
+      } else {
+        var errs = (result && result.errors) ? result.errors.join('\n') : 'Unknown error';
+        setSweepStatus('Sweep finished with errors:\n' + errs, 'error');
+      }
+    } catch (e) {
+      setSweepStatus('Error: ' + e.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
   }
 </script>

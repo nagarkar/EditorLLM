@@ -46,7 +46,7 @@ elapsed() {
   echo $(( end - START_TIME ))s
 }
 
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR/.."
 
 # ── Pre-flight ────────────────────────────────────────────────────────────────
 section "Pre-flight checks"

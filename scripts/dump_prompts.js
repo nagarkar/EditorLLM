@@ -11,7 +11,7 @@ const distFiles = [
   'ArchitectAgent.js',
   'EarTuneAgent.js',
   'AuditAgent.js',
-  'CommentAgent.js'
+  'GeneralPurposeAgent.js'
 ];
 
 const allCode = distFiles.map(f => fs.readFileSync(path.join(__dirname, '../dist', f), 'utf8')).join('\n;\n');
@@ -72,7 +72,7 @@ const agents = [
   { name: 'ArchitectAgent', instance: new ArchitectAgent(), threads: ARCHITECT_THREADS },
   { name: 'EarTuneAgent', instance: new EarTuneAgent(), threads: CHAPTER_1_THREADS },
   { name: 'AuditAgent', instance: new AuditAgent(), threads: CHAPTER_1_THREADS },
-  { name: 'CommentAgent', instance: new CommentAgent(), threads: CHAPTER_1_THREADS }
+  { name: 'GeneralPurposeAgent', instance: new GeneralPurposeAgent(), threads: CHAPTER_1_THREADS }
 ];
 
 for (const agent of agents) {

@@ -20,8 +20,8 @@ exports.buildEarTuneBatchPrompt = buildEarTuneBatchPrompt;
 exports.buildAuditInstructionsPrompt = buildAuditInstructionsPrompt;
 exports.buildAuditAnnotatePrompt = buildAuditAnnotatePrompt;
 exports.buildAuditBatchPrompt = buildAuditBatchPrompt;
-exports.buildCommentAgentInstructionsPrompt = buildCommentAgentInstructionsPrompt;
-exports.buildCommentAgentBatchPrompt = buildCommentAgentBatchPrompt;
+exports.buildGeneralPurposeAgentInstructionsPrompt = buildGeneralPurposeAgentInstructionsPrompt;
+exports.buildGeneralPurposeAgentBatchPrompt = buildGeneralPurposeAgentBatchPrompt;
 function formatThreadsForBatch(threads) {
     return threads.map(function (t) {
         var conv = t.conversation.map(function (m) { return "[".concat(m.role, "] ").concat(m.authorName, ": ").concat(m.content); }).join('\n');
@@ -33,7 +33,7 @@ function formatThreadsForBatch(threads) {
 }
 // ── ArchitectAgent ────────────────────────────────────────────────────────────
 function buildArchitectInstructionsPrompt(opts) {
-    return "\nMANUSCRIPT (excerpt):\n---\n".concat(opts.manuscript.slice(0, 20000), "\n---\n\n## Instructions\n\nAnalyse the writing style above and produce a comprehensive StyleProfile.\nReturn a JSON object with:\n- proposed_full_text: your full StyleProfile document \u2014 MUST be valid\n  GitHub-Flavored Markdown with the following structure:\n    ## Voice & Tone\n    ## Sentence Rhythm\n    ## Vocabulary Register\n    ## Structural Patterns\n    ## Thematic Motifs\n  Each section MUST start with a ## heading, use - bullets, and **bold** for\n  key terms. Do NOT use plain-text section titles or fenced code blocks.\n- operations: one per major style dimension updated (voice, rhythm, vocabulary,\n  structure, motifs). Each match_text must be a verbatim 3\u20134-word phrase from\n  proposed_full_text.\n").trim();
+    return "\nMANUSCRIPT (excerpt):\n---\n".concat(opts.manuscript.slice(0, 20000), "\n---\n\nCURRENT STYLE PROFILE (if any):\n---\n").concat(opts.styleProfile, "\n---\n\n## Instructions\n\nAnalyse the writing style above and produce a comprehensive StyleProfile.\nReturn a JSON object with:\n- proposed_full_text: your full StyleProfile document \u2014 MUST be valid\n  GitHub-Flavored Markdown with the following structure:\n    ## Voice & Tone\n    ## Sentence Rhythm\n    ## Vocabulary Register\n    ## Structural Patterns\n    ## Thematic Motifs\n  Each section MUST start with a ## heading, use - bullets, and **bold** for\n  key terms. Do NOT use plain-text section titles or fenced code blocks.\n- operations: one per major style dimension updated (voice, rhythm, vocabulary,\n  structure, motifs). Each match_text must be a verbatim 3\u20134-word phrase from\n  proposed_full_text.\n").trim();
 }
 function buildArchitectBatchPrompt(opts) {
     return ("STYLE PROFILE:\n" +
@@ -112,11 +112,11 @@ function buildAuditBatchPrompt(opts) {
         "Return a JSON object with \"responses\": an array of {threadId, reply} entries, " +
         "one per thread you are replying to.").trim();
 }
-// ── CommentAgent ──────────────────────────────────────────────────────────────
-function buildCommentAgentInstructionsPrompt(opts) {
-    return "\nSTYLE PROFILE:\n---\n".concat(opts.styleProfile.slice(0, 3000), "\n---\n\nCURRENT COMMENT INSTRUCTIONS (if any):\n---\n").concat(opts.existingInstructions.slice(0, 2000), "\n---\n\n## Instructions\n\nGenerate an updated Comment Instructions system prompt that guides the AI to\nrespond to in-document \"@AI\" comment threads in a voice consistent with this\nmanuscript's StyleProfile.\n\nReturn a JSON object with:\n- proposed_full_text: the complete new Comment Instructions \u2014 MUST be valid\n  GitHub-Flavored Markdown. Required sections (## H2 headings):\n    ## Response Style\n    ## Scope\n    ## Sign-off\n    ## Example Thread\n  Use - bullet points for rules, **bold** for key constraints. Every section\n  must start with a ## heading. Include a concrete example exchange in\n  ## Example Thread using > blockquotes.\n- operations: one per section being added or changed, each with a verbatim\n  match_text from proposed_full_text and a reason.\n").trim();
+// ── GeneralPurposeAgent ──────────────────────────────────────────────────────────────
+function buildGeneralPurposeAgentInstructionsPrompt(opts) {
+    return "\nSTYLE PROFILE:\n---\n".concat(opts.styleProfile.slice(0, 3000), "\n---\n\nCURRENT GENERAL PURPOSE INSTRUCTIONS (if any):\n---\n").concat(opts.existingInstructions.slice(0, 2000), "\n---\n\n## Instructions\n\nGenerate an updated General Purpose Instructions system prompt that guides the AI to\nrespond to in-document \"@AI\" comment threads in a voice consistent with this\nmanuscript's StyleProfile.\n\nReturn the complete instructions as plain GitHub-Flavored Markdown, starting directly\nwith the first ## heading. Do NOT wrap the response in JSON or any other format.\nRequired sections (## H2 headings): ## Response Style, ## Scope, ## Sign-off, ## Example Thread.\nUse - bullet points for rules, **bold** for key constraints.\nInclude a concrete example exchange in ## Example Thread using > blockquotes.\n").trim();
 }
-function buildCommentAgentBatchPrompt(opts) {
+function buildGeneralPurposeAgentBatchPrompt(opts) {
     var anchorSection = opts.anchorContent
         ? "## Anchor Passage\n\n".concat(opts.anchorContent, "\n\n\n")
         : '';

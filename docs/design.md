@@ -51,7 +51,7 @@ EditorLLM/
 │   ├── ArchitectAgent.ts         # Structural Architect agent
 │   ├── EarTuneAgent.ts           # Audio EarTune agent
 │   ├── AuditAgent.ts             # Logical Auditor agent
-│   ├── CommentAgent.ts           # @AI catch-all comment handler
+│   ├── GeneralPurposeAgent.ts           # @AI catch-all comment handler
 │   ├── CommentProcessor.ts       # Comment routing orchestrator (IIFE module)
 │   ├── TabMerger.ts              # Tab merge utility (IIFE module)
 │   ├── Code.ts                   # Entry point, menu, server functions
@@ -95,7 +95,7 @@ Because GAS evaluates files sequentially in a flat scope, the order matters. `.c
 8. `ArchitectAgent.js` — extends `BaseAgent` (references `ARCHITECT_SYSTEM_PROMPT`)
 9. `EarTuneAgent.js` — extends `BaseAgent`
 10. `AuditAgent.js` — extends `BaseAgent`
-11. `CommentAgent.js` — extends `BaseAgent`
+11. `GeneralPurposeAgent.js` — extends `BaseAgent`
 12. `TabMerger.js` — tab merge utility (references `DocOps`, `TAB_NAMES`)
 13. `CommentProcessor.js` — routing orchestrator (references `BaseAgent`, `DocOps`, `COMMENT_ANCHOR_TAB`)
 14. `Code.js` — entry point (instantiates agents, initialises `CommentProcessor`)
@@ -142,7 +142,6 @@ Every concrete agent implements five abstract members:
 | `contextKeys: string[]` | Tab names needed for comment processing (pre-flight validation) |
 | `handleCommentThread(thread)` | Workflow 3: reply to a comment thread; return a `ThreadReply`. No doc changes. |
 | `generateInstructions()` | Workflow 1: refresh the agent's system prompt tab via `instruction_update` |
-| `generateExample()` | Write example content to the agent's tabs |
 
 Note also that `annotateTab(tabName)` is a concrete method on EarTuneAgent and AuditAgent (workflow 2) — not an abstract BaseAgent method.
 
@@ -202,7 +201,7 @@ Three configurable tiers map to Gemini model names stored in script properties:
 
 | Tier | Constant | Default | Used by |
 |---|---|---|---|
-| `fast` | `MODEL.FAST` | `gemini-2.0-flash` | CommentAgent, EarTuneAgent |
+| `fast` | `MODEL.FAST` | `gemini-2.0-flash` | GeneralPurposeAgent, EarTuneAgent |
 | `thinking` | `MODEL.THINKING` | `gemini-2.5-pro-preview-03-25` | ArchitectAgent, AuditAgent |
 | `deepseek` | `MODEL.DEEPSEEK` | `gemini-2.0-flash-thinking-exp-01-21` | Available for future agents |
 
@@ -376,7 +375,6 @@ class NewAgent extends BaseAgent {
   }
 
   generateInstructions(): void { /* ... */ }
-  generateExample(): void { /* ... */ }
 }
 ```
 
@@ -384,7 +382,6 @@ class NewAgent extends BaseAgent {
 
 ```typescript
 const NEW_AGENT_SYSTEM_PROMPT = `${SYSTEM_PREAMBLE}\n\nROLE: Your New Agent\n...`;
-const NEW_AGENT_EXAMPLE_CONTENT = `# Example content...`;
 ```
 
 ### Step 3: Instantiate in `src/Code.ts`
@@ -401,9 +398,9 @@ Insert `"dist/NewAgent.js"` after `BaseAgent.js` and before `CommentProcessor.js
 ### Step 5: Expose server functions (if the agent has sidebar actions)
 
 ```typescript
-function newAgentGenerateExample(): void {
+function newAgentGenerateInstructions(): void {
   BaseAgent.clearAllAgentCaches();
-  newAgent.generateExample();
+  newAgent.generateInstructions();
 }
 ```
 

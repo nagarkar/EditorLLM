@@ -1,10 +1,10 @@
 // ============================================================
-// CommentAgent.ts — @AI catch-all handler for comment threads.
-// Also owns the Comment Instructions tab (generateInstructions /
-// generateExample). Per-thread routing is handled by CommentProcessor.
+// GeneralPurposeAgent.ts — GeneralPurposeAgent: @AI catch-all handler.
+// Also owns the General Purpose Instructions tab (generateInstructions).
+// Per-thread routing is handled by CommentProcessor.
 // ============================================================
 
-class CommentAgent extends BaseAgent {
+class GeneralPurposeAgent extends BaseAgent {
 
   readonly SYSTEM_PROMPT = `
 ${BaseAgent.SYSTEM_PREAMBLE}
@@ -25,9 +25,9 @@ Never introduce material that contradicts the Chid Axiom or the manuscript's
 established metaphysic. If a question cannot be answered within the manuscript's
 framework, say so explicitly.
 
-## Markdown Requirements (instruction_update only)
-When generating Comment Instructions, your proposed_full_text MUST be valid
-GitHub-Flavored Markdown. Rules:
+## Markdown Requirements (instruction generation only)
+When generating General Purpose Instructions, return valid
+GitHub-Flavored Markdown directly (no JSON wrapper). Rules:
 - Use ## (H2) for top-level sections (e.g. ## Response Style, ## Scope, ## Sign-off)
 - Use - bullet points for rules within each section
 - Use **bold** for rule keywords and important constraints
@@ -66,13 +66,14 @@ End every reply with "— AI Editorial Assistant".
   readonly tags = ['@ai'];
 
   /**
-   * CommentAgent groups threads by the tab they are anchored in.
+   * GeneralPurposeAgent groups threads by the tab they are anchored in.
    * COMMENT_ANCHOR_TAB causes CommentProcessor to resolve anchorTabName per
    * thread; the agent then uses that tab's content as shared context per chunk.
    */
-  readonly contextKeys = [COMMENT_ANCHOR_TAB, TAB_NAMES.COMMENT_INSTRUCTIONS];
+  readonly contextKeys = [COMMENT_ANCHOR_TAB, TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS];
 
   private static readonly CHUNK_SIZE = 10;
+
 
   generateCommentResponsesPrompt(opts: { anchorContent: string; threads: CommentThread[] }): string {
     return this.buildStandardPrompt({
@@ -89,110 +90,99 @@ End every reply with "— AI Editorial Assistant".
   generateInstructionPrompt(opts: { styleProfile: string; existingInstructions: string }): string {
     return this.buildStandardPrompt({
       'Style Profile': opts.styleProfile,
-      'Current Comment Instructions (if any)': opts.existingInstructions,
+      'Current General Purpose Instructions (if any)': opts.existingInstructions,
     }, [
-      `Generate an updated Comment Instructions system prompt that guides the AI to`,
+      `Generate an updated General Purpose Instructions system prompt that guides the AI to`,
       `respond to in-document "@AI" comment threads in a voice consistent with this`,
       `manuscript's StyleProfile.`,
       ``,
-      `Return a JSON object with:`,
-      `- proposed_full_text: the complete new Comment Instructions`
-    ].join('\\n'));
+      `Return the complete instructions as plain GitHub-Flavored Markdown, starting directly`,
+      `with the first ## heading. Do NOT wrap the response in JSON or any other format.`,
+      `Required sections (## H2 headings): ## Response Style, ## Scope, ## Sign-off, ## Example Thread.`,
+      `Use - bullet points for rules, **bold** for key constraints.`,
+      `Include a concrete example exchange in ## Example Thread using > blockquotes.`,
+    ].join('\n'));
   }
 
   // --- Comment thread batch handler ---
 
-  handleCommentThreads(threads: CommentThread[]): ThreadReply[] {
-    const agentName = this.constructor.name;
-    Tracer.info(`[${agentName}] handleCommentThreads: received ${threads.length} thread(s)`);
-
-    const instructions = this.getTabContent_(TAB_NAMES.COMMENT_INSTRUCTIONS).trim();
-    const systemPrompt = instructions || this.SYSTEM_PROMPT;
-
-    // Subgroup by anchorTabName so each chunk shares one passage context.
-    const subgroups = new Map<string | null, CommentThread[]>();
-    for (const thread of threads) {
-      const key = thread.anchorTabName;
-      if (!subgroups.has(key)) subgroups.set(key, []);
-      subgroups.get(key)!.push(thread);
-    }
-
-    Tracer.info(`[${agentName}] handleCommentThreads: ${subgroups.size} subgroup(s) by anchor tab`);
-
-    const allReplies: ThreadReply[] = [];
-
-    for (const [anchorTabName, subThreads] of subgroups) {
-      const anchorContent = anchorTabName
-        ? this.getTabContent_(anchorTabName)
-        : '';
-
-      for (let i = 0; i < subThreads.length; i += CommentAgent.CHUNK_SIZE) {
-        const chunk = subThreads.slice(i, i + CommentAgent.CHUNK_SIZE);
-        const chunkNum = Math.floor(i / CommentAgent.CHUNK_SIZE) + 1;
-        Tracer.info(
-          `[${agentName}] handleCommentThreads: anchor=${anchorTabName ?? '(none)'} ` +
-          `chunk ${chunkNum} size=${chunk.length}`
-        );
-
-        try {
-          const userPrompt = this.generateCommentResponsesPrompt({
-            anchorContent,
-            threads: chunk,
-          });
-          const raw = this.callGemini_(systemPrompt, userPrompt, this.batchReplySchema_(), MODEL.FAST);
-          const replies = this.normaliseBatchReplies_(chunk, raw, agentName);
-          allReplies.push(...replies);
-        } catch (e: any) {
-          Tracer.error(`[${agentName}] handleCommentThreads: chunk ${chunkNum} failed — ${e.message}`);
-        }
-      }
-    }
-
-    Tracer.info(`[${agentName}] handleCommentThreads: returning ${allReplies.length} reply/replies`);
-    return allReplies;
+  protected commentChunkSize_() { return GeneralPurposeAgent.CHUNK_SIZE; }
+  protected commentModelTier_() { return MODEL.FAST; }
+  protected commentSystemPrompt_(): string {
+    // Use the tab-authored instructions when present; fall back to the hardcoded SYSTEM_PROMPT.
+    const instructions = this.getTabContent_(TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS).trim();
+    return instructions || this.SYSTEM_PROMPT;
+  }
+  protected buildCommentPrompt_(chunk: CommentThread[], anchorContent: string): string {
+    return this.generateCommentResponsesPrompt({ anchorContent, threads: chunk });
   }
 
   // --- Instruction management ---
 
   /**
-   * Refreshes the Comment Instructions tab via instruction_update.
-   * The new prompt is informed by the current StyleProfile.
+   * If the LLM ignores the "no JSON wrapper" instruction and returns the
+   * markdown inside a JSON code fence (e.g. ```json\n{"markdown":"..."}\n```),
+   * extract the markdown value. Returns the original string on any parse
+   * failure so callers always receive something usable.
+   */
+  private static extractMarkdownFromJsonWrapper_(raw: string): string {
+    const trimmed = raw.trim();
+    // Fast-path: already plain markdown
+    if (trimmed.startsWith('#') || !trimmed.startsWith('```')) return trimmed;
+
+    // Strip the opening code fence (```json or ```) and closing ```
+    const withoutFence = trimmed
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```\s*$/, '')
+      .trim();
+
+    try {
+      const parsed = JSON.parse(withoutFence);
+      // Accept a bare string or the first string value under any key name —
+      // the LLM uses inconsistent keys ("markdown", "updated_instructions", etc.)
+      if (typeof parsed === 'string') return parsed;
+      if (parsed && typeof parsed === 'object') {
+        for (const val of Object.values(parsed)) {
+          if (typeof val === 'string' && (val as string).trim().length > 0) return val as string;
+        }
+      }
+    } catch (_) { /* not JSON — fall through */ }
+
+    return trimmed;
+  }
+
+  /**
+   * Refreshes the General Purpose Instructions tab.
+   * Returns plain markdown directly from Gemini — no JSON schema — to avoid
+   * JSON-parse failures on long instruction content (seen with MODEL.FAST at 44s).
    */
   generateInstructions(): void {
-    // W1: read instruction tabs as markdown for clean structured context
     const styleProfile = this.getTabMarkdown_(TAB_NAMES.STYLE_PROFILE);
-    const existing = this.getTabMarkdown_(TAB_NAMES.COMMENT_INSTRUCTIONS);
+    this.assertStyleProfileValid_(styleProfile);
+    const existing = this.getTabMarkdown_(TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS);
 
     const userPrompt = this.generateInstructionPrompt({
       styleProfile,
       existingInstructions: existing,
     });
 
-    const geminiResult = this.callGemini_(
+    // Use plain-text Gemini call — no JSON schema — to avoid parse errors on
+    // long markdown responses. The raw response IS the proposed_full_text.
+    const rawText = this.callGemini_(
       this.SYSTEM_PROMPT,
       userPrompt,
-      this.instructionUpdateSchema_(),
-      MODEL.FAST
-    ) as { proposed_full_text: string };
+      { tier: MODEL.FAST }
+    ) as string;
+
+    // Guard: strip JSON wrapper if the LLM ignores the "plain markdown" instruction.
+    const proposedText = GeneralPurposeAgent.extractMarkdownFromJsonWrapper_(rawText);
 
     const update: RootUpdate = {
       workflow_type: 'instruction_update',
-      review_tab: TAB_NAMES.COMMENT_INSTRUCTIONS,
-      proposed_full_text: geminiResult.proposed_full_text,
+      review_tab: TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS,
+      proposed_full_text: proposedText,
     };
 
     CollaborationService.processUpdate(update);
-  }
-
-  /**
-   * Writes example Comment Instructions to the Comment Instructions tab.
-   */
-  generateExample(): void {
-    DocOps.ensureStandardTabs();
-    MarkdownService.markdownToTab(
-      this.EXAMPLE_CONTENT,
-      TAB_NAMES.COMMENT_INSTRUCTIONS,
-      TAB_NAMES.AGENTIC_INSTRUCTIONS
-    );
   }
 }

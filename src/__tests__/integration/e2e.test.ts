@@ -58,7 +58,6 @@ import {
   deleteComment,
   deleteDocTab,
   getCommentWithReplies,
-  getTabContent,
   insertTextIntoTab,
   listAllComments,
 } from './helpers/drive';
@@ -68,7 +67,7 @@ import { INTEGRATION_CONFIG } from './config';
 const DOC_ID = INTEGRATION_CONFIG.googleDocId;
 const TOKEN = () => process.env.GOOGLE_TOKEN ?? INTEGRATION_CONFIG.googleToken;
 
-// Fast-tier tests (CommentAgent, EarTuneAgent): 5 minutes is plenty.
+// Fast-tier tests (GeneralPurposeAgent, EarTuneAgent): 5 minutes is plenty.
 const TIMEOUT = 5 * 60 * 1000;
 // Thinking-tier tests (ArchitectAgent, AuditAgent): allow up to 10 minutes.
 // Apps Script web app execution cap is 6 minutes; two thinking calls back-to-back
@@ -127,6 +126,18 @@ const hasCredentials = Boolean(DOC_ID && process.env.GOOGLE_TOKEN && webAppUrl);
 
 const describeE2E = hasCredentials ? describe : describe.skip;
 
+// ── One-time environment seeding ──────────────────────────────────────────────
+// Seeds GEMINI_API_KEY + model overrides into GAS ScriptProperties once per
+// test run, before any describe block executes. Individual describe blocks that
+// previously called seedTestEnvironment_() in their own beforeAll no longer
+// need to — this runs unconditionally (but is a no-op when hasCredentials is
+// false because runGasFunction will short-circuit on an empty URL).
+// E2E 6 still clears the key deliberately in its own beforeAll; its afterAll
+// restores it so E2E 7+ are unaffected.
+beforeAll(() => {
+  if (hasCredentials) seedTestEnvironment_(webAppUrl, TOKEN());
+}, TIMEOUT);
+
 // ── Test state ────────────────────────────────────────────────────────────────
 
 describeE2E('E2E: @AI comment → commentProcessorRun() → agent reply', () => {
@@ -146,9 +157,6 @@ describeE2E('E2E: @AI comment → commentProcessorRun() → agent reply', () => 
     console.log(`[E2E] webAppUrl:  ${webAppUrl}`);
     console.log(`[E2E] docId:      ${DOC_ID}`);
     console.log(`[E2E] doc URL:    https://docs.google.com/document/d/${DOC_ID}/edit`);
-
-    // Seed API key and model overrides into ScriptProperties.
-    seedTestEnvironment_(webAppUrl, TOKEN());
 
     // Use the first existing tab in the doc.
     const tabs = fetchTabs(DOC_ID, TOKEN());
@@ -206,8 +214,10 @@ describeE2E('E2E: @AI comment → commentProcessorRun() → agent reply', () => 
     expect(result.replied).toBeGreaterThanOrEqual(1);
   }, TIMEOUT);
 
-  it('the @AI comment thread has an agent reply containing the [EditorLLM] prefix', () => {
+  it('the @AI comment thread has an agent reply with EditorLLM prefix and signature', () => {
     // Fetch the comment (including replies) and verify the agent responded.
+    // Checks both the [EditorLLM] prefix AND the "AI Editorial Assistant" signature
+    // in a single Drive round-trip — previously two separate tests with two fetches.
     const comment = getCommentWithReplies(DOC_ID, testCommentId, TOKEN());
     console.log(
       `[E2E] comment ${testCommentId} — ` +
@@ -222,16 +232,9 @@ describeE2E('E2E: @AI comment → commentProcessorRun() → agent reply', () => 
       r => r.content?.includes('[EditorLLM]') || r.content?.includes('AI Editorial Assistant')
     );
     expect(agentReply).toBeDefined();
+    expect(agentReply?.content).toContain('AI Editorial Assistant');
     console.log(`[E2E] agent reply: ${agentReply?.content?.slice(0, 120)}...`);
     console.log(`[E2E] view in doc: https://docs.google.com/document/d/${DOC_ID}/edit`);
-  }, TIMEOUT);
-
-  it('the agent reply ends with the AI Editorial Assistant signature', () => {
-    const comment = getCommentWithReplies(DOC_ID, testCommentId, TOKEN());
-    const agentReply = (comment.replies ?? []).find(
-      r => r.content?.includes('[EditorLLM]') || r.content?.includes('AI Editorial Assistant')
-    );
-    expect(agentReply?.content).toContain('AI Editorial Assistant');
   }, TIMEOUT);
 });
 
@@ -240,10 +243,6 @@ describeE2E('E2E: @AI comment → commentProcessorRun() → agent reply', () => 
 // in beforeAll is readable from ScriptProperties by the web app.
 
 describeE2E('E2E: hasApiKey doPost route (smoke test)', () => {
-  beforeAll(() => {
-    seedTestEnvironment_(webAppUrl, TOKEN());
-  }, TIMEOUT);
-
   it('returns true when GEMINI_API_KEY is present in ScriptProperties', () => {
     const result = runGasFunction(webAppUrl, 'hasApiKey', [], TOKEN());
     console.log(`[E2E hasApiKey] result: ${JSON.stringify(result)}`);
@@ -263,8 +262,6 @@ describeE2E('E2E: non-routable comments are skipped', () => {
   const RUN_ID = Date.now();
 
   beforeAll(() => {
-    seedTestEnvironment_(webAppUrl, TOKEN());
-
     const tabs = fetchTabs(DOC_ID, TOKEN());
     if (tabs.length === 0) throw new Error('[E2E skip] Test doc has no tabs');
     testTabId = tabs[0].tabId;
@@ -330,8 +327,6 @@ describeE2E('E2E: commentProcessorRun() is idempotent — no duplicate replies',
   const RUN_ID = Date.now();
 
   beforeAll(() => {
-    seedTestEnvironment_(webAppUrl, TOKEN());
-
     const tabs = fetchTabs(DOC_ID, TOKEN());
     if (tabs.length === 0) throw new Error('[E2E idem] Test doc has no tabs');
     testTabId = tabs[0].tabId;
@@ -388,8 +383,6 @@ describeE2E('E2E: multi-thread routing — @ai + @architect + @audit dispatched 
   const RUN_ID = Date.now();
 
   beforeAll(() => {
-    seedTestEnvironment_(webAppUrl, TOKEN());
-
     const tabs = fetchTabs(DOC_ID, TOKEN());
     if (tabs.length === 0) throw new Error('[E2E multi] Test doc has no tabs');
     testTabId = tabs[0].tabId;
@@ -525,8 +518,7 @@ describeE2E('E2E: missing API key — processAll handles the failure gracefully'
 // ── E2E 7: EarTuneAgent W2 — earTuneAnnotateTab on an isolated temp tab ───────
 //
 // What this test proves:
-//   • setupStandardTabs(), architectGenerateExample(), earTuneGenerateExample()
-//     complete without error end-to-end (tab setup + content seeding)
+//   • setupStandardTabs() completes without error end-to-end (tab setup)
 //   • earTuneAnnotateTab() runs the full EarTune W2 pipeline on real doc content
 //   • Drive comments land on the intended tab (anchor filtering by tab ID)
 //   • Agent comments carry the [EditorLLM] prefix
@@ -569,25 +561,11 @@ describeE2E('E2E: EarTuneAgent W2 — earTuneAnnotateTab on isolated temp tab', 
   const tempTabName = `E2E-EarTune-${RUN_ID}`;
 
   beforeAll(() => {
-    // Seed API key and model overrides into ScriptProperties.
-    seedTestEnvironment_(webAppUrl, TOKEN());
-
     // Step 1: ensure the standard tab hierarchy exists (idempotent, no Gemini).
     console.log('[E2E eartune] setupStandardTabs…');
     runGasFunction(webAppUrl, 'setupStandardTabs', [], TOKEN());
 
-    // Step 2: seed MergedContent (if empty) + StyleProfile with example content
-    //         (no Gemini — writes hardcoded ARCHITECT_EXAMPLE_CONTENT).
-    console.log('[E2E eartune] architectGenerateExample…');
-    runGasFunction(webAppUrl, 'architectGenerateExample', [], TOKEN());
-
-    // Step 3: seed EarTune tab with example instructions
-    //         (no Gemini — writes hardcoded EARTUNE_EXAMPLE_CONTENT).
-    console.log('[E2E eartune] earTuneGenerateExample…');
-    runGasFunction(webAppUrl, 'earTuneGenerateExample', [], TOKEN());
-
-    // Step 4: create an isolated temp tab and populate it with fixture prose.
-    //         The tab name is unique per run so parallel runs cannot interfere.
+    // Step 2: create an isolated temp tab and populate it with fixture prose.
     console.log(`[E2E eartune] creating temp tab "${tempTabName}"…`);
     tempTabId = createDocTab(DOC_ID, tempTabName, TOKEN());
     console.log(`[E2E eartune] tempTabId: ${tempTabId}`);
@@ -643,82 +621,25 @@ describeE2E('E2E: EarTuneAgent W2 — earTuneAnnotateTab on isolated temp tab', 
 
     expect(agentComments.length).toBeGreaterThanOrEqual(1);
   }, LONG_TIMEOUT);
-
-  it('each agent comment on the temp tab starts with the [EarTune] prefix', () => {
-    const allComments = listAllComments(DOC_ID, TOKEN());
-    const onTempTab = allComments.filter(c => {
-      try {
-        const anchor = JSON.parse(c.anchor ?? '{}');
-        return anchor?.a?.[0]?.lt?.tb?.id === tempTabId;
-      } catch { return false; }
-    });
-
-    // Only check comments that already exist — if none, the previous test would
-    // have failed already; here we verify every one has the correct prefix.
-    const agentComments = onTempTab.filter(c => c.content?.startsWith('[EarTune]'));
-    for (const c of agentComments) {
-      expect(c.content).toMatch(/^\[EarTune\]/);
-    }
-    console.log(`[E2E eartune] verified prefix on ${agentComments.length} comment(s)`);
-  }, LONG_TIMEOUT);
 });
 
-// ── E2E 8: architectGenerateExample — tab content verification ────────────────
-// Runs setupStandardTabs + architectGenerateExample via doPost, then reads the
-// StyleProfile tab via Docs REST API and asserts expected example content.
-//
-// This is a zero-cost test (no Gemini calls — architectGenerateExample writes
-// hardcoded EXAMPLE_CONTENT from ArchitectAgent.ts).
-//
-// What this test proves:
-//   • The full generateExample pipeline (ensureStandardTabs → markdownToTab)
-//     executes without error — including the getOrCreateTab duplicate-tab fix.
-//   • Tab content is substantial and matches expected headings/structure.
+// ── E2E 8: setupStandardTabs — tab existence smoke test ───────────────────—
+// Runs setupStandardTabs via doPost and asserts that all expected standard tabs
+// exist in the document. Zero Gemini cost; validates tab provisioning only.
 
-describeE2E('E2E: architectGenerateExample — StyleProfile content verification', () => {
-  beforeAll(() => {
-    seedTestEnvironment_(webAppUrl, TOKEN());
+describeE2E('E2E: setupStandardTabs — all standard tabs exist after setup', () => {
+  it('setupStandardTabs completes without error', () => {
+    console.log('[E2E 8] setupStandardTabs…');
+    const result = runGasFunction(webAppUrl, 'setupStandardTabs', [], TOKEN());
+    console.log(`[E2E 8] result: ${JSON.stringify(result)}`);
+    expect(result).toEqual({ ok: true });
   }, TIMEOUT);
 
-  it('setupStandardTabs + architectGenerateExample complete without error', () => {
-    console.log('[E2E archExample] setupStandardTabs…');
-    const setupResult = runGasFunction(webAppUrl, 'setupStandardTabs', [], TOKEN());
-    console.log(`[E2E archExample] setupStandardTabs result: ${JSON.stringify(setupResult)}`);
-    expect(setupResult).toBeDefined();
-
-    console.log('[E2E archExample] architectGenerateExample…');
-    const exampleResult = runGasFunction(webAppUrl, 'architectGenerateExample', [], TOKEN());
-    console.log(`[E2E archExample] architectGenerateExample result: ${JSON.stringify(exampleResult)}`);
-    expect(exampleResult).toEqual({ ok: true });
-  }, TIMEOUT);
-
-  it('StyleProfile tab contains the expected example headings and structure', () => {
-    // Read the StyleProfile tab content via Docs REST API.
-    const content = getTabContent(DOC_ID, 'StyleProfile', TOKEN());
-    console.log(`[E2E archExample] StyleProfile content length: ${content.length}`);
-    console.log(`[E2E archExample] StyleProfile first 200 chars: "${content.slice(0, 200)}"`);
-
-    // Minimum content length — the example is ~900 chars of markdown
-    expect(content.length).toBeGreaterThan(200);
-
-    // Expected section headings from ArchitectAgent.EXAMPLE_CONTENT
-    expect(content).toContain('Voice');
-    expect(content).toContain('Sentence Rhythm');
-    expect(content).toContain('Vocabulary Register');
-    expect(content).toContain('Structural Patterns');
-    expect(content).toContain('Thematic Motifs');
-
-    // Expected content fragments (from the hardcoded EXAMPLE_CONTENT)
-    expect(content).toContain('philosophical inquiry');
-    expect(content).toContain('Chit');
-  }, TIMEOUT);
-
-  it('standard instruction tabs exist after setup', () => {
+  it('all standard instruction tabs exist after setup', () => {
     const tabs = fetchTabs(DOC_ID, TOKEN());
     const tabNames = tabs.map(t => t.title);
-    console.log(`[E2E archExample] tabs: ${JSON.stringify(tabNames)}`);
+    console.log(`[E2E 8] tabs: ${JSON.stringify(tabNames)}`);
 
-    // Expected standard tabs created by ensureStandardTabs
     const expected = [
       'MergedContent',
       'Agentic Instructions',
@@ -727,7 +648,7 @@ describeE2E('E2E: architectGenerateExample — StyleProfile content verification
       'EarTune Instructions',
       'Audit Instructions',
       'TetherInstructions',
-      'Comment Instructions',
+      'General Purpose Instructions',
     ];
     for (const name of expected) {
       expect(tabNames).toContain(name);

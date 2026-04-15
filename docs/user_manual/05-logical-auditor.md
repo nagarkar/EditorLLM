@@ -26,19 +26,15 @@ The Auditor will:
 - Apply corrections directly to the tab where issues are found.
 - Highlight each corrected passage in yellow and add a comment citing the specific axiom or rule violated.
 
-### Generate Example
-
-Click **Generate Example** to write sample TechnicalAudit instructions to the TechnicalAudit tab.
-
 ### Generate (Audit Instructions)
 
 Click **Generate** to regenerate the TechnicalAudit system prompt:
 
-1. The Auditor reads the current StyleProfile, any existing audit instructions, and a sample of the MergedContent.
+1. The Auditor reads the current **StyleProfile**, your **existing** audit instructions, and a sample of the **MergedContent**.
 2. It produces comprehensive audit rules: Chid Axioms, LaTeX caption requirements, unit systems, and a checklist.
-3. The result is written to a **TechnicalAudit Scratch** review tab.
+3. The result is written directly to the **TechnicalAudit** tab, with the previous version backed up to **TechnicalAudit Scratch**.
 
-Review and accept the instructions before running audits.
+This ensures your manual tweaks to the axiom checklist or LaTeX rules are maintained across generations.
 
 ## Comment Routing: `@audit` or `@auditor`
 
@@ -69,11 +65,17 @@ The Auditor will:
 
 ## What It Reads
 
-| Tab | Why |
-|---|---|
-| StyleProfile | Document's axiom framework |
-| TechnicalAudit | Specific audit rules and checklists |
-| Active tab / anchor tab | The passage to audit |
+| Workflow | Tab | Format | Why |
+|---|---|---|---|
+| **Generate (W1)** | StyleProfile | Markdown | Axiom framework definitions |
+| **Generate (W1)** | TechnicalAudit | Markdown | Existing rules to be refined |
+| **Generate (W1)** | MergedContent | Plain Text | Manuscript sample (first 6,000 chars) for axiom extraction |
+| **Audit (W2)** | StyleProfile | Plain Text | Document's axiom framework |
+| **Audit (W2)** | TechnicalAudit | Plain Text | Specific audit rules and checklists |
+| **Audit (W2)** | Active Tab | Plain Text | The passage to audit |
+| **Comments (W3)** | StyleProfile | Plain Text | Document's axiom framework |
+| **Comments (W3)** | TechnicalAudit | Plain Text | Specific audit rules and checklists |
+| **Comments (W3)** | Anchor Tab | Plain Text | Passage context for the audit |
 
 ## Model Tier
 

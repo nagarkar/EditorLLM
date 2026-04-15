@@ -5,3 +5,12 @@ transcripts/
 .env
 .env.integration
 .last_*
+# Jest test-pattern leak files (bare jest invocations without quoting args)
+*W2
+E2E:*
+--testPathPattern=*
+--testNamePattern=*
+# xmlhttprequest sync temp files created during integration/E2E tests
+.node-xmlhttprequest-sync-*
+# Auto-generated prompt dump (regenerated on every build via postbuild)
+docs/full_prompts.md

@@ -144,22 +144,11 @@ The Structural Architect analyses your manuscript and produces a **StyleProfile*
 
 ## Sidebar Actions
 
-### Generate Example
-
-Click **Generate Example** to populate the MergedContent and StyleProfile tabs with sample content. This shows you the expected shape of each tab before you use your own manuscript.
-
-Use this when you're setting up EditorLLM for the first time and want to see what the output looks like.
-
-### Generate (StyleProfile)
-
-Click **Generate** to run the full StyleProfile generation:
-
-1. The Architect reads the **MergedContent** tab (up to 20,000 characters).
-2. It sends the text to Gemini (thinking tier) with instructions to analyse voice, rhythm, vocabulary, structure, and motifs.
-3. The result is written to a **StyleProfile Scratch** review tab.
-4. Each style dimension is highlighted and annotated with comments explaining the reasoning.
-
-**After generation:** Review the StyleProfile Scratch tab. If you approve, copy its content to the StyleProfile tab. If not, edit or regenerate.
+### Workflow 1: Instructions (StyleProfile)
+1.  **Generate:** Click **Generate** in the Sidebar. The Architect reads `MergedContent` (your manuscript) and your **existing** `StyleProfile` (if any) to synthesise a comprehensive set of rules.
+2.  **Review:** Open the `StyleProfile` tab to review the proposed rules.
+3.  **Refine:** Edit the markdown in `StyleProfile` directly. The next time you click **Generate**, your manual changes will be incorporated (recursive feedback).
+4.  **Backup:** Each generation moves the previous rules to `StyleProfile Scratch`.
 
 ## Comment Routing: `@architect`
 
@@ -186,9 +175,11 @@ The Architect will:
 
 ## What It Reads
 
-| Tab | Why |
-|---|---|
-| MergedContent | The source manuscript to analyse |
+| Workflow | Tab | Format | Why |
+|---|---|---|---|
+| **Generate (W1)** | MergedContent | Plain Text | Analyzes the full manuscript to derive a StyleProfile |
+| **Comments (W3)** | MergedContent | Plain Text | High-level manuscript context for structural questions |
+| **Comments (W3)** | StyleProfile | Plain Text | Voice and thematic constraints |
 
 ## Model Tier
 
@@ -227,19 +218,15 @@ The EarTune will:
 - Apply each rewrite directly to the tab using the Docs API.
 - Highlight changed passages in yellow and add comments with the reasoning.
 
-### Generate Example
-
-Click **Generate Example** to write sample EarTune instructions to the EarTune tab. Useful for seeing the expected format.
-
 ### Generate (EarTune Instructions)
 
 Click **Generate** to regenerate the EarTune system prompt:
 
-1. The EarTune reads the current StyleProfile.
+1. The EarTune reads the current **StyleProfile** and your **existing EarTune** instructions.
 2. It produces updated EarTune instructions that incorporate the rhythm and cadence patterns specific to your manuscript.
-3. The result is written to an **EarTune Scratch** review tab.
+3. The result is written directly to the **EarTune** tab, with your previous version backed up to **EarTune Scratch**.
 
-Review and accept or edit the instructions before the next Ear-Tune run.
+Manual refinements you make to the EarTune tab are preserved and refined in subsequent generations (recursive feedback).
 
 ## Comment Routing: `@eartune` or `@eartune`
 
@@ -270,11 +257,16 @@ The EarTune will:
 
 ## What It Reads
 
-| Tab | Why |
-|---|---|
-| StyleProfile | Voice and rhythm constraints |
-| EarTune | Specific sonic optimisation rules |
-| Active tab / anchor tab | The prose to optimise |
+| Workflow | Tab | Format | Why |
+|---|---|---|---|
+| **Generate (W1)** | StyleProfile | Markdown | Voice and rhythm patterns to mirror |
+| **Generate (W1)** | EarTune | Markdown | Existing rules to be refined |
+| **Ear-Tune (W2)** | StyleProfile | Plain Text | Voice and rhythm constraints |
+| **Ear-Tune (W2)** | EarTune | Plain Text | Sonic optimization rules |
+| **Ear-Tune (W2)** | Active Tab | Plain Text | The prose to optimize |
+| **Comments (W3)** | StyleProfile | Plain Text | Voice and rhythm constraints |
+| **Comments (W3)** | EarTune | Plain Text | Sonic optimization rules |
+| **Comments (W3)** | Anchor Tab | Plain Text | Passage context for the comment |
 
 ## Model Tier
 
@@ -310,19 +302,15 @@ The Auditor will:
 - Apply corrections directly to the tab where issues are found.
 - Highlight each corrected passage in yellow and add a comment citing the specific axiom or rule violated.
 
-### Generate Example
-
-Click **Generate Example** to write sample TechnicalAudit instructions to the TechnicalAudit tab.
-
 ### Generate (Audit Instructions)
 
 Click **Generate** to regenerate the TechnicalAudit system prompt:
 
-1. The Auditor reads the current StyleProfile, any existing audit instructions, and a sample of the MergedContent.
+1. The Auditor reads the current **StyleProfile**, your **existing** audit instructions, and a sample of the **MergedContent**.
 2. It produces comprehensive audit rules: Chid Axioms, LaTeX caption requirements, unit systems, and a checklist.
-3. The result is written to a **TechnicalAudit Scratch** review tab.
+3. The result is written directly to the **TechnicalAudit** tab, with the previous version backed up to **TechnicalAudit Scratch**.
 
-Review and accept the instructions before running audits.
+This ensures your manual tweaks to the axiom checklist or LaTeX rules are maintained across generations.
 
 ## Comment Routing: `@audit` or `@auditor`
 
@@ -353,11 +341,17 @@ The Auditor will:
 
 ## What It Reads
 
-| Tab | Why |
-|---|---|
-| StyleProfile | Document's axiom framework |
-| TechnicalAudit | Specific audit rules and checklists |
-| Active tab / anchor tab | The passage to audit |
+| Workflow | Tab | Format | Why |
+|---|---|---|---|
+| **Generate (W1)** | StyleProfile | Markdown | Axiom framework definitions |
+| **Generate (W1)** | TechnicalAudit | Markdown | Existing rules to be refined |
+| **Generate (W1)** | MergedContent | Plain Text | Manuscript sample (first 6,000 chars) for axiom extraction |
+| **Audit (W2)** | StyleProfile | Plain Text | Document's axiom framework |
+| **Audit (W2)** | TechnicalAudit | Plain Text | Specific audit rules and checklists |
+| **Audit (W2)** | Active Tab | Plain Text | The passage to audit |
+| **Comments (W3)** | StyleProfile | Plain Text | Document's axiom framework |
+| **Comments (W3)** | TechnicalAudit | Plain Text | Specific audit rules and checklists |
+| **Comments (W3)** | Anchor Tab | Plain Text | Passage context for the audit |
 
 ## Model Tier
 
@@ -409,30 +403,33 @@ The AI only responds when the **last message** in the thread starts with `@AI`. 
 
 ## Sidebar Actions
 
-### Generate Example
-
-Click **Generate Example** to write sample Comment Instructions to the Comment Instructions tab. This shows the expected format.
-
 ### Generate (Comment Instructions)
 
 Click **Generate** to regenerate the Comment Instructions system prompt:
 
-1. The agent reads the current StyleProfile to understand the manuscript's voice.
-2. It produces a tailored set of instructions for how the AI should respond to comments.
-3. The result is written to a **Comment Instructions Scratch** review tab.
+1. The agent reads the current **StyleProfile** and your **existing** comment instructions.
+2. It produces a tailored set of instructions for how the AI should respond to comments in the author's voice.
+3. The result is written directly to the **Comment Instructions** tab, with the previous version backed up to **Comment Instructions Scratch**.
 
-Edit these instructions to fine-tune the AI's reply style, scope, and tone.
+Manual refinements to the tone or scope of replies are preserved via the recursive feedback loop.
 
 ## What Gets Used as Context
 
-When the Comment Agent processes a thread, it uses:
+### During Instruction Generation (Generate button)
 
-| Context | Source |
-|---|---|
-| System prompt | Comment Instructions tab (falls back to built-in default) |
-| Selected text | The passage the comment is anchored to |
-| Conversation history | All messages in the thread (user and AI turns) |
-| Agent request | The text after `@AI` in the last message |
+| Tab | Format | Why |
+|---|---|---|
+| StyleProfile | Markdown | Current voice and tone constraints |
+| Comment Instructions | Markdown | Existing dialogue rules to be refined |
+
+### During Comment Interaction (W3)
+
+| Context | Source | Why |
+|---|---|---|
+| System prompt | Comment Instructions | User-defined dialogue rules |
+| Selected text | Anchor location | Passage context for the query |
+| Anchor content | Anchor Tab | Full paragraph context surrounding the anchor |
+| History | Comment Thread | Previous turns in the conversation |
 
 ## Comment Tags — Full Reference
 
@@ -524,6 +521,79 @@ When an agent edits your prose (Ear-Tune, Technical Audit, or comment-triggered 
 
 ---
 
+# External Anchor (Tether Agent)
+
+## What It Does
+
+The Tether Agent acts as the **External Anchor** for the manuscript. While other agents stay "inside the box" of the author's established metaphysic (the Chid Axiom), the Tether Agent bridges that worldview with the external historical and scientific record. It ensures that references to historical figures (e.g., Schrödinger, Epictetus) and scientific facts are accurate, or at least consciously handled as internal developments.
+
+## Sidebar Actions
+
+### Verify (Active Tab)
+
+This is the primary validation action:
+
+1. Navigate to the tab you want to validate.
+2. Open the sidebar and find the **External Anchor** section.
+3. Click **Verify**.
+
+The Tether Agent will:
+- Read the active tab's content.
+- Read the StyleProfile and TetherInstructions for context.
+- Perform an external source validation sweep.
+- Apply corrections directly to the tab.
+- Highlight changed passages in yellow and add comments identifying factual discrepancies or alignment opportunities.
+
+### Generate (Tether Instructions)
+
+Click **Generate** to regenerate the Tether Instructions system prompt:
+
+1. The Tether Agent reads the current **StyleProfile**, your **existing** tether instructions, and a sample of the **MergedContent**.
+2. It identifies key historical figures and texts cited in the manuscript.
+3. It produces comprehensive instructions for source validation and alignment checklists.
+4. The result is written directly to the **TetherInstructions** tab, with the previous version backed up to **TetherInstructions Scratch**.
+
+## Comment Routing: `@tether` or `@ref`
+
+You can invoke the Tether Agent from a comment:
+
+1. Select a passage containing a citation or historical claim.
+2. Add a comment:
+   ```
+   @tether Is this quote actually from the Rig Veda?
+   ```
+   or:
+   ```
+   @ref Ensure the Schrödinger equation notation here is standard.
+   ```
+3. Click **Process @AI Comments**.
+
+The Tether Agent will perform a targeted validation and post a reply.
+
+## What It Reads
+
+### During Instruction Generation (Generate button)
+
+| Tab | Format | Why |
+|---|---|---|
+| StyleProfile | Markdown | Voice and conceptual framework |
+| MergedContent | Plain Text | Manuscript sample (first 6,000 chars) for fact-checking context |
+| TetherInstructions | Markdown | Existing rules to be refined |
+
+### During Tab Validation (Verify button)
+
+| Tab | Format | Why |
+|---|---|---|
+| StyleProfile | Plain Text | Manuscript's conceptual boundaries |
+| TetherInstructions | Plain Text | Validation rules and checklists |
+| Active Tab | Plain Text | The passage to validate |
+
+## Model Tier
+
+Uses **Thinking** (extended reasoning) — validating historical and scientific sources requires deep cross-referencing and multi-step reasoning.
+
+---
+
 # Troubleshooting
 
 ## Common Errors
@@ -605,7 +675,7 @@ For detailed debugging, open the Apps Script editor:
 
 Key log prefixes:
 - `[CommentProcessor]` — comment routing, thread parsing, dispatch
-- `[ArchitectAgent]`, `[EarTuneAgent]`, `[AuditAgent]`, `[CommentAgent]` — per-agent Gemini calls and context
+- `[ArchitectAgent]`, `[EarTuneAgent]`, `[AuditAgent]`, `[GeneralPurposeAgent]` — per-agent Gemini calls and context
 - `[DocOps]` — tab creation and registry operations
 
 ## Performance
@@ -630,9 +700,27 @@ manuscript's metaphysic: the Chid Axiom (consciousness as the ground of physics)
 and the worldview expressed in the source text.
 
 ## Core Rules
+- **Recursive Instruction Loop:** You are often refining existing instructions.
+  Incorporate and improve upon any "Current Instructions" provided in the
+  context. Do not "forget" established rules or voice constraints unless they
+  explicitly contradict the newly provided manuscript context.
 - **No External Metaphors:** Never introduce ideas, metaphors, or concepts that are not already present in the MergedContent source material.
 - **Ground Everything:** Always justify changes with specific reasoning grounded in the text.
 - **Strict Schema:** Your JSON output must exactly match the provided schema.
+
+## Comment Length Constraint
+Google Drive comments have a hard limit of approximately 4 096 characters per
+entry. Each annotation comment is formatted as:
+  [AgentName] "match_text": <your reason>: <bookmark URL>
+The prefix, quoted match text, and bookmark URL together consume roughly
+200 characters, leaving **at most ~3 900 characters** for your reason text.
+
+- **Annotation reasons (W2):** Keep each `reason` field under **400 characters**.
+  Be specific but concise — one crisp sentence identifying the issue and the
+  suggested fix is ideal.
+- **Comment-thread replies (W3):** Keep each `reply` field under **3 500 characters**.
+  If a thorough answer needs more space, summarise the key point first and
+  invite the author to ask follow-up questions.
 
 # Role: Structural Architect (Style Mimic)
 You analyze the  manuscript and synthesize a StyleProfile —
@@ -677,7 +765,32 @@ consciousness is the ground in which superposition exists.
 
 The persistent persistence of perception pervades the particulars of all physical processes.
 In that short declaration, everything. The probably possibly perhaps perpetual pattern of
-quantum probability produces peculiar phenomena that resist materialist reduction.\n\n\n## Instructions\n\nAnalyse the writing style above and produce a comprehensive StyleProfile.\nReturn a JSON object with:\n- proposed_full_text: your full StyleProfile document (markdown)
+quantum probability produces peculiar phenomena that resist materialist reduction.\n\n## Current Style Profile (if any)\n\n# StyleProfile
+
+## Voice & Tone
+- First-person philosophical inquiry; intimate yet authoritative.
+- Rhetorical questions invite the reader into the argument.
+- Declarative assertions follow extended phenomenological observations.
+
+## Sentence Rhythm
+- Alternates between long meditative sentences (20–35 words) and short declarative
+  sentences (5–8 words).
+- Paragraph-final sentences are always declarative and conclusive.
+- Avoids consonant clusters and tongue-twisters that impede spoken reading.
+
+## Vocabulary Register
+- Technical physics terms (eigenstate, superposition, Hilbert space) placed alongside
+  Sanskrit philosophical terms (Chit, Brahman, Ānanda).
+- Every technical term is glossed in prose on first use.
+
+## Structural Patterns
+- Chapters follow: Thesis → Phenomenological Observation → Mathematical Formalization
+  → Synthesis.
+- Footnotes contain only LaTeX equations and source citations.
+
+## Thematic Motifs
+- Consciousness as the only irreducible axiom.
+- The observer–observed collapse as a mirror of Vedantic non-duality.\n\n\n## Instructions\n\nAnalyse the writing style above and produce a comprehensive StyleProfile.\nReturn a JSON object with:\n- proposed_full_text: your full StyleProfile document (markdown)
 ```
 
 ## Tab Annotation Prompt (generateTabAnnotationPrompt)
@@ -749,9 +862,27 @@ manuscript's metaphysic: the Chid Axiom (consciousness as the ground of physics)
 and the worldview expressed in the source text.
 
 ## Core Rules
+- **Recursive Instruction Loop:** You are often refining existing instructions.
+  Incorporate and improve upon any "Current Instructions" provided in the
+  context. Do not "forget" established rules or voice constraints unless they
+  explicitly contradict the newly provided manuscript context.
 - **No External Metaphors:** Never introduce ideas, metaphors, or concepts that are not already present in the MergedContent source material.
 - **Ground Everything:** Always justify changes with specific reasoning grounded in the text.
 - **Strict Schema:** Your JSON output must exactly match the provided schema.
+
+## Comment Length Constraint
+Google Drive comments have a hard limit of approximately 4 096 characters per
+entry. Each annotation comment is formatted as:
+  [AgentName] "match_text": <your reason>: <bookmark URL>
+The prefix, quoted match text, and bookmark URL together consume roughly
+200 characters, leaving **at most ~3 900 characters** for your reason text.
+
+- **Annotation reasons (W2):** Keep each `reason` field under **400 characters**.
+  Be specific but concise — one crisp sentence identifying the issue and the
+  suggested fix is ideal.
+- **Comment-thread replies (W3):** Keep each `reply` field under **3 500 characters**.
+  If a thorough answer needs more space, summarise the key point first and
+  invite the author to ask follow-up questions.
 
 # Role: Audio EarTune (Ear-Tune)
 You optimize prose for spoken-word clarity and rhythmic listenability.
@@ -804,7 +935,26 @@ GitHub-Flavored Markdown. Rules:
 
 ## Thematic Motifs
 - Consciousness as the only irreducible axiom.
-- The observer–observed collapse as a mirror of Vedantic non-duality.\n\n## Current Ear-Tune Instructions (if any)\n\nExisting eartune rules...\n\n\n## Instructions\n\nGenerate an updated EarTune system prompt that:\n1. Incorporates the rhythm and cadence patterns from the StyleProfile.\n2. Provides specific rules for consonant flow, syllabic stress, and sentence-length\n   variation suitable for this manuscript.\n\nReturn a JSON object with:\n- proposed_full_text: the complete new EarTune instructions
+- The observer–observed collapse as a mirror of Vedantic non-duality.\n\n## Manuscript Sample (for rhythmic pattern analysis)\n\nChapter 1: The Ground of Being
+
+The Chid Axiom asserts that consciousness — pure awareness, the Sanskrit Chit — is the
+irreducible ground of all physical phenomena. This is not a metaphorical claim; it is a
+mathematical one.
+
+Consider the measurement problem in quantum mechanics. The wave function ψ evolves
+deterministically under the Schrödinger equation: iℏ ∂ψ/∂t = Ĥψ. At the moment of
+observation, ψ collapses to a definite eigenstate. Orthodox quantum mechanics offers no
+mechanism for this collapse. The Copenhagen interpretation defers to the observer
+without defining what an observer is.
+
+The Chid Axiom fills this gap. The observer is not a macroscopic measuring device.
+The observer is consciousness itself — the only entity that cannot be further reduced.
+When consciousness attends to a quantum system, the superposition collapses because
+consciousness is the ground in which superposition exists.
+
+The persistent persistence of perception pervades the particulars of all physical processes.
+In that short declaration, everything. The probably possibly perhaps perpetual pattern of
+quantum probability produces peculiar phenomena that resist materialist reduction.\n\n## Current Ear-Tune Instructions (if any)\n\nExisting eartune rules...\n\n\n## Instructions\n\nGenerate an updated EarTune system prompt that:\n1. Incorporates the rhythm and cadence patterns from the StyleProfile.\n2. Provides specific rules for consonant flow, syllabic stress, and sentence-length\n   variation suitable for this manuscript.\n3. Grounds rules in specific rhythmic patterns observed in the Manuscript Sample.\n\nReturn a JSON object with:\n- proposed_full_text: the complete new EarTune instructions
 ```
 
 ## Tab Annotation Prompt (generateTabAnnotationPrompt)
@@ -922,9 +1072,27 @@ manuscript's metaphysic: the Chid Axiom (consciousness as the ground of physics)
 and the worldview expressed in the source text.
 
 ## Core Rules
+- **Recursive Instruction Loop:** You are often refining existing instructions.
+  Incorporate and improve upon any "Current Instructions" provided in the
+  context. Do not "forget" established rules or voice constraints unless they
+  explicitly contradict the newly provided manuscript context.
 - **No External Metaphors:** Never introduce ideas, metaphors, or concepts that are not already present in the MergedContent source material.
 - **Ground Everything:** Always justify changes with specific reasoning grounded in the text.
 - **Strict Schema:** Your JSON output must exactly match the provided schema.
+
+## Comment Length Constraint
+Google Drive comments have a hard limit of approximately 4 096 characters per
+entry. Each annotation comment is formatted as:
+  [AgentName] "match_text": <your reason>: <bookmark URL>
+The prefix, quoted match text, and bookmark URL together consume roughly
+200 characters, leaving **at most ~3 900 characters** for your reason text.
+
+- **Annotation reasons (W2):** Keep each `reason` field under **400 characters**.
+  Be specific but concise — one crisp sentence identifying the issue and the
+  suggested fix is ideal.
+- **Comment-thread replies (W3):** Keep each `reply` field under **3 500 characters**.
+  If a thorough answer needs more space, summarise the key point first and
+  invite the author to ask follow-up questions.
 
 # Role: Logical Auditor (Technical Audit)
 You verify that all physics claims, mathematical statements, and Chid Axiom
@@ -1102,7 +1270,7 @@ quantum probability produces peculiar phenomena that resist materialist reductio
 
 ---
 
-# CommentAgent
+# GeneralPurposeAgent
 
 ## SYSTEM_PROMPT
 
@@ -1115,9 +1283,27 @@ manuscript's metaphysic: the Chid Axiom (consciousness as the ground of physics)
 and the worldview expressed in the source text.
 
 ## Core Rules
+- **Recursive Instruction Loop:** You are often refining existing instructions.
+  Incorporate and improve upon any "Current Instructions" provided in the
+  context. Do not "forget" established rules or voice constraints unless they
+  explicitly contradict the newly provided manuscript context.
 - **No External Metaphors:** Never introduce ideas, metaphors, or concepts that are not already present in the MergedContent source material.
 - **Ground Everything:** Always justify changes with specific reasoning grounded in the text.
 - **Strict Schema:** Your JSON output must exactly match the provided schema.
+
+## Comment Length Constraint
+Google Drive comments have a hard limit of approximately 4 096 characters per
+entry. Each annotation comment is formatted as:
+  [AgentName] "match_text": <your reason>: <bookmark URL>
+The prefix, quoted match text, and bookmark URL together consume roughly
+200 characters, leaving **at most ~3 900 characters** for your reason text.
+
+- **Annotation reasons (W2):** Keep each `reason` field under **400 characters**.
+  Be specific but concise — one crisp sentence identifying the issue and the
+  suggested fix is ideal.
+- **Comment-thread replies (W3):** Keep each `reply` field under **3 500 characters**.
+  If a thorough answer needs more space, summarise the key point first and
+  invite the author to ask follow-up questions.
 
 # Role: Comment Agent (Dialogue Responder)
 You respond to in-document comment threads that end with "@AI" on behalf of
@@ -1135,9 +1321,9 @@ Never introduce material that contradicts the Chid Axiom or the manuscript's
 established metaphysic. If a question cannot be answered within the manuscript's
 framework, say so explicitly.
 
-## Markdown Requirements (instruction_update only)
-When generating Comment Instructions, your proposed_full_text MUST be valid
-GitHub-Flavored Markdown. Rules:
+## Markdown Requirements (instruction generation only)
+When generating General Purpose Instructions, return valid
+GitHub-Flavored Markdown directly (no JSON wrapper). Rules:
 - Use ## (H2) for top-level sections (e.g. ## Response Style, ## Scope, ## Sign-off)
 - Use - bullet points for rules within each section
 - Use **bold** for rule keywords and important constraints
@@ -1173,12 +1359,20 @@ GitHub-Flavored Markdown. Rules:
 
 ## Thematic Motifs
 - Consciousness as the only irreducible axiom.
-- The observer–observed collapse as a mirror of Vedantic non-duality.\n\n## Current Comment Instructions (if any)\n\nExisting comment instructions...\n\n\n## Instructions\n\nGenerate an updated Comment Instructions system prompt that guides the AI to\nrespond to in-document "@AI" comment threads in a voice consistent with this\nmanuscript's StyleProfile.\n\nReturn a JSON object with:\n- proposed_full_text: the complete new Comment Instructions
+- The observer–observed collapse as a mirror of Vedantic non-duality.\n\n## Current General Purpose Instructions (if any)\n\nExisting comment instructions...\n\n\n## Instructions\n\nGenerate an updated General Purpose Instructions system prompt that guides the AI to
+respond to in-document "@AI" comment threads in a voice consistent with this
+manuscript's StyleProfile.
+
+Return the complete instructions as plain GitHub-Flavored Markdown, starting directly
+with the first ## heading. Do NOT wrap the response in JSON or any other format.
+Required sections (## H2 headings): ## Response Style, ## Scope, ## Sign-off, ## Example Thread.
+Use - bullet points for rules, **bold** for key constraints.
+Include a concrete example exchange in ## Example Thread using > blockquotes.
 ```
 
 ## Tab Annotation Prompt (generateTabAnnotationPrompt)
 
-*Not Implemented for CommentAgent*
+*Not Implemented for GeneralPurposeAgent*
 
 ## Comment Responses Prompt (generateCommentResponsesPrompt)
 

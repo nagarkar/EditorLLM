@@ -142,4 +142,59 @@
       margin-top: 4px;
       min-height: 14px;
     }
+
+    /* ── Multi-Tab Sweep Overlay ───────────────────────── */
+    .sweep-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.38);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .sweep-panel {
+      background: #fff;
+      border-radius: 10px;
+      padding: 18px;
+      width: 88%;
+      max-height: 78vh;
+      overflow-y: auto;
+      box-shadow: 0 6px 28px rgba(0, 0, 0, 0.22);
+    }
+
+    .sweep-title {
+      font-weight: 700;
+      font-size: 13px;
+      color: #37474f;
+      margin-bottom: 6px;
+    }
+
+    .sweep-agent-badge {
+      font-size: 10px;
+      font-weight: 700;
+      color: #6200ea;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-bottom: 12px;
+    }
+
+    .sweep-tab-list label {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 5px 2px;
+      font-size: 12px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .sweep-tab-list label:hover { background: #f5f5f5; }
+    .sweep-tab-list input[type=checkbox] {
+      accent-color: #6200ea;
+      width: 15px; height: 15px;
+      flex-shrink: 0;
+    }
+
+    #sweep-confirm-btn { flex: 1; }
   </style>

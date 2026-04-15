@@ -1,13 +1,50 @@
 // ============================================================
 // EarTuneAgent integration tests — real Gemini API calls.
 //
-// Workflow coverage:
-//   W1 (generateInstructions) — instruction_update → { proposed_full_text, operations }
-//   W2 (annotateTab)          — content_annotation → { operations }
-//   W3 (handleCommentThreads) — batch reply → { responses: [{threadId, reply}] }
+// PURPOSE
+// -------
+// Validates the Gemini prompt↔model contract for EarTuneAgent:
+// given rhythmic/phonetic analysis prompts and structured JSON schemas,
+// the model returns correct shapes, detects planted alliteration issues,
+// and grounds annotations in verbatim passage text. Tests call Gemini
+// REST directly from Node — no GAS deployment required.
 //
-// All tests use the fast model (gemini-2.0-flash).
-// Individual test timeout is set to 60 s.
+// WORKFLOW COVERAGE (see BaseAgent for workflow definitions)
+// ----------------------------------------------------------
+//   W1 (generateInstructions)
+//     • Sends StyleProfile + existing EarTune instructions →
+//       model produces updated EarTune prompt with proposed_full_text.
+//     • Schema: INSTRUCTION_UPDATE_SCHEMA → { proposed_full_text }
+//     • Edge cases: empty StyleProfile, empty existing EarTune.
+//
+//   W2 (annotateTab)
+//     • Sends a passage to sweep → model returns { operations: [{match_text, reason}] }
+//     • Schema: ANNOTATION_SCHEMA → { operations }
+//     • Key assertions:
+//       - Detects planted alliteration ("peculiar peculiar pattern",
+//         "perpetually perplexing portrait") per EarTune rule 4
+//       - Every match_text is a verbatim substring of the passage (grounding)
+//       - Clean passage produces few or no operations (false-positive guard)
+//       - Does NOT return proposed_full_text (W2 is annotation-only)
+//       - Handles very short passages gracefully
+//
+//   W3 (handleCommentThreads)
+//     • Single-thread: validates threadId, non-empty reply, signature,
+//       absence of mutation fields.
+//     • Edge case: empty EarTune instructions still produce a valid reply.
+//
+// PLANTED ERRORS (in fixtures/testDocument.ts)
+// ---------------------------------------------
+//   • CHAPTER_1 contains "peculiar peculiar pattern" and "perpetually
+//     perplexing portrait" — violations of EarTune rule 4: "never 3+
+//     alliterative words in a row."
+//
+// EXECUTION MODEL
+// ---------------
+//   • Run via: npm run test:integration
+//   • Requires: GEMINI_API_KEY in .env.integration
+//   • Model tier: fast (gemini-2.0-flash — EarTune is a fast-tier agent)
+//   • Timeout: 60s per test
 // ============================================================
 
 import { callGemini } from './helpers/gemini';
@@ -81,94 +118,59 @@ describe('EarTuneAgent — W1: generateInstructions (instruction_update)', () =>
 
 describe('EarTuneAgent — W2: annotateTab (content_annotation)', () => {
 
-  it('returns an operations array when given a passage to annotate', () => {
-    const userPrompt = buildEarTuneAnnotatePrompt({
-      styleProfile:        FIXTURES.STYLE_PROFILE,
-      earTuneInstructions: FIXTURES.EAR_TUNE,
-      passage:             FIXTURES.CHAPTER_1,
-      tabName:             'Chapter 1',
-    });
-    const result = callGemini(
+  // Five tests below assert different properties of the same CHAPTER_1 response.
+  // One shared beforeAll call replaces five identical callGemini() invocations.
+  // Tests using a different passage (clean passage, very short) still call independently.
+  let w2Result: any;
+
+  beforeAll(() => {
+    w2Result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
+      buildEarTuneAnnotatePrompt({
+        styleProfile:        FIXTURES.STYLE_PROFILE,
+        earTuneInstructions: FIXTURES.EAR_TUNE,
+        passage:             FIXTURES.CHAPTER_1,
+        tabName:             'Chapter 1',
+      }),
       ANNOTATION_SCHEMA,
       { tier: TIER }
     );
-
-    expect(Array.isArray(result.operations)).toBe(true);
-    expect(result.operations.length).toBeGreaterThan(0);
   }, TIMEOUT);
 
-  it('each annotation operation has non-empty match_text and reason', () => {
-    const userPrompt = buildEarTuneAnnotatePrompt({
-      styleProfile:        FIXTURES.STYLE_PROFILE,
-      earTuneInstructions: FIXTURES.EAR_TUNE,
-      passage:             FIXTURES.CHAPTER_1,
-      tabName:             'Chapter 1',
-    });
-    const result = callGemini(
-      INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
-      ANNOTATION_SCHEMA,
-      { tier: TIER }
-    );
+  it('returns an operations array when given a passage to annotate', () => {
+    expect(Array.isArray(w2Result.operations)).toBe(true);
+    expect(w2Result.operations.length).toBeGreaterThan(0);
+  });
 
-    for (const op of result.operations) {
+  it('each annotation operation has non-empty match_text and reason', () => {
+    for (const op of w2Result.operations) {
       expect(typeof op.match_text).toBe('string');
       expect(op.match_text.trim().length).toBeGreaterThan(0);
       expect(typeof op.reason).toBe('string');
       expect(op.reason.trim().length).toBeGreaterThan(0);
     }
-  }, TIMEOUT);
+  });
 
   it('detects the planted alliteration issue in CHAPTER_1', () => {
     // CHAPTER_1 contains: "peculiar peculiar pattern" and "perpetually perplexing portrait"
     // — EarTune rule 4 prohibits 3+ alliterative words in a row.
-    const userPrompt = buildEarTuneAnnotatePrompt({
-      styleProfile:        FIXTURES.STYLE_PROFILE,
-      earTuneInstructions: FIXTURES.EAR_TUNE,
-      passage:             FIXTURES.CHAPTER_1,
-      tabName:             'Chapter 1',
-    });
-    const result = callGemini(
-      INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
-      ANNOTATION_SCHEMA,
-      { tier: TIER }
-    );
-
-    // At least one operation should flag the alliteration/rhythmic issue.
-    const hasRhythmFlag = result.operations.some((op: any) =>
+    const hasRhythmFlag = w2Result.operations.some((op: any) =>
       /alliter|rhythm|consonant|percul|perplex|perp|peculiar/i.test(
         op.match_text + ' ' + op.reason
       )
     );
     expect(hasRhythmFlag).toBe(true);
-  }, TIMEOUT);
+  });
 
   it('each W2 match_text is a verbatim substring of the annotated passage', () => {
-    const passage = FIXTURES.CHAPTER_1;
-    const userPrompt = buildEarTuneAnnotatePrompt({
-      styleProfile:        FIXTURES.STYLE_PROFILE,
-      earTuneInstructions: FIXTURES.EAR_TUNE,
-      passage,
-      tabName:             'Chapter 1',
-    });
-    const result = callGemini(
-      INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
-      ANNOTATION_SCHEMA,
-      { tier: TIER }
-    );
-
     const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-    const normalizedPassage = normalize(passage);
-    for (const op of result.operations) {
+    const normalizedPassage = normalize(FIXTURES.CHAPTER_1);
+    for (const op of w2Result.operations) {
       const found = normalize(op.match_text).length > 0 &&
         normalizedPassage.includes(normalize(op.match_text));
       expect(found).toBe(true);
     }
-  }, TIMEOUT);
+  });
 
   it('clean passage with no rhythm issues produces few or no operations', () => {
     // False-positive guard: a well-crafted, rhythmically clean passage should
@@ -177,15 +179,14 @@ describe('EarTuneAgent — W2: annotateTab (content_annotation)', () => {
       'The observer attends and the wave collapses. ' +
       'Consciousness is the ground. ' +
       'In that stillness, measurement becomes meaning.';
-    const userPrompt = buildEarTuneAnnotatePrompt({
-      styleProfile:        FIXTURES.STYLE_PROFILE,
-      earTuneInstructions: FIXTURES.EAR_TUNE,
-      passage:             cleanPassage,
-      tabName:             'Chapter 1',
-    });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
+      buildEarTuneAnnotatePrompt({
+        styleProfile:        FIXTURES.STYLE_PROFILE,
+        earTuneInstructions: FIXTURES.EAR_TUNE,
+        passage:             cleanPassage,
+        tabName:             'Chapter 1',
+      }),
       ANNOTATION_SCHEMA,
       { tier: TIER }
     );
@@ -196,15 +197,14 @@ describe('EarTuneAgent — W2: annotateTab (content_annotation)', () => {
   }, TIMEOUT);
 
   it('returns valid schema response even when passage is very short', () => {
-    const userPrompt = buildEarTuneAnnotatePrompt({
-      styleProfile:        FIXTURES.STYLE_PROFILE,
-      earTuneInstructions: FIXTURES.EAR_TUNE,
-      passage:             'Consciousness is.',
-      tabName:             'Chapter 1',
-    });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
+      buildEarTuneAnnotatePrompt({
+        styleProfile:        FIXTURES.STYLE_PROFILE,
+        earTuneInstructions: FIXTURES.EAR_TUNE,
+        passage:             'Consciousness is.',
+        tabName:             'Chapter 1',
+      }),
       ANNOTATION_SCHEMA,
       { tier: TIER }
     );
@@ -214,23 +214,10 @@ describe('EarTuneAgent — W2: annotateTab (content_annotation)', () => {
   }, TIMEOUT);
 
   it('does NOT return proposed_full_text (W2 is annotation-only)', () => {
-    const userPrompt = buildEarTuneAnnotatePrompt({
-      styleProfile:        FIXTURES.STYLE_PROFILE,
-      earTuneInstructions: FIXTURES.EAR_TUNE,
-      passage:             FIXTURES.CHAPTER_1,
-      tabName:             'Chapter 1',
-    });
-    const result = callGemini(
-      INTEGRATION_SYSTEM_PROMPT,
-      userPrompt,
-      ANNOTATION_SCHEMA,
-      { tier: TIER }
-    );
-
     // ANNOTATION_SCHEMA enforces only { operations }. No text replacement fields.
-    expect(result.proposed_full_text).toBeUndefined();
-    expect(result.workflow_type).toBeUndefined();
-  }, TIMEOUT);
+    expect(w2Result.proposed_full_text).toBeUndefined();
+    expect(w2Result.workflow_type).toBeUndefined();
+  });
 
 });
 

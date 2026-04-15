@@ -59,15 +59,23 @@ Ensure each reason explains the specific sonic improvement achieved.
     ].join(' '));
   }
 
-  generateInstructionPrompt(opts: { styleProfile: string; existingEarTune: string }): string {
+  generateInstructionPrompt(opts: { styleProfile: string; existingEarTune: string; manuscript?: string }): string {
     return this.buildStandardPrompt({
       'Style Profile': opts.styleProfile,
+      // Manuscript excerpt is optional: omitted when MergedContent is empty
+      // (e.g. early setup), included once the manuscript exists so EarTune
+      // rules are grounded in the actual prose rhythms rather than the
+      // StyleProfile alone. Same 20 K char limit used by ArchitectAgent.
+      ...(opts.manuscript ? { 'Manuscript Sample (for rhythmic pattern analysis)': opts.manuscript } : {}),
       'Current Ear-Tune Instructions (if any)': opts.existingEarTune,
     }, [
       `Generate an updated EarTune system prompt that:`,
       `1. Incorporates the rhythm and cadence patterns from the StyleProfile.`,
       `2. Provides specific rules for consonant flow, syllabic stress, and sentence-length`,
       `   variation suitable for this manuscript.`,
+      ...(opts.manuscript
+        ? [`3. Grounds rules in specific rhythmic patterns observed in the Manuscript Sample.`]
+        : []),
       ``,
       `Return a JSON object with:`,
       `- proposed_full_text: the complete new EarTune instructions`
@@ -88,88 +96,36 @@ Ensure each reason explains the specific sonic improvement achieved.
     ].join('\\n'));
   }
 
-  handleCommentThreads(threads: CommentThread[]): ThreadReply[] {
-    const agentName = this.constructor.name;
-    Tracer.info(`[${agentName}] handleCommentThreads: received ${threads.length} thread(s)`);
-
-    // Shared instruction context — same for every subgroup.
-    const styleProfile = this.getTabContent_(TAB_NAMES.STYLE_PROFILE);
-    const earTune = this.getTabContent_(TAB_NAMES.EAR_TUNE);
-
-    // Subgroup by anchorTabName so each chunk shares one passage context.
-    const subgroups = new Map<string | null, CommentThread[]>();
-    for (const thread of threads) {
-      const key = thread.anchorTabName;
-      if (!subgroups.has(key)) subgroups.set(key, []);
-      subgroups.get(key)!.push(thread);
-    }
-
-    Tracer.info(`[${agentName}] handleCommentThreads: ${subgroups.size} subgroup(s) by anchor tab`);
-
-    const allReplies: ThreadReply[] = [];
-
-    for (const [anchorTabName, subThreads] of subgroups) {
-      // Null anchor → no shared passage; agent falls back to per-thread selectedText.
-      const passageContext = anchorTabName
-        ? this.getTabContent_(anchorTabName)
-        : '';
-
-      for (let i = 0; i < subThreads.length; i += EarTuneAgent.CHUNK_SIZE) {
-        const chunk = subThreads.slice(i, i + EarTuneAgent.CHUNK_SIZE);
-        const chunkNum = Math.floor(i / EarTuneAgent.CHUNK_SIZE) + 1;
-        Tracer.info(
-          `[${agentName}] handleCommentThreads: anchor=${anchorTabName ?? '(none)'} ` +
-          `chunk ${chunkNum} size=${chunk.length}`
-        );
-
-        try {
-          const userPrompt = this.generateCommentResponsesPrompt({
-            styleProfile,
-            earTuneInstructions: earTune,
-            passageContext,
-            threads: chunk,
-          });
-
-          const raw = this.callGemini_(
-            this.SYSTEM_PROMPT,
-            userPrompt,
-            this.batchReplySchema_(),
-            MODEL.FAST
-          );
-          const replies = this.normaliseBatchReplies_(chunk, raw, agentName);
-          allReplies.push(...replies);
-        } catch (e: any) {
-          Tracer.error(
-            `[${agentName}] handleCommentThreads: anchor=${anchorTabName ?? '(none)'} ` +
-            `chunk ${chunkNum} failed — ${e.message}`
-          );
-        }
-      }
-    }
-
-    Tracer.info(`[${agentName}] handleCommentThreads: returning ${allReplies.length} reply/replies`);
-    return allReplies;
+  protected commentChunkSize_() { return EarTuneAgent.CHUNK_SIZE; }
+  protected commentModelTier_() { return MODEL.FAST; }
+  protected buildCommentPrompt_(chunk: CommentThread[], passageContext: string): string {
+    return this.generateCommentResponsesPrompt({
+      styleProfile:        this.getTabContent_(TAB_NAMES.STYLE_PROFILE),
+      earTuneInstructions: this.getTabContent_(TAB_NAMES.EAR_TUNE),
+      passageContext,
+      threads: chunk,
+    });
   }
 
-  /**
-   * Refreshes the EarTune system prompt via instruction_update.
-   * Bases the new prompt on the current StyleProfile.
-   */
   generateInstructions(): void {
     super.generateInstructions();
     const styleProfile = this.getTabMarkdown_(TAB_NAMES.STYLE_PROFILE);
+    this.assertStyleProfileValid_(styleProfile);
     const existing = this.getTabMarkdown_(TAB_NAMES.EAR_TUNE);
+    // Include manuscript excerpt so rules are grounded in actual prose rhythms.
+    // Slice to 20 K chars — same limit used by ArchitectAgent for W1 context.
+    const manuscript = this.getTabContent_(TAB_NAMES.MERGED_CONTENT).slice(0, 20000);
 
     const userPrompt = this.generateInstructionPrompt({
       styleProfile,
       existingEarTune: existing,
+      manuscript: manuscript || undefined,  // omit section when tab is empty
     });
 
     const geminiResult = this.callGemini_(
       this.SYSTEM_PROMPT,
       userPrompt,
-      this.instructionUpdateSchema_(),
-      MODEL.FAST
+      { schema: this.instructionUpdateSchema_(), tier: MODEL.FAST }
     ) as { proposed_full_text: string };
 
     const update: RootUpdate = {
@@ -182,29 +138,19 @@ Ensure each reason explains the specific sonic improvement achieved.
   }
 
   /**
-   * Writes example EarTune instructions to the EarTune tab.
-   */
-  generateExample(): void {
-    super.generateExample();
-    MarkdownService.markdownToTab(
-      this.EXAMPLE_CONTENT,
-      TAB_NAMES.EAR_TUNE,
-      TAB_NAMES.AGENTIC_INSTRUCTIONS
-    );
-  }
-
-  /**
    * Workflow 2: full-tab Ear-Tune sweep.
    * Highlights and comments every passage with rhythmic issues.
    * Clears previous agent annotations on the tab before adding new ones.
    */
   annotateTab(tabName: string): void {
+    const agentName = this.constructor.name;
     const passage = this.getTabContent_(tabName);
     if (!passage.trim()) {
       throw new Error(`Tab "${tabName}" is empty. Nothing to Ear-Tune.`);
     }
 
     const styleProfile = this.getTabContent_(TAB_NAMES.STYLE_PROFILE);
+    this.assertStyleProfileValid_(styleProfile);
     const earTuneInstructions = this.getTabContent_(TAB_NAMES.EAR_TUNE);
 
     const userPrompt = this.generateTabAnnotationPrompt({
@@ -217,14 +163,14 @@ Ensure each reason explains the specific sonic improvement achieved.
     const geminiResult = this.callGemini_(
       this.SYSTEM_PROMPT,
       userPrompt,
-      this.annotationSchema_(),
-      MODEL.FAST
+      { schema: this.annotationSchema_(), tier: MODEL.FAST }
     ) as { operations: Operation[] };
 
+    const validOps = this.validateAndFilterOperations_(geminiResult.operations, passage, agentName);
     const update: RootUpdate = {
       workflow_type: 'content_annotation',
       target_tab: tabName,
-      operations: geminiResult.operations,
+      operations: validOps,
       agent_name: '[EarTune]'
     };
 

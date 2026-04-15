@@ -1,9 +1,25 @@
 // ============================================================
 // E2E 2: hasApiKey doPost smoke test
 //
-// Verifies the hasApiKey route works and that the API key seeded
-// via seedTestEnvironment is readable from ScriptProperties.
-// Fast: ~2 s, no Gemini calls.
+// PURPOSE
+// -------
+// Lightest-weight E2E test — verifies the GAS web app is reachable
+// and that the API key seeded by seedTestEnvironment() is readable
+// from ScriptProperties. This catches deployment failures, broken
+// web app URLs, and authentication issues before heavier tests run.
+//
+// WORKFLOW
+// --------
+//   1. seedTestEnvironment() pushes GEMINI_API_KEY and model overrides
+//      into GAS ScriptProperties via doPost('setScriptProperty').
+//   2. Calls doPost('hasApiKey') → expects true.
+//
+// EXECUTION MODEL
+// ---------------
+//   • Run via: npm run test:e2e-parallel (included in parallel batch)
+//   • Requires: GEMINI_API_KEY, GOOGLE_DOC_ID, GOOGLE_TOKEN, webAppUrl
+//   • No Gemini model calls — completes in ~2s
+//   • Automatically skipped when credentials are absent
 // ============================================================
 
 import { runGasFunction, getWebAppUrl } from './helpers/gas';

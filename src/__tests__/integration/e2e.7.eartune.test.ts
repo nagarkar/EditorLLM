@@ -1,13 +1,47 @@
 // ============================================================
 // E2E 7: EarTuneAgent W2 — earTuneAnnotateTab on isolated temp tab
 //
-// What this test proves:
-//   • setupStandardTabs(), architectGenerateExample(), earTuneGenerateExample()
-//     complete without error (tab setup + content seeding)
-//   • earTuneAnnotateTab() runs the full EarTune W2 pipeline on real content
-//   • Drive comments land on the intended tab (anchor filtering by tab ID)
-//   • Agent comments carry the [EarTune] prefix
-//   • Cleanup (deleteDocTab) safely removes the temp tab and its annotations
+// PURPOSE
+// -------
+// End-to-end test for the full EarTune annotation pipeline: creates
+// an isolated temporary tab, inserts rhythmically flawed prose, runs
+// the real earTuneAnnotateTab() in GAS, and verifies that [EarTune]
+// comments land on the correct tab via the Drive API.
+//
+// WORKFLOW
+// --------
+//   1. seedTestEnvironment() → seeds API key and model overrides.
+//   2. setupStandardTabs() → ensures all agent tabs exist.
+//   3. Creates a temporary tab ("E2E-EarTune-<timestamp>").
+//   4. Inserts FIXTURE_PROSE (intentionally rhythmically weak text).
+//   5. Calls earTuneAnnotateTab(tempTabName) via doPost.
+//   6. Lists all Drive comments → filters by temp tab anchor.
+//   7. Asserts:
+//      - At least one agent comment with [EarTune] prefix exists
+//      - Comments are anchored to the correct temp tab ID
+//   8. afterAll deletes the temp tab (and its comments cascade-delete).
+//
+// FIXTURE PROSE
+// -------------
+// Intentionally contains:
+//   - Excessive alliteration ("consciousness research... researchers who researched")
+//   - Monotonous passive voice chains ("are measured... are recorded... are analyzed")
+//   - Redundant tautologies ("systematic system systematically...")
+//   - Knowledge-of-knowledge loops ("knowledge builds upon knowledge...")
+//   This guarantees EarTune finds issues even with model variation.
+//
+// ISOLATION MODEL
+// ---------------
+// Uses a unique timestamped tab name per run to avoid cross-test
+// interference. The temp tab is created via Docs REST API and deleted
+// in afterAll. All EarTune annotations are anchored to this tab only.
+//
+// EXECUTION MODEL
+// ---------------
+//   • Run via: npm run test:e2e-parallel (included in parallel batch)
+//   • Requires: GEMINI_API_KEY, GOOGLE_DOC_ID, GOOGLE_TOKEN, webAppUrl
+//   GAS calls: 2 (setupStandardTabs, earTuneAnnotateTab) — ~30-40s total
+//   Does NOT call commentProcessorRun() — no GAS queueing contention
 // ============================================================
 
 import {
@@ -22,7 +56,7 @@ import { seedTestEnvironment } from './helpers/e2e-utils';
 
 const DOC_ID = INTEGRATION_CONFIG.googleDocId;
 const TOKEN = () => process.env.GOOGLE_TOKEN ?? INTEGRATION_CONFIG.googleToken;
-const TIMEOUT      = 5  * 60 * 1000;
+const TIMEOUT = 5 * 60 * 1000;
 const LONG_TIMEOUT = 10 * 60 * 1000;
 
 // Prose with intentional rhythmic weaknesses to reliably trigger EarTune.
@@ -64,10 +98,6 @@ describeE2E('E2E: EarTuneAgent W2 — earTuneAnnotateTab on isolated temp tab', 
   beforeAll(() => {
     console.log('[E2E-7] setupStandardTabs…');
     runGasFunction(webAppUrl, 'setupStandardTabs', [], TOKEN());
-    console.log('[E2E-7] architectGenerateExample…');
-    runGasFunction(webAppUrl, 'architectGenerateExample', [], TOKEN());
-    console.log('[E2E-7] earTuneGenerateExample…');
-    runGasFunction(webAppUrl, 'earTuneGenerateExample', [], TOKEN());
     console.log(`[E2E-7] creating temp tab "${tempTabName}"…`);
     tempTabId = createDocTab(DOC_ID, tempTabName, TOKEN());
     console.log(`[E2E-7] tempTabId: ${tempTabId}`);
@@ -107,5 +137,12 @@ describeE2E('E2E: EarTuneAgent W2 — earTuneAnnotateTab on isolated temp tab', 
       console.log(`[E2E-7] first agent comment: "${agentComments[0].content?.slice(0, 120)}"`);
     }
     expect(agentComments.length).toBeGreaterThanOrEqual(1);
+
+    // Every [EarTune] comment must embed a bookmark URL (verifies that
+    // annotateOperation_ step 1 — bookmark creation — succeeded and the URL
+    // was recorded in the comment body for the deletion path to use later).
+    agentComments.forEach(c => {
+      expect(c.content).toMatch(/#bookmark=/);
+    });
   }, LONG_TIMEOUT);
 });

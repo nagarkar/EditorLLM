@@ -79,7 +79,7 @@ For detailed debugging, open the Apps Script editor:
 
 Key log prefixes:
 - `[CommentProcessor]` — comment routing, thread parsing, dispatch
-- `[ArchitectAgent]`, `[EarTuneAgent]`, `[AuditAgent]`, `[CommentAgent]` — per-agent Gemini calls and context
+- `[ArchitectAgent]`, `[EarTuneAgent]`, `[AuditAgent]`, `[GeneralPurposeAgent]` — per-agent Gemini calls and context
 - `[DocOps]` — tab creation and registry operations
 
 ## Performance

@@ -6,6 +6,13 @@ const GeminiService = (() => {
   const API_BASE     = 'https://generativelanguage.googleapis.com/v1beta/models';
   const PROP_KEY_API = 'GEMINI_API_KEY';
 
+  // ── Execution-scoped caches ────────────────────────────────────────────────
+  // GAS executions are short-lived (one doPost / one menu call). Caching
+  // PropertiesService lookups here avoids 2–4 IPC round-trips per Gemini call.
+  // undefined = not yet resolved; null = resolved but absent.
+  let cachedApiKey_: string | null | undefined = undefined;
+  let cachedModels_: Partial<Record<string, string>> = {};
+
   // ── API key helpers ────────────────────────────────────────────────────────
 
   /**
@@ -24,50 +31,78 @@ const GeminiService = (() => {
   }
 
   function getApiKey_(): string {
-    const key = resolveApiKey_();
-    if (!key) {
+    if (cachedApiKey_ === undefined) {
+      cachedApiKey_ = resolveApiKey_();
+    }
+    if (!cachedApiKey_) {
       throw new Error(
         `Gemini API key not set. Open the ${EXTENSION_NAME} sidebar and click Set API Key.`
       );
     }
-    return key;
+    return cachedApiKey_;
   }
 
   // ── Model resolution ───────────────────────────────────────────────────────
 
   function resolveModel_(tier: ModelTier): string {
+    if (cachedModels_[tier] !== undefined) return cachedModels_[tier]!;
+
     const key = `GEMINI_${tier.toUpperCase()}_MODEL`;
+    let resolved: string;
 
     if (typeof process !== 'undefined') {
-      if (tier === MODEL.FAST && process.env.GEMINI_FAST_MODEL) return process.env.GEMINI_FAST_MODEL;
-      if (tier === MODEL.THINKING && process.env.GEMINI_THINKING_MODEL) return process.env.GEMINI_THINKING_MODEL;
-      if (tier === MODEL.DEEPSEEK && process.env.GEMINI_DEEPSEEK_MODEL) return process.env.GEMINI_DEEPSEEK_MODEL;
+      if (tier === MODEL.FAST && process.env.GEMINI_FAST_MODEL) {
+        resolved = process.env.GEMINI_FAST_MODEL;
+        cachedModels_[tier] = resolved;
+        return resolved;
+      }
+      if (tier === MODEL.THINKING && process.env.GEMINI_THINKING_MODEL) {
+        resolved = process.env.GEMINI_THINKING_MODEL;
+        cachedModels_[tier] = resolved;
+        return resolved;
+      }
+      if (tier === MODEL.DEEPSEEK && process.env.GEMINI_DEEPSEEK_MODEL) {
+        resolved = process.env.GEMINI_DEEPSEEK_MODEL;
+        cachedModels_[tier] = resolved;
+        return resolved;
+      }
     }
 
     const userProp = PropertiesService.getUserProperties().getProperty(key);
-    if (userProp) return userProp;
+    if (userProp) {
+      cachedModels_[tier] = userProp;
+      return userProp;
+    }
 
     const scriptProp = PropertiesService.getScriptProperties().getProperty(key);
-    if (scriptProp) return scriptProp;
+    if (scriptProp) {
+      cachedModels_[tier] = scriptProp;
+      return scriptProp;
+    }
 
+    cachedModels_[tier] = DEFAULT_MODELS[tier];
     return DEFAULT_MODELS[tier];
   }
 
   // ── Payload construction ───────────────────────────────────────────────────
 
+  /**
+   * Builds a Gemini generateContent payload.
+   * When `schema` is provided the response is constrained to JSON
+   * (`responseMimeType` + `responseSchema`); omitting it requests plain text.
+   */
   function buildPayload_(
     systemPrompt: string,
     userPrompt: string,
-    schema: object,
-    tier: ModelTier
+    tier: ModelTier,
+    schema?: object
   ): object {
     const payload: any = {
       system_instruction: { parts: [{ text: systemPrompt }] },
       contents: [{ parts: [{ text: userPrompt }], role: 'user' }],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseSchema: schema,
-      },
+      generationConfig: schema
+        ? { responseMimeType: 'application/json', responseSchema: schema }
+        : {},
     };
     if (tier === MODEL.THINKING) {
       payload.generationConfig.thinkingConfig = { thinkingBudget: 8192 };
@@ -111,7 +146,15 @@ const GeminiService = (() => {
    * returns a rate-limit (429) or overload (503) error, which can occur when
    * two consecutive thinking-tier calls are made in rapid succession.
    */
-  function callApi_(apiKey: string, model: string, payload: object): any {
+  /**
+   * Calls the Gemini generateContent endpoint with retry / back-off.
+   *
+   * When `parseJson` is true the text part is parsed with `JSON.parse` and the
+   * resulting object is returned; when false the raw text string is returned.
+   * Both code paths were previously separate functions (callApi_ / callTextApi_)
+   * with identical retry logic.
+   */
+  function callApi_(apiKey: string, model: string, payload: object, parseJson: boolean): any {
     const MAX_RETRIES = 2;
     // Back-off delays in ms: first retry after 15 s, second after 30 s.
     const RETRY_DELAYS = [15000, 30000];
@@ -168,24 +211,37 @@ const GeminiService = (() => {
         throw new Error('Gemini returned no usable content. Full response: ' + raw);
       }
 
-      return JSON.parse(textPart.text);
+      return parseJson ? JSON.parse(textPart.text) : (textPart.text as string);
     }
 
     // Should never reach here — the loop always returns or throws.
     throw new Error('[GeminiService] callApi_: exhausted retries without resolving');
   }
 
-  // ── Public: generateJson ───────────────────────────────────────────────────
+  // ── Public API ─────────────────────────────────────────────────────────────
 
   /**
-   * Calls Gemini with structured JSON output.
+   * Unified Gemini call.
    *
-   * @param modelOverride  When provided (e.g. from a BaseAgent ModelConfig),
-   *                       this model name is used directly instead of going
-   *                       through the script-property / DEFAULT_MODELS chain.
-   *                       This lets tests inject cheaper models without touching
-   *                       script properties or changing any prompt code.
+   * - Pass `schema` to receive a structured JSON object back.
+   * - Omit `schema` (or pass `undefined`) to receive a plain text string.
+   *
+   * @param modelOverride  Optional model name bypassing the tier-resolution
+   *                       chain. Useful for tests or per-agent overrides.
    */
+  function generate(
+    systemPrompt: string,
+    userPrompt: string,
+    tier: ModelTier = MODEL.FAST,
+    opts: { schema?: object; modelOverride?: string } = {}
+  ): any {
+    const apiKey  = getApiKey_();
+    const model   = opts.modelOverride || resolveModel_(tier);
+    const payload = buildPayload_(systemPrompt, userPrompt, tier, opts.schema);
+    return callApi_(apiKey, model, payload, /* parseJson */ !!opts.schema);
+  }
+
+  /** @deprecated Use `generate()` with a `schema` option instead. */
   function generateJson(
     systemPrompt: string,
     userPrompt: string,
@@ -193,10 +249,17 @@ const GeminiService = (() => {
     tier: ModelTier = MODEL.FAST,
     modelOverride?: string
   ): any {
-    const apiKey = getApiKey_();
-    const model  = modelOverride || resolveModel_(tier);
-    const payload = buildPayload_(systemPrompt, userPrompt, schema, tier);
-    return callApi_(apiKey, model, payload);
+    return generate(systemPrompt, userPrompt, tier, { schema, modelOverride });
+  }
+
+  /** @deprecated Use `generate()` without a `schema` option instead. */
+  function generateText(
+    systemPrompt: string,
+    userPrompt: string,
+    tier: ModelTier = MODEL.FAST,
+    modelOverride?: string
+  ): string {
+    return generate(systemPrompt, userPrompt, tier, { modelOverride });
   }
 
   // ── Public: model management ───────────────────────────────────────────────
@@ -236,6 +299,8 @@ const GeminiService = (() => {
     props.setProperty('GEMINI_FAST_MODEL',     fast.trim());
     props.setProperty('GEMINI_THINKING_MODEL', thinking.trim());
     props.setProperty('GEMINI_DEEPSEEK_MODEL', deepseek.trim());
+    // Invalidate execution-scoped cache so the new models are used immediately.
+    cachedModels_ = {};
   }
 
   /**
@@ -254,6 +319,8 @@ const GeminiService = (() => {
 
   function saveApiKey(key: string): void {
     PropertiesService.getUserProperties().setProperty(PROP_KEY_API, key.trim());
+    // Invalidate so the new key is picked up on the next Gemini call.
+    cachedApiKey_ = undefined;
   }
 
   function hasApiKey(): boolean {
@@ -262,7 +329,9 @@ const GeminiService = (() => {
   }
 
   return {
+    generate,
     generateJson,
+    generateText,
     saveApiKey,
     hasApiKey,
     listGenerateContentModels,

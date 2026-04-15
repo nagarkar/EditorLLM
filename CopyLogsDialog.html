@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Google Sans', Arial, sans-serif;
+      font-size: 12px;
+      color: #202124;
+      background: #fff;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      gap: 10px;
+    }
+    p {
+      font-size: 12px;
+      color: #5f6368;
+    }
+    textarea {
+      flex: 1;
+      width: 100%;
+      font-family: 'Roboto Mono', 'Courier New', monospace;
+      font-size: 10.5px;
+      line-height: 1.5;
+      border: 1px solid #dadce0;
+      border-radius: 6px;
+      padding: 8px;
+      resize: none;
+      color: #202124;
+      background: #f8f9fa;
+    }
+    .actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      flex-shrink: 0;
+    }
+    button {
+      padding: 7px 16px;
+      font-size: 12px;
+      font-family: inherit;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .btn-copy {
+      background: #6200ea;
+      color: #fff;
+    }
+    .btn-copy:hover { background: #4527a0; }
+    .btn-close {
+      background: #e8eaed;
+      color: #202124;
+    }
+    .btn-close:hover { background: #d2d5db; }
+    #status {
+      font-size: 11px;
+      color: #2e7d32;
+      min-height: 16px;
+    }
+  </style>
+</head>
+<body>
+  <p>All log entries from this session. Select all and copy, or click Copy.</p>
+  <textarea id="log-area" readonly><?= logText ?></textarea>
+  <div id="status"></div>
+  <div class="actions">
+    <button class="btn-copy" onclick="copyLogs()">Copy to Clipboard</button>
+    <button class="btn-close" onclick="google.script.host.close()">Close</button>
+  </div>
+
+  <script>
+    // Select all text on load so the user can Ctrl+C immediately
+    window.onload = function() {
+      var ta = document.getElementById('log-area');
+      ta.select();
+    };
+
+    function copyLogs() {
+      var ta = document.getElementById('log-area');
+      var text = ta.value;
+      var status = document.getElementById('status');
+
+      function fallback() {
+        ta.select();
+        try {
+          document.execCommand('copy');
+          status.textContent = 'Copied ' + text.split('\n').length + ' lines.';
+        } catch (_) {
+          status.textContent = 'Could not copy — select text and press Ctrl+C manually.';
+          status.style.color = '#c62828';
+        }
+      }
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() {
+          status.textContent = 'Copied ' + text.split('\n').length + ' lines.';
+        }, fallback);
+      } else {
+        fallback();
+      }
+    }
+  </script>
+</body>
+</html>

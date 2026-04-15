@@ -136,7 +136,7 @@ function buildAuditBatchPrompt(opts: {
   ).trim();
 }
 
-function buildCommentAgentBatchPrompt(opts: {
+function buildGeneralPurposeAgentBatchPrompt(opts: {
   anchorContent: string;
   threads: Array<{ threadId: string; selectedText: string; agentRequest: string; conversation: Array<{ role: 'User' | 'AI'; authorName: string; content: string }> }>;
 }): string {
@@ -303,7 +303,7 @@ function annotationSchemaShape() {
 const ALL_KNOWN_TAGS = new Set(['@ai', '@architect', '@eartune', '@audit', '@auditor', '@tether', '@ref']);
 
 // All agents that include COMMENT_ANCHOR_TAB in contextKeys.
-// @ai is included because CommentAgent now groups by anchor tab.
+// @ai is included because GeneralPurposeAgent now groups by anchor tab.
 const ANCHOR_NEEDING_TAGS = new Set(['@ai', '@eartune', '@audit', '@auditor', '@tether', '@ref']);
 
 function makeComment(overrides: {
@@ -513,7 +513,7 @@ describe('buildThread_: anchor tab resolution', () => {
     expect(thread!.anchorTabName).toBe('Chapter 3');
   });
 
-  it('calls anchorResolver for @ai (CommentAgent now needs COMMENT_ANCHOR_TAB)', () => {
+  it('calls anchorResolver for @ai (GeneralPurposeAgent now needs COMMENT_ANCHOR_TAB)', () => {
     const resolver = jest.fn().mockReturnValue('Chapter 1');
     const comment = makeComment({
       content: '@AI Query.',
@@ -600,7 +600,7 @@ describe('resolveAnchorTabName_ (tab body index)', () => {
 
 describe('tag routing — every declared tag maps to the right agent class', () => {
   const ROUTING_TABLE: Array<{ tags: string[]; agentClass: string }> = [
-    { tags: ['@ai'],                 agentClass: 'CommentAgent'   },
+    { tags: ['@ai'],                 agentClass: 'GeneralPurposeAgent'   },
     { tags: ['@architect'],          agentClass: 'ArchitectAgent' },
     { tags: ['@eartune'],            agentClass: 'EarTuneAgent'   },
     { tags: ['@audit', '@auditor'],  agentClass: 'AuditAgent'     },
@@ -789,8 +789,8 @@ describe('AuditAgent batch prompt structure', () => {
   });
 });
 
-describe('CommentAgent batch prompt structure', () => {
-  const prompt = buildCommentAgentBatchPrompt({
+describe('GeneralPurposeAgent batch prompt structure', () => {
+  const prompt = buildGeneralPurposeAgentBatchPrompt({
     anchorContent: 'The observer collapses the wave function through awareness.',
     threads: [{
       threadId:     'thread-004',
@@ -834,7 +834,7 @@ describe('CommentAgent batch prompt structure', () => {
   });
 
   it('omits ANCHOR PASSAGE section when anchor content is empty', () => {
-    const promptNoAnchor = buildCommentAgentBatchPrompt({
+    const promptNoAnchor = buildGeneralPurposeAgentBatchPrompt({
       anchorContent: '',
       threads:       [SAMPLE_THREAD],
     });
@@ -1081,7 +1081,7 @@ describe('processAll batch dispatch logic', () => {
 
   it('calls handleCommentThreads once with all threads for that agent', () => {
     const agent: MockAgent = {
-      name: 'CommentAgent', tags: ['@ai'], needsAnchor: false,
+      name: 'GeneralPurposeAgent', tags: ['@ai'], needsAnchor: false,
       handleCommentThreads: jest.fn().mockReturnValue([
         { threadId: 'c1', content: 'r1' },
         { threadId: 'c2', content: 'r2' },
@@ -1100,7 +1100,7 @@ describe('processAll batch dispatch logic', () => {
       ])
     );
     expect(result.replied).toBe(2);
-    expect(result.byAgent['CommentAgent']).toBe(2);
+    expect(result.byAgent['GeneralPurposeAgent']).toBe(2);
   });
 
   it('multi-tag agent receives all threads in one batch (not split by tag)', () => {
@@ -1125,7 +1125,7 @@ describe('processAll batch dispatch logic', () => {
 
   it('skips comments with no @tag', () => {
     const agent: MockAgent = {
-      name: 'CommentAgent', tags: ['@ai'], needsAnchor: false,
+      name: 'GeneralPurposeAgent', tags: ['@ai'], needsAnchor: false,
       handleCommentThreads: jest.fn().mockReturnValue([]),
     };
     const result = simulateProcessAll(
@@ -1139,7 +1139,7 @@ describe('processAll batch dispatch logic', () => {
 
   it('skips comments with unrecognised @tag', () => {
     const agent: MockAgent = {
-      name: 'CommentAgent', tags: ['@ai'], needsAnchor: false,
+      name: 'GeneralPurposeAgent', tags: ['@ai'], needsAnchor: false,
       handleCommentThreads: jest.fn(),
     };
     const result = simulateProcessAll(
@@ -1152,7 +1152,7 @@ describe('processAll batch dispatch logic', () => {
 
   it('when handleCommentThreads throws, all threads in that batch are skipped', () => {
     const agent: MockAgent = {
-      name: 'CommentAgent', tags: ['@ai'], needsAnchor: false,
+      name: 'GeneralPurposeAgent', tags: ['@ai'], needsAnchor: false,
       handleCommentThreads: jest.fn().mockImplementation(() => {
         throw new Error('Gemini API error');
       }),
@@ -1186,7 +1186,7 @@ describe('processAll batch dispatch logic', () => {
 
   it('byAgent tracks reply counts per agent name', () => {
     const aiAgent: MockAgent = {
-      name: 'CommentAgent', tags: ['@ai'], needsAnchor: false,
+      name: 'GeneralPurposeAgent', tags: ['@ai'], needsAnchor: false,
       handleCommentThreads: jest.fn().mockReturnValue([
         { threadId: 'c1', content: 'r1' },
         { threadId: 'c3', content: 'r3' },
@@ -1207,14 +1207,14 @@ describe('processAll batch dispatch logic', () => {
       [aiAgent, archAgent]
     );
     expect(result.replied).toBe(3);
-    expect(result.byAgent['CommentAgent']).toBe(2);
+    expect(result.byAgent['GeneralPurposeAgent']).toBe(2);
     expect(result.byAgent['ArchitectAgent']).toBe(1);
   });
 
   it('only posts replies that agent returned — unreplied threads are not counted', () => {
     // Agent receives 3 threads but only replies to 2 (Gemini partial coverage).
     const agent: MockAgent = {
-      name: 'CommentAgent', tags: ['@ai'], needsAnchor: false,
+      name: 'GeneralPurposeAgent', tags: ['@ai'], needsAnchor: false,
       handleCommentThreads: jest.fn().mockReturnValue([
         { threadId: 'c1', content: 'r1' },
         // c2 not returned — agent chose not to reply
@@ -1236,7 +1236,7 @@ describe('processAll batch dispatch logic', () => {
 
   it('a failing agent does not prevent other agents from running', () => {
     const failingAgent: MockAgent = {
-      name: 'CommentAgent', tags: ['@ai'], needsAnchor: false,
+      name: 'GeneralPurposeAgent', tags: ['@ai'], needsAnchor: false,
       handleCommentThreads: jest.fn().mockImplementation(() => {
         throw new Error('timeout');
       }),
@@ -1564,5 +1564,118 @@ describe('TetherAgent annotateTab prompt structure (W2)', () => {
 
   it('mentions source validation in instructions', () => {
     expect(prompt).toContain('source validation');
+  });
+});
+
+// ── §4.1 StyleProfile LLM-as-judge quality evaluation ────────────────────────
+//
+// Tests reproduce the score-band logic and rubric without GAS / Gemini calls.
+// The full GeminiService.generateJson path is validated in E2E tests only.
+
+describe('§4.1 evaluateStyleProfile_ — score clamping and band semantics', () => {
+
+  // Mimic the clamping logic from BaseAgent.evaluateStyleProfile_()
+  function clampScore(raw: number): number {
+    return Math.max(0, Math.min(5, Math.round(raw)));
+  }
+
+  it('clamps negative scores to 0', () => {
+    expect(clampScore(-1)).toBe(0);
+    expect(clampScore(-99)).toBe(0);
+  });
+
+  it('clamps scores above 5 to 5', () => {
+    expect(clampScore(6)).toBe(5);
+    expect(clampScore(100)).toBe(5);
+  });
+
+  it('rounds fractional scores to nearest integer', () => {
+    expect(clampScore(3.4)).toBe(3);
+    expect(clampScore(3.5)).toBe(4);
+    expect(clampScore(4.9)).toBe(5);
+  });
+
+  it('passes through valid integer scores unchanged', () => {
+    for (let s = 0; s <= 5; s++) {
+      expect(clampScore(s)).toBe(s);
+    }
+  });
+
+  describe('score badge colour bands (matching renderStyleProfileScore())', () => {
+    // Mirror the sidebar JS logic: green ≥ 4, amber = 3, red ≤ 2
+    function badgeColour(score: number): 'green' | 'amber' | 'red' {
+      if (score >= 4) return 'green';
+      if (score >= 3) return 'amber';
+      return 'red';
+    }
+
+    it('score 5 → green', () => expect(badgeColour(5)).toBe('green'));
+    it('score 4 → green', () => expect(badgeColour(4)).toBe('green'));
+    it('score 3 → amber (border: usable for Full Refresh)', () => expect(badgeColour(3)).toBe('amber'));
+    it('score 2 → red  (gates Full Refresh warning)', () => expect(badgeColour(2)).toBe('red'));
+    it('score 1 → red',  () => expect(badgeColour(1)).toBe('red'));
+    it('score 0 → red',  () => expect(badgeColour(0)).toBe('red'));
+  });
+
+  describe('rubric — required StyleProfile section names', () => {
+    // The evaluator prompt checks for these 5 canonical sections.
+    const REQUIRED_SECTIONS = [
+      'Voice',
+      'Sentence Rhythm',
+      'Vocabulary Register',
+      'Structural Patterns',
+      'Thematic Motifs',
+    ];
+
+    it('all 5 required section names are defined', () => {
+      expect(REQUIRED_SECTIONS).toHaveLength(5);
+    });
+
+    it('a StyleProfile containing all 5 section headers passes a section-count check', () => {
+      const profile = REQUIRED_SECTIONS.map(s => `## ${s}\n- detail`).join('\n\n');
+      const foundCount = REQUIRED_SECTIONS.filter(s => profile.includes(s)).length;
+      expect(foundCount).toBe(5);
+    });
+
+    it('a StyleProfile missing 2 sections fails the section-count check', () => {
+      const partial = ['## Voice\n- detail', '## Sentence Rhythm\n- detail', '## Structural Patterns\n- x'].join('\n\n');
+      const foundCount = REQUIRED_SECTIONS.filter(s => partial.includes(s)).length;
+      expect(foundCount).toBeLessThan(4);  // should result in score ≤ 2
+    });
+  });
+
+  describe('Full Refresh gate: acknowledges low-score warning', () => {
+    // Mirror the sidebar JS _scoreGateAcknowledged pattern:
+    // first click at score < 3 → warn; second click → proceed.
+    let acknowledged = false;
+
+    function simulateRefreshClick(score: number): 'warned' | 'proceeded' {
+      if (!acknowledged && score < 3) {
+        acknowledged = true;  // next click goes through
+        return 'warned';
+      }
+      acknowledged = false;
+      return 'proceeded';
+    }
+
+    it('first click at score 2 returns warning', () => {
+      acknowledged = false;
+      expect(simulateRefreshClick(2)).toBe('warned');
+    });
+
+    it('second click at score 2 proceeds', () => {
+      // acknowledged is now true from previous test
+      expect(simulateRefreshClick(2)).toBe('proceeded');
+    });
+
+    it('first click at score 3 proceeds immediately (no gate)', () => {
+      acknowledged = false;
+      expect(simulateRefreshClick(3)).toBe('proceeded');
+    });
+
+    it('first click at score 5 proceeds immediately', () => {
+      acknowledged = false;
+      expect(simulateRefreshClick(5)).toBe('proceeded');
+    });
   });
 });
