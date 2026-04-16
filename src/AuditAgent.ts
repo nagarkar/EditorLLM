@@ -44,7 +44,7 @@ Each reason must cite the specific axiom or physical principle violated.
 `.trim();
 
   readonly tags = ['@audit', '@auditor'];
-  readonly contextKeys = [TAB_NAMES.STYLE_PROFILE, TAB_NAMES.TECHNICAL_AUDIT, COMMENT_ANCHOR_TAB];
+  readonly contextKeys = [Constants.TAB_NAMES.STYLE_PROFILE, Constants.TAB_NAMES.TECHNICAL_AUDIT, Constants.COMMENT_ANCHOR_TAB];
 
   private static readonly CHUNK_SIZE = 5;
 
@@ -98,11 +98,11 @@ Each reason must cite the specific axiom or physical principle violated.
   }
 
   protected commentChunkSize_() { return AuditAgent.CHUNK_SIZE; }
-  protected commentModelTier_() { return MODEL.THINKING; }
+  protected commentModelTier_() { return Constants.MODEL.THINKING; }
   protected buildCommentPrompt_(chunk: CommentThread[], passageContext: string): string {
     return this.generateCommentResponsesPrompt({
-      styleProfile:      this.getTabContent_(TAB_NAMES.STYLE_PROFILE),
-      auditInstructions: this.getTabContent_(TAB_NAMES.TECHNICAL_AUDIT),
+      styleProfile:      this.getTabContent_(Constants.TAB_NAMES.STYLE_PROFILE),
+      auditInstructions: this.getTabContent_(Constants.TAB_NAMES.TECHNICAL_AUDIT),
       passageContext,
       threads: chunk,
     });
@@ -115,10 +115,10 @@ Each reason must cite the specific axiom or physical principle violated.
   generateInstructions(): void {
     super.generateInstructions();
     // W1: read instruction tabs as markdown; manuscript stays plain text
-    const styleProfile = this.getTabMarkdown_(TAB_NAMES.STYLE_PROFILE);
+    const styleProfile = this.getTabMarkdown_(Constants.TAB_NAMES.STYLE_PROFILE);
     this.assertStyleProfileValid_(styleProfile);
-    const existing = this.getTabMarkdown_(TAB_NAMES.TECHNICAL_AUDIT);
-    const manuscript = this.getTabContent_(TAB_NAMES.MERGED_CONTENT);
+    const existing = this.getTabMarkdown_(Constants.TAB_NAMES.TECHNICAL_AUDIT);
+    const manuscript = this.getTabContent_(Constants.TAB_NAMES.MERGED_CONTENT);
 
     const userPrompt = this.generateInstructionPrompt({
       styleProfile,
@@ -129,12 +129,12 @@ Each reason must cite the specific axiom or physical principle violated.
     const geminiResult = this.callGemini_(
       this.SYSTEM_PROMPT,
       userPrompt,
-      { schema: this.instructionUpdateSchema_(), tier: MODEL.THINKING }  // Technical reasoning — use thinking model
+      { schema: this.instructionUpdateSchema_(), tier: Constants.MODEL.THINKING }  // Technical reasoning — use thinking model
     ) as { proposed_full_text: string };
 
     const update: RootUpdate = {
       workflow_type: 'instruction_update',
-      review_tab: TAB_NAMES.TECHNICAL_AUDIT,
+      review_tab: Constants.TAB_NAMES.TECHNICAL_AUDIT,
       proposed_full_text: geminiResult.proposed_full_text,
     };
 
@@ -153,9 +153,9 @@ Each reason must cite the specific axiom or physical principle violated.
       throw new Error(`Tab "${tabName}" is empty. Nothing to audit.`);
     }
 
-    const styleProfile = this.getTabContent_(TAB_NAMES.STYLE_PROFILE);
+    const styleProfile = this.getTabContent_(Constants.TAB_NAMES.STYLE_PROFILE);
     this.assertStyleProfileValid_(styleProfile);
-    const auditInstructions = this.getTabContent_(TAB_NAMES.TECHNICAL_AUDIT);
+    const auditInstructions = this.getTabContent_(Constants.TAB_NAMES.TECHNICAL_AUDIT);
 
     const userPrompt = this.generateTabAnnotationPrompt({
       styleProfile,
@@ -167,7 +167,7 @@ Each reason must cite the specific axiom or physical principle violated.
     const geminiResult = this.callGemini_(
       this.SYSTEM_PROMPT,
       userPrompt,
-      { schema: this.annotationSchema_(), tier: MODEL.THINKING }  // Technical task — thinking model
+      { schema: this.annotationSchema_(), tier: Constants.MODEL.THINKING }  // Technical task — thinking model
     ) as { operations: Operation[] };
 
     const validOps = this.validateAndFilterOperations_(geminiResult.operations, passage, agentName);

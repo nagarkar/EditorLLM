@@ -41,7 +41,7 @@ Ensure each reason explains the specific sonic improvement achieved.
 `.trim();
 
   readonly tags = ['@eartune'];
-  readonly contextKeys = [TAB_NAMES.STYLE_PROFILE, TAB_NAMES.EAR_TUNE, COMMENT_ANCHOR_TAB];
+  readonly contextKeys = [Constants.TAB_NAMES.STYLE_PROFILE, Constants.TAB_NAMES.EAR_TUNE, Constants.COMMENT_ANCHOR_TAB];
 
   private static readonly CHUNK_SIZE = 10;
 
@@ -97,11 +97,11 @@ Ensure each reason explains the specific sonic improvement achieved.
   }
 
   protected commentChunkSize_() { return EarTuneAgent.CHUNK_SIZE; }
-  protected commentModelTier_() { return MODEL.FAST; }
+  protected commentModelTier_() { return Constants.MODEL.FAST; }
   protected buildCommentPrompt_(chunk: CommentThread[], passageContext: string): string {
     return this.generateCommentResponsesPrompt({
-      styleProfile:        this.getTabContent_(TAB_NAMES.STYLE_PROFILE),
-      earTuneInstructions: this.getTabContent_(TAB_NAMES.EAR_TUNE),
+      styleProfile:        this.getTabContent_(Constants.TAB_NAMES.STYLE_PROFILE),
+      earTuneInstructions: this.getTabContent_(Constants.TAB_NAMES.EAR_TUNE),
       passageContext,
       threads: chunk,
     });
@@ -109,12 +109,12 @@ Ensure each reason explains the specific sonic improvement achieved.
 
   generateInstructions(): void {
     super.generateInstructions();
-    const styleProfile = this.getTabMarkdown_(TAB_NAMES.STYLE_PROFILE);
+    const styleProfile = this.getTabMarkdown_(Constants.TAB_NAMES.STYLE_PROFILE);
     this.assertStyleProfileValid_(styleProfile);
-    const existing = this.getTabMarkdown_(TAB_NAMES.EAR_TUNE);
+    const existing = this.getTabMarkdown_(Constants.TAB_NAMES.EAR_TUNE);
     // Include manuscript excerpt so rules are grounded in actual prose rhythms.
     // Slice to 20 K chars — same limit used by ArchitectAgent for W1 context.
-    const manuscript = this.getTabContent_(TAB_NAMES.MERGED_CONTENT).slice(0, 20000);
+    const manuscript = this.getTabContent_(Constants.TAB_NAMES.MERGED_CONTENT).slice(0, 20000);
 
     const userPrompt = this.generateInstructionPrompt({
       styleProfile,
@@ -125,12 +125,12 @@ Ensure each reason explains the specific sonic improvement achieved.
     const geminiResult = this.callGemini_(
       this.SYSTEM_PROMPT,
       userPrompt,
-      { schema: this.instructionUpdateSchema_(), tier: MODEL.FAST }
+      { schema: this.instructionUpdateSchema_(), tier: Constants.MODEL.FAST }
     ) as { proposed_full_text: string };
 
     const update: RootUpdate = {
       workflow_type: 'instruction_update',
-      review_tab: TAB_NAMES.EAR_TUNE,
+      review_tab: Constants.TAB_NAMES.EAR_TUNE,
       proposed_full_text: geminiResult.proposed_full_text,
     };
 
@@ -149,9 +149,9 @@ Ensure each reason explains the specific sonic improvement achieved.
       throw new Error(`Tab "${tabName}" is empty. Nothing to Ear-Tune.`);
     }
 
-    const styleProfile = this.getTabContent_(TAB_NAMES.STYLE_PROFILE);
+    const styleProfile = this.getTabContent_(Constants.TAB_NAMES.STYLE_PROFILE);
     this.assertStyleProfileValid_(styleProfile);
-    const earTuneInstructions = this.getTabContent_(TAB_NAMES.EAR_TUNE);
+    const earTuneInstructions = this.getTabContent_(Constants.TAB_NAMES.EAR_TUNE);
 
     const userPrompt = this.generateTabAnnotationPrompt({
       styleProfile,
@@ -163,7 +163,7 @@ Ensure each reason explains the specific sonic improvement achieved.
     const geminiResult = this.callGemini_(
       this.SYSTEM_PROMPT,
       userPrompt,
-      { schema: this.annotationSchema_(), tier: MODEL.FAST }
+      { schema: this.annotationSchema_(), tier: Constants.MODEL.FAST }
     ) as { operations: Operation[] };
 
     const validOps = this.validateAndFilterOperations_(geminiResult.operations, passage, agentName);

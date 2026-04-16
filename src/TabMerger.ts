@@ -80,9 +80,9 @@ const TabMerger = (() => {
       return { ok: false, name: String(tabName), message: 'Invalid tab name.' };
     }
     try {
-      const destDocTab = DocOps.getTabByName(TAB_NAMES.MERGED_CONTENT);
+      const destDocTab = DocOps.getTabByName(Constants.TAB_NAMES.MERGED_CONTENT);
       if (!destDocTab) {
-        return { ok: false, name: tabName, message: `"${TAB_NAMES.MERGED_CONTENT}" tab not found.` };
+        return { ok: false, name: tabName, message: `"${Constants.TAB_NAMES.MERGED_CONTENT}" tab not found.` };
       }
       const srcDocTab = DocOps.getTabByName(tabName);
       if (!srcDocTab) {
@@ -99,9 +99,9 @@ const TabMerger = (() => {
    * Clears the MergedContent tab before starting a fresh merge run.
    */
   function clearDestination(): { ok: boolean; message?: string } {
-    const destDocTab = DocOps.getTabByName(TAB_NAMES.MERGED_CONTENT);
+    const destDocTab = DocOps.getTabByName(Constants.TAB_NAMES.MERGED_CONTENT);
     if (!destDocTab) {
-      return { ok: false, message: `"${TAB_NAMES.MERGED_CONTENT}" tab not found.` };
+      return { ok: false, message: `"${Constants.TAB_NAMES.MERGED_CONTENT}" tab not found.` };
     }
     destDocTab.getBody().clear();
     return { ok: true };

@@ -67,10 +67,10 @@ End every reply with "— AI Editorial Assistant".
 
   /**
    * GeneralPurposeAgent groups threads by the tab they are anchored in.
-   * COMMENT_ANCHOR_TAB causes CommentProcessor to resolve anchorTabName per
+   * Constants.COMMENT_ANCHOR_TAB causes CommentProcessor to resolve anchorTabName per
    * thread; the agent then uses that tab's content as shared context per chunk.
    */
-  readonly contextKeys = [COMMENT_ANCHOR_TAB, TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS];
+  readonly contextKeys = [Constants.COMMENT_ANCHOR_TAB, Constants.TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS];
 
   private static readonly CHUNK_SIZE = 10;
 
@@ -107,10 +107,10 @@ End every reply with "— AI Editorial Assistant".
   // --- Comment thread batch handler ---
 
   protected commentChunkSize_() { return GeneralPurposeAgent.CHUNK_SIZE; }
-  protected commentModelTier_() { return MODEL.FAST; }
+  protected commentModelTier_() { return Constants.MODEL.FAST; }
   protected commentSystemPrompt_(): string {
     // Use the tab-authored instructions when present; fall back to the hardcoded SYSTEM_PROMPT.
-    const instructions = this.getTabContent_(TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS).trim();
+    const instructions = this.getTabContent_(Constants.TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS).trim();
     return instructions || this.SYSTEM_PROMPT;
   }
   protected buildCommentPrompt_(chunk: CommentThread[], anchorContent: string): string {
@@ -154,12 +154,12 @@ End every reply with "— AI Editorial Assistant".
   /**
    * Refreshes the General Purpose Instructions tab.
    * Returns plain markdown directly from Gemini — no JSON schema — to avoid
-   * JSON-parse failures on long instruction content (seen with MODEL.FAST at 44s).
+   * JSON-parse failures on long instruction content (seen with Constants.MODEL.FAST at 44s).
    */
   generateInstructions(): void {
-    const styleProfile = this.getTabMarkdown_(TAB_NAMES.STYLE_PROFILE);
+    const styleProfile = this.getTabMarkdown_(Constants.TAB_NAMES.STYLE_PROFILE);
     this.assertStyleProfileValid_(styleProfile);
-    const existing = this.getTabMarkdown_(TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS);
+    const existing = this.getTabMarkdown_(Constants.TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS);
 
     const userPrompt = this.generateInstructionPrompt({
       styleProfile,
@@ -171,7 +171,7 @@ End every reply with "— AI Editorial Assistant".
     const rawText = this.callGemini_(
       this.SYSTEM_PROMPT,
       userPrompt,
-      { tier: MODEL.FAST }
+      { tier: Constants.MODEL.FAST }
     ) as string;
 
     // Guard: strip JSON wrapper if the LLM ignores the "plain markdown" instruction.
@@ -179,7 +179,7 @@ End every reply with "— AI Editorial Assistant".
 
     const update: RootUpdate = {
       workflow_type: 'instruction_update',
-      review_tab: TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS,
+      review_tab: Constants.TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS,
       proposed_full_text: proposedText,
     };
 

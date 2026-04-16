@@ -90,13 +90,13 @@ const CommentProcessor = (() => {
    * Returns true on success, false if both attempts fail.
    */
   function postReply_(docId: string, reply: ThreadReply): boolean {
-    let content = AGENT_COMMENT_PREFIX + reply.content;
+    let content = Constants.AGENT_COMMENT_PREFIX + reply.content;
     if (content.length > MAX_REPLY_CHARS) {
       const suffix = '… [truncated]';
       content = content.slice(0, MAX_REPLY_CHARS - suffix.length) + suffix;
       Tracer.warn(
         `[CommentProcessor] postReply_: reply for thread ${reply.threadId} truncated ` +
-        `from ${(AGENT_COMMENT_PREFIX + reply.content).length} to ${MAX_REPLY_CHARS} chars`
+        `from ${(Constants.AGENT_COMMENT_PREFIX + reply.content).length} to ${MAX_REPLY_CHARS} chars`
       );
     }
     for (let attempt = 1; attempt <= 2; attempt++) {
@@ -145,7 +145,7 @@ const CommentProcessor = (() => {
   }
 
   function rosterNeedsAnchorTab_(): boolean {
-    return roster_.some(a => a.contextKeys.includes(COMMENT_ANCHOR_TAB));
+    return roster_.some(a => a.contextKeys.includes(Constants.COMMENT_ANCHOR_TAB));
   }
 
   /**
@@ -193,7 +193,7 @@ const CommentProcessor = (() => {
     const agent = tagRegistry_.get(tag)!;
     let anchorTabName: string | null = null;
     
-    if (agent.contextKeys.includes(COMMENT_ANCHOR_TAB)) {
+    if (agent.contextKeys.includes(Constants.COMMENT_ANCHOR_TAB)) {
       try {
         const anchorObj = JSON.parse(comment.anchor || '{}');
         const tabId = anchorObj?.a?.[0]?.lt?.tb?.id;
@@ -230,11 +230,11 @@ const CommentProcessor = (() => {
    * empty strings from getTabContent_().
    *
    * For named tabs: checked once (same for all threads in the group).
-   * For COMMENT_ANCHOR_TAB: logs the count of threads with no resolved anchor.
+   * For Constants.COMMENT_ANCHOR_TAB: logs the count of threads with no resolved anchor.
    */
   function validateRequiredTabs_(agent: BaseAgent, threads: CommentThread[]): void {
     for (const key of agent.contextKeys) {
-      if (key === COMMENT_ANCHOR_TAB) {
+      if (key === Constants.COMMENT_ANCHOR_TAB) {
         const nullCount = threads.filter(t => t.anchorTabName === null).length;
         if (nullCount > 0) {
           Tracer.warn(

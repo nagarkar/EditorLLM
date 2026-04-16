@@ -47,7 +47,7 @@
 //   5. Run this test: npx jest --config jest.e2e.config.cjs
 //
 // After the one-time setup:
-//   - Run `./deploy.sh` for all code changes — it handles push + redeploy.
+//   - Run `./scripts/deploy.sh` for all code changes — it handles push + redeploy.
 //   - Or manually: clasp push && clasp deploy -i <webAppDeploymentId>
 // ============================================================
 

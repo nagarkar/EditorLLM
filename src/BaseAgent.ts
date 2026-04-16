@@ -125,7 +125,7 @@ The prefix, quoted match text, and bookmark URL together consume roughly
     userPrompt: string,
     opts: { schema?: object; tier?: ModelTier } = {}
   ): any {
-    const { schema, tier = MODEL.FAST } = opts;
+    const { schema, tier = Constants.MODEL.FAST } = opts;
     const name = this.constructor.name;
     const modelOverride = this.modelConfig_[tier as keyof ModelConfig];
     const mode = schema ? 'json' : 'text';
@@ -352,7 +352,7 @@ ${styleProfile.slice(0, 4000)}
 ---`;
 
     try {
-      const result = this.callGemini_(EVAL_SYSTEM, EVAL_USER, { schema: this.evalScoreSchema_(), tier: MODEL.FAST }) as {
+      const result = this.callGemini_(EVAL_SYSTEM, EVAL_USER, { schema: this.evalScoreSchema_(), tier: Constants.MODEL.FAST }) as {
         score: number;
         rationale: string;
       };
@@ -471,7 +471,7 @@ ${styleProfile.slice(0, 4000)}
 
   /**
    * Tab names (TAB_NAMES values) this agent reads during comment processing.
-   * May also include COMMENT_ANCHOR_TAB sentinel.
+   * May also include Constants.COMMENT_ANCHOR_TAB sentinel.
    * Used by CommentProcessor for pre-flight validation only — agents still
    * fetch tab content themselves via getTabContent_().
    */
@@ -495,7 +495,7 @@ ${styleProfile.slice(0, 4000)}
   /** Number of threads per Gemini call. */
   protected abstract commentChunkSize_(): number;
 
-  /** Model tier for comment thread replies (MODEL.FAST | MODEL.THINKING). */
+  /** Model tier for comment thread replies (Constants.MODEL.FAST | MODEL.THINKING). */
   protected abstract commentModelTier_(): ModelTier;
 
   /**

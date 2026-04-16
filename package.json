@@ -8,6 +8,7 @@
     "build": "rm -rf dist && tsc && node scripts/fixgas.js && cp appsscript.json dist/ && cp *.html dist/ 2>/dev/null || true",
     "lint": "eslint src/**/*.ts",
     "test": "npm run build && jest --config config/jest/jest.config.cjs",
+    "test:experimental": "npm run build && jest --config config/jest/jest.experimental.config.cjs",
     "test:integration": "jest --config config/jest/jest.integration.config.cjs 2>&1 | tee .last_integration_test_results.txt",
     "test:e2e": "jest --config config/jest/jest.e2e.config.cjs && jest --config config/jest/jest.e2e-serial.config.cjs",
     "test:e2e-parallel": "jest --config config/jest/jest.e2e.config.cjs 2>&1 | tee .last_e2e_test_results.txt",

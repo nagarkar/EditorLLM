@@ -60,7 +60,7 @@ function include(filename: string): string {
 function showSidebar(): void {
   const html = HtmlService.createTemplateFromFile('Sidebar')
     .evaluate()
-    .setTitle(EXTENSION_NAME)
+    .setTitle(Constants.EXTENSION_NAME)
     .setWidth(320);
   DocumentApp.getUi().showSidebar(html);
 }
@@ -118,7 +118,7 @@ function saveUserPref(key: string, value: string): void {
 
 // ── Highlight Color ───────────────────────────────────────────────────
 function getHighlightColor(): string {
-  return getUserPref('HIGHLIGHT_COLOR', HIGHLIGHT_COLOR);
+  return getUserPref('HIGHLIGHT_COLOR', Constants.HIGHLIGHT_COLOR);
 }
 function saveHighlightColor(color: string): void {
   saveUserPref('HIGHLIGHT_COLOR', color);
@@ -305,7 +305,6 @@ function clearAllAnnotations(): void {
       '[Tether]',    // TetherAgent   — content_annotation
       '[Architect]', // ArchitectAgent — instruction_update only (no annotation triples today,
                      //                  but prefix is listed defensively for future changes)
-      '[EditorLLM] ', // legacy all-agent prefix from pre-simplification sessions
       // '[GeneralPurpose]' intentionally absent: GeneralPurposeAgent only generates
       // instruction_update workflows and comment replies — it never creates the
       // bookmark + highlight + Drive-comment annotation triple. Add it here if that
@@ -348,14 +347,10 @@ function clearActiveTabAnnotations(): void {
       return;
     }
     const prefixes = ['[EarTune]', '[Auditor]', '[Tether]', '[Architect]'];
-    // '[EditorLLM] ' was the legacy all-agent prefix before per-agent prefixes
-    // were introduced. Those comments were not attributed to a specific tab, so
-    // they must be deleted document-wide rather than filtered by tab ID.
-    const legacyPrefixes = ['[EditorLLM] '];
     Tracer.info(`[clearActiveTabAnnotations] clearing tab "${tabName}" (id=${tabId})`);
     // clearAgentAnnotations handles named-range highlight clearing per annotation
     // and invokes the color-sweep fallback internally for old-style annotations.
-    CollaborationService.clearAgentAnnotations(tabId, tabName, docTab, prefixes, legacyPrefixes);
+    CollaborationService.clearAgentAnnotations(tabId, tabName, docTab, prefixes);
     Tracer.info(`[clearActiveTabAnnotations] done`);
   });
 }

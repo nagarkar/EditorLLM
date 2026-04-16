@@ -25,9 +25,20 @@ const distDir = path.join(__dirname, '..', 'dist');
 const EXPORTS_SHIM =
   'var exports = typeof exports !== "undefined" ? exports : {};\n';
 
-const files = fs.readdirSync(distDir)
-  .filter(f => f.endsWith('.js'))
-  .map(f => path.join(distDir, f));
+function collectJsFiles(dir) {
+  const result = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      result.push(...collectJsFiles(full));
+    } else if (entry.name.endsWith('.js')) {
+      result.push(full);
+    }
+  }
+  return result;
+}
+
+const files = collectJsFiles(distDir);
 
 let fixed = 0;
 

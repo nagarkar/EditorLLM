@@ -1,0 +1,15 @@
+---
+description: Git commit workflow — always get approval before committing
+alwaysApply: true
+---
+
+# Git Commit Workflow
+
+**Never commit changes without explicit user approval.**
+
+Before running any `git commit`:
+1. Show the user the proposed commit message and the list of files being committed.
+2. Wait for explicit approval ("yes", "go ahead", "commit it", etc.).
+3. Only then run `git commit`.
+
+This applies to all commits, including fixes, docs, and refactors.

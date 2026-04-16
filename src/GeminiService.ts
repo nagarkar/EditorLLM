@@ -36,7 +36,7 @@ const GeminiService = (() => {
     }
     if (!cachedApiKey_) {
       throw new Error(
-        `Gemini API key not set. Open the ${EXTENSION_NAME} sidebar and click Set API Key.`
+        `Gemini API key not set. Open the ${Constants.EXTENSION_NAME} sidebar and click Set API Key.`
       );
     }
     return cachedApiKey_;
@@ -51,17 +51,17 @@ const GeminiService = (() => {
     let resolved: string;
 
     if (typeof process !== 'undefined') {
-      if (tier === MODEL.FAST && process.env.GEMINI_FAST_MODEL) {
+      if (tier === Constants.MODEL.FAST && process.env.GEMINI_FAST_MODEL) {
         resolved = process.env.GEMINI_FAST_MODEL;
         cachedModels_[tier] = resolved;
         return resolved;
       }
-      if (tier === MODEL.THINKING && process.env.GEMINI_THINKING_MODEL) {
+      if (tier === Constants.MODEL.THINKING && process.env.GEMINI_THINKING_MODEL) {
         resolved = process.env.GEMINI_THINKING_MODEL;
         cachedModels_[tier] = resolved;
         return resolved;
       }
-      if (tier === MODEL.DEEPSEEK && process.env.GEMINI_DEEPSEEK_MODEL) {
+      if (tier === Constants.MODEL.DEEPSEEK && process.env.GEMINI_DEEPSEEK_MODEL) {
         resolved = process.env.GEMINI_DEEPSEEK_MODEL;
         cachedModels_[tier] = resolved;
         return resolved;
@@ -80,8 +80,8 @@ const GeminiService = (() => {
       return scriptProp;
     }
 
-    cachedModels_[tier] = DEFAULT_MODELS[tier];
-    return DEFAULT_MODELS[tier];
+    cachedModels_[tier] = Constants.DEFAULT_MODELS[tier];
+    return Constants.DEFAULT_MODELS[tier];
   }
 
   // ── Payload construction ───────────────────────────────────────────────────
@@ -104,7 +104,7 @@ const GeminiService = (() => {
         ? { responseMimeType: 'application/json', responseSchema: schema }
         : {},
     };
-    if (tier === MODEL.THINKING) {
+    if (tier === Constants.MODEL.THINKING) {
       payload.generationConfig.thinkingConfig = { thinkingBudget: 8192 };
     }
     return payload;
@@ -198,7 +198,7 @@ const GeminiService = (() => {
           }
           throw new Error(
             `Model "${model}" is not available or has been deprecated.${modelList}` +
-            `\n\nUpdate your model configuration in the ${EXTENSION_NAME} sidebar → Setup → Configure Models.`
+            `\n\nUpdate your model configuration in the ${Constants.EXTENSION_NAME} sidebar → Setup → Configure Models.`
           );
         }
         throw new Error(`Gemini API error: ${msg}`);
@@ -232,34 +232,13 @@ const GeminiService = (() => {
   function generate(
     systemPrompt: string,
     userPrompt: string,
-    tier: ModelTier = MODEL.FAST,
+    tier: ModelTier = Constants.MODEL.FAST,
     opts: { schema?: object; modelOverride?: string } = {}
   ): any {
     const apiKey  = getApiKey_();
     const model   = opts.modelOverride || resolveModel_(tier);
     const payload = buildPayload_(systemPrompt, userPrompt, tier, opts.schema);
     return callApi_(apiKey, model, payload, /* parseJson */ !!opts.schema);
-  }
-
-  /** @deprecated Use `generate()` with a `schema` option instead. */
-  function generateJson(
-    systemPrompt: string,
-    userPrompt: string,
-    schema: object,
-    tier: ModelTier = MODEL.FAST,
-    modelOverride?: string
-  ): any {
-    return generate(systemPrompt, userPrompt, tier, { schema, modelOverride });
-  }
-
-  /** @deprecated Use `generate()` without a `schema` option instead. */
-  function generateText(
-    systemPrompt: string,
-    userPrompt: string,
-    tier: ModelTier = MODEL.FAST,
-    modelOverride?: string
-  ): string {
-    return generate(systemPrompt, userPrompt, tier, { modelOverride });
   }
 
   // ── Public: model management ───────────────────────────────────────────────
@@ -309,9 +288,9 @@ const GeminiService = (() => {
    */
   function getModelConfig(): { fast: string; thinking: string; deepseek: string } {
     return {
-      fast:     resolveModel_(MODEL.FAST),
-      thinking: resolveModel_(MODEL.THINKING),
-      deepseek: resolveModel_(MODEL.DEEPSEEK),
+      fast:     resolveModel_(Constants.MODEL.FAST),
+      thinking: resolveModel_(Constants.MODEL.THINKING),
+      deepseek: resolveModel_(Constants.MODEL.DEEPSEEK),
     };
   }
 
@@ -330,8 +309,6 @@ const GeminiService = (() => {
 
   return {
     generate,
-    generateJson,
-    generateText,
     saveApiKey,
     hasApiKey,
     listGenerateContentModels,

@@ -240,7 +240,7 @@ global.DocOps = {
 };
 
 // Expose mockDocumentTab on global so vm-based collaboration tests can pass it
-// as the docTab argument to clearAgentAnnotations_ (new 5-param signature).
+// as the docTab argument to clearAgentAnnotations_.
 global.mockDocumentTab = mockDocumentTab;
 
 // Expose mockNamedRange and mockBookmark so annotateOperation_ / deleteAnnotation_
@@ -250,10 +250,32 @@ global.mockDocumentTab = mockDocumentTab;
 global.mockNamedRange = mockNamedRange;
 global.mockBookmark   = mockBookmark;
 
-// HIGHLIGHT_COLOR is defined in Types.ts and used by CollaborationService.ts as a
-// fallback when PropertiesService returns null. Tests that run the compiled service
-// in a vm context need this constant in their global scope.
-global.HIGHLIGHT_COLOR = '#FFD966';
+// Constants is defined in Constants.ts (IIFE module) and accessed as Constants.*
+// throughout the GAS source. Tests that run compiled files in a vm context
+// (e.g. collaboration.test.ts, debugMode.test.ts) seed the vm with { ...global },
+// so defining it here makes Constants available in every vm sandbox automatically.
+global.Constants = {
+  EXTENSION_NAME:   'EditorLLM',
+  MODEL:            { FAST: 'fast', THINKING: 'thinking', DEEPSEEK: 'deepseek' },
+  DEFAULT_MODELS: {
+    fast:     'gemini-3-flash-preview',
+    thinking: 'gemini-3.1-pro-preview',
+    deepseek: 'gemini-2.0-flash-thinking-exp-01-21',
+  },
+  TAB_NAMES: {
+    MERGED_CONTENT:               'MergedContent',
+    AGENTIC_INSTRUCTIONS:         'Agentic Instructions',
+    AGENTIC_SCRATCH:              'Agentic Scratch',
+    STYLE_PROFILE:                'StyleProfile',
+    EAR_TUNE:                     'EarTune Instructions',
+    TECHNICAL_AUDIT:              'Audit Instructions',
+    TETHER_INSTRUCTIONS:          'TetherInstructions',
+    GENERAL_PURPOSE_INSTRUCTIONS: 'General Purpose Instructions',
+  },
+  HIGHLIGHT_COLOR:      '#FFD966',
+  AGENT_COMMENT_PREFIX: '[EditorLLM] ',
+  COMMENT_ANCHOR_TAB:   '__comment_anchor_tab__',
+};
 
 // ── MarkdownService pure-function stubs ────────────────────────────────────
 // These implement the same logic as the private helpers in MarkdownService.ts.

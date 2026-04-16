@@ -5,7 +5,7 @@
 class ArchitectAgent extends BaseAgent {
 
   readonly tags = ['@architect'];
-  readonly contextKeys = [TAB_NAMES.STYLE_PROFILE, TAB_NAMES.MERGED_CONTENT];
+  readonly contextKeys = [Constants.TAB_NAMES.STYLE_PROFILE, Constants.TAB_NAMES.MERGED_CONTENT];
   private static readonly CHUNK_SIZE = 5;
 
   readonly SYSTEM_PROMPT = `
@@ -85,36 +85,36 @@ parsed and written as formatted Google Docs content. Formatting rules:
   }
 
   protected commentChunkSize_() { return ArchitectAgent.CHUNK_SIZE; }
-  protected commentModelTier_() { return MODEL.THINKING; }
+  protected commentModelTier_() { return Constants.MODEL.THINKING; }
   protected buildCommentPrompt_(chunk: CommentThread[], _passageContext: string): string {
     // Architect reads its own context — manuscript + styleProfile — rather than
     // the anchor-tab passage context used by other agents.
     return this.generateCommentResponsesPrompt({
-      styleProfile: this.getTabContent_(TAB_NAMES.STYLE_PROFILE),
-      manuscript:   this.getTabContent_(TAB_NAMES.MERGED_CONTENT),
+      styleProfile: this.getTabContent_(Constants.TAB_NAMES.STYLE_PROFILE),
+      manuscript:   this.getTabContent_(Constants.TAB_NAMES.MERGED_CONTENT),
       threads: chunk,
     });
   }
 
   generateInstructions(): void {
     super.generateInstructions();
-    const manuscript = this.getTabContent_(TAB_NAMES.MERGED_CONTENT);
+    const manuscript = this.getTabContent_(Constants.TAB_NAMES.MERGED_CONTENT);
     if (!manuscript.trim()) {
       throw new Error('MergedContent tab is empty. Add manuscript content before generating.');
     }
-    const styleProfile = this.getTabMarkdown_(TAB_NAMES.STYLE_PROFILE);
+    const styleProfile = this.getTabMarkdown_(Constants.TAB_NAMES.STYLE_PROFILE);
 
     const userPrompt = this.generateInstructionPrompt({ manuscript, styleProfile });
 
     const geminiResult = this.callGemini_(
       this.SYSTEM_PROMPT,
       userPrompt,
-      { schema: this.instructionUpdateSchema_(), tier: MODEL.THINKING }
+      { schema: this.instructionUpdateSchema_(), tier: Constants.MODEL.THINKING }
     ) as { proposed_full_text: string };
 
     const update: RootUpdate = {
       workflow_type: 'instruction_update',
-      review_tab: TAB_NAMES.STYLE_PROFILE,
+      review_tab: Constants.TAB_NAMES.STYLE_PROFILE,
       proposed_full_text: geminiResult.proposed_full_text,
     };
 
@@ -122,7 +122,7 @@ parsed and written as formatted Google Docs content. Formatting rules:
 
     // §4.1 LLM-as-judge quality evaluation — runs after the StyleProfile is
     // written so the score reflects the actual generated content.
-    // Uses MODEL.FAST to keep latency low; score persisted to DocumentProperties.
+    // Uses Constants.MODEL.FAST to keep latency low; score persisted to DocumentProperties.
     this.evaluateStyleProfile_(geminiResult.proposed_full_text);
   }
 }

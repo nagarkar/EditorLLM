@@ -172,19 +172,19 @@ const DocOps = (() => {
 
     // Desired tabs: [title, parentTitle | undefined]
     const desired: [string, string | undefined][] = [
-      [TAB_NAMES.MERGED_CONTENT, undefined],
-      [TAB_NAMES.AGENTIC_INSTRUCTIONS, undefined],
-      [TAB_NAMES.AGENTIC_SCRATCH, undefined],
-      [TAB_NAMES.STYLE_PROFILE, TAB_NAMES.AGENTIC_INSTRUCTIONS],
-      [TAB_NAMES.EAR_TUNE, TAB_NAMES.AGENTIC_INSTRUCTIONS],
-      [TAB_NAMES.TECHNICAL_AUDIT, TAB_NAMES.AGENTIC_INSTRUCTIONS],
-      [TAB_NAMES.TETHER_INSTRUCTIONS, TAB_NAMES.AGENTIC_INSTRUCTIONS],
-      [TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS, TAB_NAMES.AGENTIC_INSTRUCTIONS],
-      [`${TAB_NAMES.STYLE_PROFILE} Scratch`, TAB_NAMES.AGENTIC_SCRATCH],
-      [`${TAB_NAMES.EAR_TUNE} Scratch`, TAB_NAMES.AGENTIC_SCRATCH],
-      [`${TAB_NAMES.TECHNICAL_AUDIT} Scratch`, TAB_NAMES.AGENTIC_SCRATCH],
-      [`${TAB_NAMES.TETHER_INSTRUCTIONS} Scratch`, TAB_NAMES.AGENTIC_SCRATCH],
-      [`${TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS} Scratch`, TAB_NAMES.AGENTIC_SCRATCH],
+      [Constants.TAB_NAMES.MERGED_CONTENT, undefined],
+      [Constants.TAB_NAMES.AGENTIC_INSTRUCTIONS, undefined],
+      [Constants.TAB_NAMES.AGENTIC_SCRATCH, undefined],
+      [Constants.TAB_NAMES.STYLE_PROFILE, Constants.TAB_NAMES.AGENTIC_INSTRUCTIONS],
+      [Constants.TAB_NAMES.EAR_TUNE, Constants.TAB_NAMES.AGENTIC_INSTRUCTIONS],
+      [Constants.TAB_NAMES.TECHNICAL_AUDIT, Constants.TAB_NAMES.AGENTIC_INSTRUCTIONS],
+      [Constants.TAB_NAMES.TETHER_INSTRUCTIONS, Constants.TAB_NAMES.AGENTIC_INSTRUCTIONS],
+      [Constants.TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS, Constants.TAB_NAMES.AGENTIC_INSTRUCTIONS],
+      [`${Constants.TAB_NAMES.STYLE_PROFILE} Scratch`, Constants.TAB_NAMES.AGENTIC_SCRATCH],
+      [`${Constants.TAB_NAMES.EAR_TUNE} Scratch`, Constants.TAB_NAMES.AGENTIC_SCRATCH],
+      [`${Constants.TAB_NAMES.TECHNICAL_AUDIT} Scratch`, Constants.TAB_NAMES.AGENTIC_SCRATCH],
+      [`${Constants.TAB_NAMES.TETHER_INSTRUCTIONS} Scratch`, Constants.TAB_NAMES.AGENTIC_SCRATCH],
+      [`${Constants.TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS} Scratch`, Constants.TAB_NAMES.AGENTIC_SCRATCH],
     ];
 
     // Filter to only missing tabs
@@ -360,7 +360,7 @@ const DocOps = (() => {
    */
   function createScratchTab(baseName: string): GoogleAppsScript.Document.DocumentTab {
     const scratchName = `${baseName} Scratch`;
-    const tab = getOrCreateTab(scratchName, TAB_NAMES.AGENTIC_SCRATCH);
+    const tab = getOrCreateTab(scratchName, Constants.TAB_NAMES.AGENTIC_SCRATCH);
     clearBodySafely(tab.getBody());
     return tab;
   }

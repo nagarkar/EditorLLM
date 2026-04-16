@@ -52,7 +52,7 @@ Ensure each reason explains the specific factual discrepancy or alignment.
 `.trim();
 
   readonly tags = ['@tether', '@ref'];
-  readonly contextKeys = [TAB_NAMES.STYLE_PROFILE, TAB_NAMES.TETHER_INSTRUCTIONS, COMMENT_ANCHOR_TAB];
+  readonly contextKeys = [Constants.TAB_NAMES.STYLE_PROFILE, Constants.TAB_NAMES.TETHER_INSTRUCTIONS, Constants.COMMENT_ANCHOR_TAB];
 
   private static readonly CHUNK_SIZE = 5;
 
@@ -111,11 +111,11 @@ Ensure each reason explains the specific factual discrepancy or alignment.
   }
 
   protected commentChunkSize_() { return TetherAgent.CHUNK_SIZE; }
-  protected commentModelTier_() { return MODEL.THINKING; }
+  protected commentModelTier_() { return Constants.MODEL.THINKING; }
   protected buildCommentPrompt_(chunk: CommentThread[], passageContext: string): string {
     return this.generateCommentResponsesPrompt({
-      styleProfile:        this.getTabContent_(TAB_NAMES.STYLE_PROFILE),
-      tetherInstructions:  this.getTabContent_(TAB_NAMES.TETHER_INSTRUCTIONS),
+      styleProfile:        this.getTabContent_(Constants.TAB_NAMES.STYLE_PROFILE),
+      tetherInstructions:  this.getTabContent_(Constants.TAB_NAMES.TETHER_INSTRUCTIONS),
       passageContext,
       threads: chunk,
     });
@@ -128,10 +128,10 @@ Ensure each reason explains the specific factual discrepancy or alignment.
   generateInstructions(): void {
     super.generateInstructions();
     // W1: read instruction tabs as markdown; manuscript stays plain text
-    const styleProfile = this.getTabMarkdown_(TAB_NAMES.STYLE_PROFILE);
+    const styleProfile = this.getTabMarkdown_(Constants.TAB_NAMES.STYLE_PROFILE);
     this.assertStyleProfileValid_(styleProfile);
-    const existing = this.getTabMarkdown_(TAB_NAMES.TETHER_INSTRUCTIONS);
-    const manuscript = this.getTabContent_(TAB_NAMES.MERGED_CONTENT);
+    const existing = this.getTabMarkdown_(Constants.TAB_NAMES.TETHER_INSTRUCTIONS);
+    const manuscript = this.getTabContent_(Constants.TAB_NAMES.MERGED_CONTENT);
 
     const userPrompt = this.generateInstructionPrompt({
       styleProfile,
@@ -142,12 +142,12 @@ Ensure each reason explains the specific factual discrepancy or alignment.
     const geminiResult = this.callGemini_(
       this.SYSTEM_PROMPT,
       userPrompt,
-      { schema: this.instructionUpdateSchema_(), tier: MODEL.THINKING }
+      { schema: this.instructionUpdateSchema_(), tier: Constants.MODEL.THINKING }
     ) as { proposed_full_text: string };
 
     const update: RootUpdate = {
       workflow_type: 'instruction_update',
-      review_tab: TAB_NAMES.TETHER_INSTRUCTIONS,
+      review_tab: Constants.TAB_NAMES.TETHER_INSTRUCTIONS,
       proposed_full_text: geminiResult.proposed_full_text,
     };
 
@@ -166,9 +166,9 @@ Ensure each reason explains the specific factual discrepancy or alignment.
       throw new Error(`Tab "${tabName}" is empty. Nothing to validate.`);
     }
 
-    const styleProfile = this.getTabContent_(TAB_NAMES.STYLE_PROFILE);
+    const styleProfile = this.getTabContent_(Constants.TAB_NAMES.STYLE_PROFILE);
     this.assertStyleProfileValid_(styleProfile);
-    const tetherInstructions = this.getTabContent_(TAB_NAMES.TETHER_INSTRUCTIONS);
+    const tetherInstructions = this.getTabContent_(Constants.TAB_NAMES.TETHER_INSTRUCTIONS);
 
     const userPrompt = this.generateTabAnnotationPrompt({
       styleProfile,
@@ -180,7 +180,7 @@ Ensure each reason explains the specific factual discrepancy or alignment.
     const geminiResult = this.callGemini_(
       this.SYSTEM_PROMPT,
       userPrompt,
-      { schema: this.annotationSchema_(), tier: MODEL.THINKING }
+      { schema: this.annotationSchema_(), tier: Constants.MODEL.THINKING }
     ) as { operations: Operation[] };
 
     const validOps = this.validateAndFilterOperations_(geminiResult.operations, passage, agentName);

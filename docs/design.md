@@ -129,7 +129,7 @@ Used by: `GeminiService`, `DocOps`, `CollaborationService`, `TabMerger`, `Commen
 `BaseAgent` is an abstract class providing shared infrastructure:
 
 - **Tab content cache** (`getTabContent_` / `clearCache`) — avoids redundant `DocumentApp` reads within a single execution.
-- **Gemini call wrapper** (`callGemini_`) — delegates to `GeminiService.generateJson` with structured logging of tier, prompt previews, and timing.
+- **Gemini call wrapper** (`callGemini_`) — delegates to `GeminiService.generate` with a JSON schema when structured output is required, with structured logging of tier, prompt previews, and timing.
 - **RootUpdate schema** (`rootUpdateSchema_`) — the JSON schema shared by all agents that produce document updates.
 - **Comment thread logger** (`logCommentThread_`) — structured logging of thread context at dispatch time.
 - **Static registry** — every agent self-registers in the constructor. `BaseAgent.getAllAgents()` and `BaseAgent.clearAllAgentCaches()` eliminate the need for explicit agent lists.
@@ -179,7 +179,7 @@ tab, writes the proposed text, and highlights + comments each operation.
 Agents call `annotateTab(tabName)`. Gemini returns `operations` only. The agent assembles a
 `RootUpdate` with `workflow_type = 'content_annotation'` and `target_tab`, then calls
 `CollaborationService.processUpdate()`. CollaborationService first clears previous agent
-comments on the tab (identified by the `[EditorLLM]` prefix), then highlights and comments
+comments on the tab (matched by that agent’s comment prefix, e.g. `[EarTune]`), then highlights and comments
 each operation — **no text replacement**.
 
 **Workflow 3 — comment thread reply** (triggered by `CommentProcessor`)
@@ -190,10 +190,9 @@ No document changes occur.
 `CollaborationService.processUpdate()` routes `instruction_update` and `content_annotation`;
 workflow 3 does not go through `CollaborationService`.
 
-**Agent comment prefix**: Every Drive comment created by an agent is prefixed with
-`AGENT_COMMENT_PREFIX = '[EditorLLM] '`. This allows `content_annotation` runs to
-selectively delete only agent-added comments when re-annotating a tab, preserving
-user-added comments.
+**Agent comment prefixes**: `content_annotation` clears comments by the agent’s own prefix
+(e.g. `[EarTune]`). **Thread replies** from `CommentProcessor` are prefixed with
+`AGENT_COMMENT_PREFIX = '[EditorLLM] '` so users can recognize automated replies in the Drive UI.
 
 ### 5.6 Model Tier System
 

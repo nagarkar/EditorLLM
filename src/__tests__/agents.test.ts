@@ -1570,7 +1570,7 @@ describe('TetherAgent annotateTab prompt structure (W2)', () => {
 // ── §4.1 StyleProfile LLM-as-judge quality evaluation ────────────────────────
 //
 // Tests reproduce the score-band logic and rubric without GAS / Gemini calls.
-// The full GeminiService.generateJson path is validated in E2E tests only.
+// The full GeminiService.generate (structured JSON) path is validated in E2E tests only.
 
 describe('§4.1 evaluateStyleProfile_ — score clamping and band semantics', () => {
 

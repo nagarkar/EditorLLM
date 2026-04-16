@@ -1,9 +1,14 @@
 // ============================================================
-// Types.ts — Shared interfaces for the EditorLLM system
+// Types.ts — Shared TypeScript type declarations for EditorLLM.
+//
+// This file contains ONLY compile-time constructs (interfaces, type aliases,
+// ambient function declarations). All runtime constants have moved to
+// Constants.ts so they can be imported by experimental and test code.
+//
+// With `module: none` (GAS build), TypeScript compiles this file to an
+// essentially empty script — type declarations are erased entirely — so there
+// is no runtime footprint.
 // ============================================================
-
-/** Display name used throughout the UI and error messages. */
-const EXTENSION_NAME = 'EditorLLM';
 
 /**
  * A single annotated passage within a RootUpdate payload.
@@ -40,24 +45,6 @@ interface RootUpdate {
 type ModelTier = 'fast' | 'thinking' | 'deepseek';
 
 /**
- * Typed constants for model tier selection.
- * Use MODEL.FAST / MODEL.THINKING / MODEL.DEEPSEEK everywhere instead of
- * bare string literals — eliminates typos and makes grep easy.
- */
-const MODEL = {
-  FAST: 'fast' as ModelTier,
-  THINKING: 'thinking' as ModelTier,
-  DEEPSEEK: 'deepseek' as ModelTier,
-} as const;
-
-/** Fallback model names used when script properties are not set. */
-const DEFAULT_MODELS: Record<ModelTier, string> = {
-  fast: 'gemini-3-flash-preview',
-  thinking: 'gemini-3.1-pro-preview',
-  deepseek: 'gemini-2.0-flash-thinking-exp-01-21',
-};
-
-/**
  * Per-agent model overrides.  Any tier left undefined falls through to the
  * GeminiService resolution chain (script properties → DEFAULT_MODELS).
  *
@@ -74,29 +61,6 @@ interface ModelConfig {
   deepseek?: string;
 }
 
-/** Standard tab names used throughout the system. */
-const TAB_NAMES = {
-  MERGED_CONTENT: 'MergedContent',
-  AGENTIC_INSTRUCTIONS: 'Agentic Instructions',
-  AGENTIC_SCRATCH: 'Agentic Scratch',
-  STYLE_PROFILE: 'StyleProfile',
-  EAR_TUNE: 'EarTune Instructions',
-  TECHNICAL_AUDIT: 'Audit Instructions',
-  TETHER_INSTRUCTIONS: 'TetherInstructions',
-  GENERAL_PURPOSE_INSTRUCTIONS: 'General Purpose Instructions',
-} as const;
-
-/** Background color applied to annotated passages. */
-const HIGHLIGHT_COLOR = '#FFD966';
-
-/**
- * Prefix applied to every Drive comment created by an agent.
- * Used by clearAgentAnnotations_ to distinguish agent comments from user comments.
- */
-const AGENT_COMMENT_PREFIX = '[EditorLLM] ';
-
-// ── Comment routing types ────────────────────────────────────────────────────
-
 /**
  * A single message in a Drive comment thread.
  * Shared by GeneralPurposeAgent and CommentProcessor.
@@ -106,12 +70,6 @@ interface CommentMessage {
   content: string;
   authorName: string;
 }
-
-/**
- * Sentinel value an agent puts in contextKeys to signal it needs
- * the content of the tab the comment is anchored in.
- */
-const COMMENT_ANCHOR_TAB = '__comment_anchor_tab__';
 
 /** A parsed comment thread ready for agent dispatch. */
 interface CommentThread {
@@ -181,3 +139,31 @@ declare function sanitizePlatformError_(message: string): string;
 // ── CommentProcessorHelpers ambient declarations ──────────────────────────────
 // Defined (and exported for tests) in CommentProcessorHelpers.ts.
 declare function normaliseTagWord_(w: string): string;
+
+// ── Constants ambient declaration ─────────────────────────────────────────────
+// The runtime value is defined and exported in Constants.ts (IIFE module).
+// This ambient declaration exposes the same shape as a GAS-flat-scope global so
+// that source files compiled with "module": "none" can reference Constants.*
+// without import statements (which would break the GAS build).
+declare const Constants: {
+  readonly EXTENSION_NAME: string;
+  readonly MODEL: {
+    readonly FAST:     'fast';
+    readonly THINKING: 'thinking';
+    readonly DEEPSEEK: 'deepseek';
+  };
+  readonly DEFAULT_MODELS: Record<ModelTier, string>;
+  readonly TAB_NAMES: {
+    readonly MERGED_CONTENT:               'MergedContent';
+    readonly AGENTIC_INSTRUCTIONS:         'Agentic Instructions';
+    readonly AGENTIC_SCRATCH:              'Agentic Scratch';
+    readonly STYLE_PROFILE:                'StyleProfile';
+    readonly EAR_TUNE:                     'EarTune Instructions';
+    readonly TECHNICAL_AUDIT:              'Audit Instructions';
+    readonly TETHER_INSTRUCTIONS:          'TetherInstructions';
+    readonly GENERAL_PURPOSE_INSTRUCTIONS: 'General Purpose Instructions';
+  };
+  readonly HIGHLIGHT_COLOR:      string;
+  readonly AGENT_COMMENT_PREFIX: string;
+  readonly COMMENT_ANCHOR_TAB:   string;
+};

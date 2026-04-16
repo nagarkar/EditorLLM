@@ -5,7 +5,7 @@ module.exports = {
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.test.ts'],
   // Exclude integration tests — run those separately via config/jest/jest.integration.config.cjs
-  testPathIgnorePatterns: ['/node_modules/', '/__tests__/integration/'],
+  testPathIgnorePatterns: ['/node_modules/', '/__tests__/integration/', '/__tests__/experimental/'],
   moduleFileExtensions: ['ts', 'js'],
   setupFilesAfterEnv: ['<rootDir>/config/jest/jest.setup.js'],
   transformIgnorePatterns: ['/node_modules/'],

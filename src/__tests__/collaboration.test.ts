@@ -618,28 +618,6 @@ describe('clearAgentAnnotations_ — batched skipped-comment trace', () => {
     expect((Drive.Comments as any).remove).toHaveBeenCalledTimes(1);
     expect((Drive.Comments as any).remove).toHaveBeenCalledWith('doc-123', 'c1');
   });
-
-  it('globalPrefixes deletes matching comments on ALL tabs regardless of tab ID', () => {
-    const comments = [
-      makeComment('c1', '[EditorLLM] legacy fix', TARGET_TAB),
-      makeComment('c2', '[EditorLLM] legacy fix other tab', OTHER_TAB_A),
-      makeComment('c3', '[EarTune] current fix', OTHER_TAB_B),
-    ];
-
-    (Drive.Comments.list as jest.Mock).mockReturnValue({ comments });
-    (Drive.Comments as any).remove = jest.fn();
-
-    // globalPrefixes = '[EditorLLM] ' → delete from all tabs; '[EarTune]' → only target tab
-    (global as any).CollaborationService.clearAgentAnnotations(
-      TARGET_TAB, 'TargetTab', (global as any).mockDocumentTab, ['[EarTune]'], ['[EditorLLM] ']
-    );
-
-    // c1 and c2 deleted (globalPrefix), c3 NOT deleted (wrong tab, not global)
-    expect((Drive.Comments as any).remove).toHaveBeenCalledTimes(2);
-    expect((Drive.Comments as any).remove).toHaveBeenCalledWith('doc-123', 'c1');
-    expect((Drive.Comments as any).remove).toHaveBeenCalledWith('doc-123', 'c2');
-    expect((Drive.Comments as any).remove).not.toHaveBeenCalledWith('doc-123', 'c3');
-  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

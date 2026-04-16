@@ -261,27 +261,18 @@ const CollaborationService = (() => {
    * @param tabName        Tab display name — used for the fallback color sweep.
    * @param docTab         DocumentTab for this tab — used to look up named ranges.
    * @param agentPrefix    Prefix(es) to match per-tab comments against.
-   * @param globalPrefixes Optional prefix(es) that are deleted document-wide,
-   *                       bypassing the tab ID check. Use for legacy prefixes
-   *                       (e.g. '[EditorLLM] ') that were written without
-   *                       per-tab attribution across all prior sessions.
    */
   function clearAgentAnnotations_(
     tabId: string,
     tabName: string,
     docTab: GoogleAppsScript.Document.DocumentTab,
-    agentPrefix: string | string[],
-    globalPrefixes?: string | string[]
+    agentPrefix: string | string[]
   ): void {
     const docId      = DocumentApp.getActiveDocument().getId();
     const prefixList = Array.isArray(agentPrefix) ? agentPrefix : [agentPrefix];
-    const globalList = globalPrefixes
-      ? (Array.isArray(globalPrefixes) ? globalPrefixes : [globalPrefixes])
-      : [];
-    const allPrefixes = [...prefixList, ...globalList];
     Tracer.info(
       `[CollaborationService] clearAgentAnnotations_: clearing tab ${tabId} ` +
-      `prefixes=${JSON.stringify(prefixList)} globalPrefixes=${JSON.stringify(globalList)}`
+      `prefixes=${JSON.stringify(prefixList)}`
     );
 
     // ── Collect phase ─────────────────────────────────────────────────────
@@ -302,21 +293,20 @@ const CollaborationService = (() => {
       for (const comment of resp.comments ?? []) {
         const content = comment.content ?? '';
 
-        if (!matchesAgentPrefix_(content, allPrefixes)) {
+        if (!matchesAgentPrefix_(content, prefixList)) {
           if (content.slice(0, 25).includes(']')) {
             Tracer.warn(
               `[CollaborationService] clearAgentAnnotations_: ` +
               `skipped near-match comment "${content.slice(0, 120)}" ` +
-              `(no prefix matched from ${JSON.stringify(allPrefixes)})`
+              `(no prefix matched from ${JSON.stringify(prefixList)})`
             );
           }
           continue;
         }
 
         const commentTabId = resolveCommentTabId_(content, comment.anchor ?? '');
-        const isGlobal     = globalList.length > 0 && matchesAgentPrefix_(content, globalList);
 
-        if (!isGlobal && commentTabId !== undefined && commentTabId !== tabId) {
+        if (commentTabId !== undefined && commentTabId !== tabId) {
           skippedWrongTab++;
           if (skippedExamples.length < 5) {
             skippedExamples.push(`[tab=${commentTabId}] ${content.slice(0, 60)}`);
@@ -557,7 +547,7 @@ const CollaborationService = (() => {
       return false;
     }
     const body  = docTab.getBody();
-    const color = PropertiesService.getUserProperties().getProperty('HIGHLIGHT_COLOR') || HIGHLIGHT_COLOR;
+    const color = PropertiesService.getUserProperties().getProperty('HIGHLIGHT_COLOR') || Constants.HIGHLIGHT_COLOR;
     let cleared = 0;
 
     const numChildren = body.getNumChildren();
@@ -717,12 +707,12 @@ const CollaborationService = (() => {
     if (oldText.trim()) {
       const scratchTabName = `${update.review_tab} Scratch`;
       Tracer.info(`[CollaborationService] processInstructionUpdate_: backing up old content to "${scratchTabName}" (${oldText.length} chars)`);
-      MarkdownService.markdownToTab(oldText, scratchTabName, TAB_NAMES.AGENTIC_SCRATCH);
+      MarkdownService.markdownToTab(oldText, scratchTabName, Constants.TAB_NAMES.AGENTIC_SCRATCH);
     }
 
     // 2. Overwrite the main tab with the new proposed text
     Tracer.info(`[CollaborationService] processInstructionUpdate_: writing new content to "${update.review_tab}"`);
-    MarkdownService.markdownToTab(update.proposed_full_text, update.review_tab, TAB_NAMES.AGENTIC_INSTRUCTIONS);
+    MarkdownService.markdownToTab(update.proposed_full_text, update.review_tab, Constants.TAB_NAMES.AGENTIC_INSTRUCTIONS);
   }
 
   function processContentAnnotation_(update: RootUpdate): void {
@@ -736,16 +726,12 @@ const CollaborationService = (() => {
 
     // Hoist once — avoids a DocumentApp + PropertiesService round-trip per operation.
     const docId = DocumentApp.getActiveDocument().getId();
-    const highlightColor = PropertiesService.getUserProperties().getProperty('HIGHLIGHT_COLOR') || HIGHLIGHT_COLOR;
+    const highlightColor = PropertiesService.getUserProperties().getProperty('HIGHLIGHT_COLOR') || Constants.HIGHLIGHT_COLOR;
 
     const agentPrefix = update.agent_name || '[Agent]';
-    // Also clear legacy comments that were written with "[EditorLLM] " prepended
-    // (format used before the prefix simplification). Handles stale comments from
-    // prior sessions that would otherwise accumulate invisibly.
-    const legacyPrefix = `[EditorLLM] ${agentPrefix}`;
     clearAgentAnnotations_(
       targetTabId, update.target_tab!, targetDocTab,
-      [agentPrefix, legacyPrefix]
+      agentPrefix
     );
     // clearTabHighlights_ is invoked automatically inside clearAgentAnnotations_
     // as a fallback when old-style annotations without named ranges are detected.

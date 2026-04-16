@@ -7,6 +7,7 @@ const vm = require('vm');
 
 const distFiles = [
   'Types.js',
+  'Constants.js',
   'BaseAgent.js',
   'ArchitectAgent.js',
   'EarTuneAgent.js',

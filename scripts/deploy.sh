@@ -16,7 +16,7 @@
 # no UI interaction required.  The /exec URL never changes.
 #
 # Usage:
-#   chmod +x deploy.sh && ./deploy.sh [flags]
+#   chmod +x scripts/deploy.sh && ./scripts/deploy.sh [flags]
 #
 # Flags:
 #   --skip-tests        Skip all integration + E2E tests. Push only.
@@ -126,5 +126,5 @@ echo ""
 echo "  The EditorLLM menu will appear next time the bound document"
 echo "  is opened (or refreshed)."
 echo ""
-echo "  To deploy to production: ./deploy_prod.sh"
+echo "  To deploy to production: ./scriptsdeploy_prod.sh"
 echo ""

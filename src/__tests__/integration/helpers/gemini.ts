@@ -1,7 +1,7 @@
 // ============================================================
 // Real Gemini API caller for integration tests.
 //
-// Replicates the core logic of GeminiService.generateJson() using
+// Replicates the core logic of GeminiService.generate() with a JSON schema using
 // xmlhttprequest for synchronous HTTP — the same blocking behaviour
 // as GAS's UrlFetchApp.fetch().
 //
@@ -116,7 +116,7 @@ function extractJson(raw: string): any {
 /**
  * Calls the Gemini API synchronously and returns the raw text response.
  * No JSON schema — use this for prompts that request plain markdown output.
- * Mirrors GeminiService.generateText() / callTextApi_() in production.
+ * Mirrors GeminiService.generate() without a schema (plain text) in production.
  */
 export function callGeminiText(
   systemPrompt: string,
