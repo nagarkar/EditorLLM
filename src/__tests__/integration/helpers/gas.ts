@@ -79,6 +79,28 @@ export interface GasWebAppResult {
 }
 
 /**
+ * Bounded string for Error messages. Full HTML sign-in pages are multi‑MB and
+ * blow up Jest + jest.file-reporter output when JSON.parse fails on HTTP 200.
+ */
+function snippetForGasError_(raw: string, maxLen = 400): string {
+  if (!raw) return '(empty body)';
+  const probe = raw.slice(0, 8000);
+  const looksHtml =
+    /<!doctype html/i.test(probe) ||
+    /accounts\.google\.com/i.test(probe) ||
+    /\/v3\/signin/i.test(probe);
+  const clip = raw.length <= maxLen ? raw : `${raw.slice(0, maxLen)}…`;
+  if (looksHtml) {
+    // Omit a body snippet — even 400 chars of minified HTML is noisy in Jest output.
+    return (
+      `non-JSON HTML (${raw.length} bytes) — usually Google sign-in or a stale ` +
+      `web-app echo step; check ADC (userinfo.email), webAppUrl, deployment access.`
+    );
+  }
+  return raw.length <= maxLen ? raw : `${clip} (${raw.length} bytes total)`;
+}
+
+/**
  * Invokes a GAS function via the web app's doPost() endpoint.
  *
  * The web app must be deployed with:
@@ -219,7 +241,7 @@ export function runGasFunction(
     parsed = JSON.parse(raw);
   } catch {
     throw new Error(
-      `Web app response is not valid JSON (HTTP ${status}): ${raw}`
+      `Web app response is not valid JSON (HTTP ${status}): ${snippetForGasError_(raw)}`
     );
   }
 

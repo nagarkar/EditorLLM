@@ -29,7 +29,7 @@ export interface ContextSection {
  *   style_profile    — StyleProfile tab, plain text or markdown
  *   self_instructions — the agent's own instruction tab, plain or markdown
  *   tab              — any named tab, plain or markdown, optional char limit
- *   merged_content   — MergedContent tab with optional char slice
+ *   manuscript   — Manuscript tab with optional char slice
  *
  * Runtime sources (passed in per-call via RuntimeCtx):
  *   passage    — the tab text being annotated (W2)
@@ -37,10 +37,11 @@ export interface ContextSection {
  *   anchor_tab — content of the tab the comment is anchored to (W3)
  */
 export type ContextSource =
+  | { kind: 'literal';           text: string }
   | { kind: 'style_profile';     format: 'plain' | 'markdown' }
   | { kind: 'self_instructions'; format: 'plain' | 'markdown' }
-  | { kind: 'tab';               tabName: string; format: 'plain' | 'markdown'; charLimit?: number }
-  | { kind: 'merged_content';    charLimit?: number }
+  | { kind: 'tab';               tabName: string; format: 'plain' | 'markdown'; charLimit?: number; fallback?: string }
+  | { kind: 'manuscript';    charLimit?: number }
   | { kind: 'passage' }
   | { kind: 'threads' }
   | { kind: 'anchor_tab' };
@@ -56,6 +57,7 @@ export type ResponseFormat =
   | 'instruction_update'    // { proposed_full_text: string }
   | 'annotation_operations' // { operations: Operation[] }
   | 'thread_replies'        // { responses: { threadId, reply }[] }
+  | 'bookmark_directives'   // { operations: CustomOperation[] }
   | 'plain_markdown';       // raw string, no JSON schema (GeneralPurposeAgent W1)
 
 /**
@@ -63,7 +65,7 @@ export type ResponseFormat =
  * Each step is identified by kind; the interpreter executes them in order.
  */
 export type PostStep =
-  | { kind: 'evaluate_style_profile' } // LLM-as-judge quality score (Architect W1)
+  | { kind: 'evaluate_instruction_quality' }
   | { kind: 'validate_operations' };   // drop hallucinated match_text values (W2)
 
 /** Full configuration for one agent workflow (W1, W2, or W3). */
@@ -98,6 +100,12 @@ export interface WorkflowDef {
 
   /** Optional post-processing steps. */
   postSteps?: PostStep[];
+
+  /** Optional: Schema provider for custom directives (used when responseFormat is bookmark_directives) */
+  schemaProvider?: () => object;
+
+  /** Optional: Builder to map an operation into a typed directive payload for bookmark directives */
+  directiveBuilder?: (operation: any) => { type: string; payload: Record<string, unknown> };
 }
 
 // ── System prompt ─────────────────────────────────────────────────────────────
@@ -155,6 +163,12 @@ export interface AgentDefinition {
    * Must be the full expanded string (SYSTEM_PREAMBLE already interpolated).
    */
   systemPrompt: SystemPromptDef;
+
+  /**
+   * Markdown rubric for the fast-tier LLM-as-judge after W1. Must match the
+   * concrete agent's `INSTRUCTION_QUALITY_RUBRIC` (after `.trim()`).
+   */
+  instructionQualityRubric: string;
 
   /**
    * Declared workflows.  Only keys present here are offered in the UI and

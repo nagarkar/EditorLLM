@@ -1,0 +1,42 @@
+{
+  "scriptId": "1zWDCD44AwK2VnEuVEagOnAhPZMvbtHUEO5X_AtM6NO3mYmEqNeUgzRUn",
+  "projectId": "gen-lang-client-0265782387",
+  "rootDir": "dist",
+  "scriptExtensions": [
+    ".js",
+    ".gs"
+  ],
+  "htmlExtensions": [
+    ".html"
+  ],
+  "jsonExtensions": [
+    ".json"
+  ],
+  "filePushOrder": [
+    "dist/Types.js",
+    "dist/Constants.js",
+    "dist/StringProcessor.js",
+    "dist/agentHelpers.js",
+    "dist/w1FormatGuidelines.js",
+    "dist/agentPrompts.js",
+    "dist/GeminiService.js",
+    "dist/ElevenLabsService.js",
+    "dist/DocOps.js",
+    "dist/CollaborationHelpers.js",
+    "dist/CollaborationService.js",
+    "dist/BaseAgent.js",
+    "dist/ArchitectAgent.js",
+    "dist/EarTuneAgent.js",
+    "dist/AuditAgent.js",
+    "dist/TetherAgent.js",
+    "dist/GeneralPurposeAgent.js",
+    "dist/MarkdownService.js",
+    "dist/TabMergerHelpers.js",
+    "dist/TabMerger.js",
+    "dist/CommentProcessorHelpers.js",
+    "dist/CommentProcessor.js",
+    "dist/Tracer.js",
+    "dist/Code.js"
+  ],
+  "skipSubdirectories": false
+}

@@ -5,42 +5,9 @@
 class AuditAgent extends BaseAgent {
 
   readonly SYSTEM_PROMPT = `
-${BaseAgent.SYSTEM_PREAMBLE}
+${SYSTEM_PREAMBLE}
 
-# Role: Logical Auditor (Technical Audit)
-You verify that all physics claims, mathematical statements, and Chid Axiom
-applications are internally consistent with the StyleProfile and prior chapters.
-
-## Responsibilities
-1. Flag any contradiction with the Chid Axiom as stated in the manuscript.
-2. Identify missing or incorrect LaTeX captions on equations.
-3. Check that physical constants and unit systems are consistent throughout.
-
-Use thinkingLevel: High — reason step-by-step before generating output.
-
-When proposing changes (content_annotation), provide LaTeX in reason where applicable.
-
-## Markdown Requirements (instruction_update only)
-When generating TechnicalAudit instructions, your proposed_full_text MUST be
-valid GitHub-Flavored Markdown. Rules:
-- Use ## (H2) for top-level sections (e.g. ## Chid Axioms, ## LaTeX Requirements)
-- Use ### (H3) for sub-sections
-- Use - bullet points for checklist items and axiom listings
-- Use **bold** for axiom names, constants, and rule names
-- Use *italic* for equation symbols (e.g. *ħ*, *c*)
-- Every section must start with a ## heading followed by content
-`.trim();
-
-  protected readonly EXAMPLE_CONTENT = `
-# TechnicalAudit — System Prompt Example
-
-Audit the following passage for:
-1. Chid Axiom consistency (consciousness as ground of all physical law).
-2. LaTeX caption completeness for all equations.
-3. Unit and constant consistency (SI units unless manuscript specifies otherwise).
-
-Return a content_update with one operation per identified issue.
-Each reason must cite the specific axiom or physical principle violated.
+${AUDIT_SYSTEM_PROMPT_BODY}
 `.trim();
 
   readonly tags = ['@audit', '@auditor'];
@@ -48,53 +15,41 @@ Each reason must cite the specific axiom or physical principle violated.
 
   private static readonly CHUNK_SIZE = 5;
 
+  protected getAgentId(): string {
+    return 'audit';
+  }
+
+  protected getInstructionQualityRubric(): string {
+    return AUDIT_INSTRUCTION_QUALITY_RUBRIC;
+  }
+
   generateCommentResponsesPrompt(opts: { styleProfile: string; auditInstructions: string; passageContext: string; threads: CommentThread[] }): string {
     return this.buildStandardPrompt({
       'Style Profile': opts.styleProfile,
       'Technical Audit Instructions': opts.auditInstructions,
       'Passage Context': opts.passageContext,
       'Threads': this.formatThreadsForBatch_(opts.threads),
-    }, [
-      `For each thread, perform a targeted technical audit of the selected passage.`,
-      `Identify any axiom violations, LaTeX caption issues, or constant errors.`,
-      `End each reply with "— AI Editorial Assistant".`,
-      `Return a JSON object with "responses": an array of {threadId, reply} entries,`,
-      `one per thread you are replying to.`
-    ].join(' '));
+    }, AUDIT_W3_INSTRUCTIONS);
   }
 
-  generateInstructionPrompt(opts: { styleProfile: string; existingAudit: string; manuscript: string }): string {
+  generateInstructionPrompt(opts: { styleProfile: string; existingAudit: string; manuscript: string; lastGenerated: string }): string {
     return this.buildStandardPrompt({
       'Style Profile': opts.styleProfile,
       'Current Technical Audit Instructions (if any)': opts.existingAudit,
-      'Manuscript Sample (for axiom extraction)': opts.manuscript.slice(0, 6000),
+      'Last Generated Instructions': opts.lastGenerated,
+      'Manuscript Sample (for principle extraction)': opts.manuscript.slice(0, 20000) || 'NOT PROVIDED',
     }, [
-      `Generate a comprehensive TechnicalAudit system prompt that:`,
-      `1. Lists all Chid Axioms and physical principles as stated in the manuscript.`,
-      `2. Defines LaTeX caption requirements for this document.`,
-      `3. Specifies the unit system and physical constants in use.`,
-      `4. Provides specific audit checklist items derived from the manuscript.`,
-      ``,
-      `Return a JSON object with:`,
-      `- proposed_full_text: the complete new TechnicalAudit instructions`
-    ].join('\\n'));
+      AUDIT_W1_INSTRUCTIONS,
+      W1_FORMAT_GUIDELINES,
+    ].join('\n'));
   }
 
   generateTabAnnotationPrompt(opts: { styleProfile: string; auditInstructions: string; passage: string; tabName: string }): string {
     return this.buildStandardPrompt({
       'Style Profile': opts.styleProfile,
       'Technical Audit Instructions': opts.auditInstructions,
-      [`Passage To Audit (from tab: "${opts.tabName}")`]: opts.passage,
-    }, [
-      `Perform a full technical audit. Check every claim against the Chid Axiom,`,
-      `all equations for valid LaTeX captions, and all physical constants for`,
-      `correct SI values and units.`,
-      ``,
-      `Return a JSON object with:`,
-      `- operations: one per issue found. Each must have:`,
-      `    - match_text: verbatim 3–4-word phrase from the passage above`,
-      `    - reason: specific axiom, constant, or caption rule violated, plus suggested correction`
-    ].join('\\n'));
+      [W2_PASSAGE_SECTION_TITLE]: opts.passage,
+    }, AUDIT_W2_INSTRUCTIONS);
   }
 
   protected commentChunkSize_() { return AuditAgent.CHUNK_SIZE; }
@@ -118,27 +73,32 @@ Each reason must cite the specific axiom or physical principle violated.
     const styleProfile = this.getTabMarkdown_(Constants.TAB_NAMES.STYLE_PROFILE);
     this.assertStyleProfileValid_(styleProfile);
     const existing = this.getTabMarkdown_(Constants.TAB_NAMES.TECHNICAL_AUDIT);
-    const manuscript = this.getTabContent_(Constants.TAB_NAMES.MERGED_CONTENT);
+    const manuscript = this.getTabContent_(Constants.TAB_NAMES.MANUSCRIPT);
 
+    const lastGenerated = this.readLastGeneratedInstructions_(Constants.TAB_NAMES.TECHNICAL_AUDIT);
     const userPrompt = this.generateInstructionPrompt({
       styleProfile,
       existingAudit: existing,
       manuscript,
+      lastGenerated,
     });
 
-    const geminiResult = this.callGemini_(
+    // Plain-text Gemini call — no JSON schema — eliminates buffering timeout.
+    const rawText = this.callGemini_(
       this.SYSTEM_PROMPT,
       userPrompt,
-      { schema: this.instructionUpdateSchema_(), tier: Constants.MODEL.THINKING }  // Technical reasoning — use thinking model
-    ) as { proposed_full_text: string };
+      { tier: Constants.MODEL.THINKING }  // Technical reasoning — use thinking model
+    ) as string;
 
+    const proposedText = extractMarkdownFromJsonWrapper(rawText);
     const update: RootUpdate = {
       workflow_type: 'instruction_update',
       review_tab: Constants.TAB_NAMES.TECHNICAL_AUDIT,
-      proposed_full_text: geminiResult.proposed_full_text,
+      proposed_full_text: proposedText,
     };
 
     CollaborationService.processUpdate(update);
+    this.evaluateInstructions(proposedText);
   }
 
   /**

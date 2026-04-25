@@ -26,7 +26,7 @@ Click **Initialize Tabs** in the Setup section of the sidebar. This creates the 
 
 | Tab | Location | Purpose |
 |---|---|---|
-| MergedContent | Root | Holds the combined manuscript text |
+| Manuscript | Root | Holds the combined manuscript text |
 | Agentic Instructions | Root | Parent tab for all agent configuration |
 | StyleProfile | Under Agentic Instructions | The generated style guide |
 | EarTune | Under Agentic Instructions | Ear-Tune system prompt |
@@ -44,6 +44,10 @@ You only need to do this once per document. Re-running it is safe — existing t
 The key is stored in your personal user properties. If an administrator has set a shared key via script properties, that key takes precedence and you can skip this step.
 
 To get a Gemini API key, visit [Google AI Studio](https://aistudio.google.com/apikey).
+
+### ElevenLabs Document Warning
+
+> **WARNING:** If you set an ElevenLabs API key for this document, anyone with access to the document can use ElevenLabs-related features from this add-on for that document. They cannot see the raw API key, but they can use the configured capability. Only enable ElevenLabs on documents you share with people you trust.
 
 ## Model Configuration
 

@@ -5,6 +5,7 @@
   "main": "dist/Code.js",
   "type": "commonjs",
   "scripts": {
+    "prebuild": "node scripts/generate_prompt_constants.js",
     "build": "rm -rf dist && tsc && node scripts/fixgas.js && cp appsscript.json dist/ && cp *.html dist/ 2>/dev/null || true",
     "lint": "eslint src/**/*.ts",
     "test": "npm run build && jest --config config/jest/jest.config.cjs",
@@ -16,6 +17,8 @@
     "build:all": "npm run build && npm run lint && npm run test",
     "deploy:staging": "bash scripts/deploy.sh --skip-e2e",
     "deploy:prod": "npm run build:all && clasp deploy --deploymentId AKfycbwb1ZcM2nmBtN2YVY5cIofl3X__Cdtln912ZC3nOxC5cpMB_Gm-OH-jkIoJWwNZW0XI",
+    "addon:prechecks": "bash addon/gcp-for-addon.sh --yes && bash addon/fix-appscript-json.sh",
+    "deploy:addon": "npm run build:all && npm run addon:prechecks && cp appsscript-addon.json dist/appsscript.json && clasp --project .clasp.addon.json deploy",
     "dump_prompts": "node scripts/dump_prompts.js",
     "postbuild": "npm run dump_prompts"
   },

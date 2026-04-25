@@ -57,6 +57,43 @@ for (const filePath of files) {
     ''
   );
 
+  // Emit var aliases for ALL_CAPS exported constants (e.g. W1_FORMAT_GUIDELINES).
+  //
+  // `export function foo(){}` compiles to:
+  //   function foo() {}      ← function DECLARATION is a flat-scope global ✓
+  //   exports.foo = foo;
+  //
+  // `export const BAR = "..."` compiles to:
+  //   exports.BAR = "...";   ← no standalone variable, NOT a flat-scope global ✗
+  //
+  // For ALL_CAPS names (conventional constant names), add a `var` alias so the
+  // value is accessible as a bare global in GAS flat scope.
+  // Skip `exports.X = void 0` (TypeScript's initialiser guard).
+  //
+  // Two-pass strategy:
+  //   Pass A — single-line assignments (scalar values, strings, etc.).
+  //            Excludes lines whose RHS begins with `[` or `{` to avoid
+  //            injecting a `var` declaration inside a multi-line literal.
+  //   Pass B — multi-line array literals that close with `\n];`.
+  //            Inserts the alias after the closing bracket.
+  // Pass A: single-line ALL_CAPS exports (scalars, strings, chained-init lines).
+  // Skip void-0 guards and lines whose value begins with `[` or `{` (multi-line literals).
+  // Uses a callback so the RHS can be checked after whitespace trimming —
+  // avoids the `\s*` backtracking pitfall that makes `(?![{)` lookaheads unreliable.
+  content = content.replace(
+    /^exports\.([A-Z][A-Z0-9_]+)\s*=\s*(.+)$/gm,
+    (match, name, rhs) => {
+      const v = rhs.trimStart();
+      if (/^void\b/.test(v) || /^[[\{]/.test(v)) return match;
+      return `${match}\nvar ${name} = exports.${name};`;
+    }
+  );
+  // Pass B: multi-line array ALL_CAPS exports — insert var alias after `];`.
+  content = content.replace(
+    /(exports\.([A-Z][A-Z0-9_]+)\s*=\s*\[[\s\S]*?\n\];)/g,
+    (match, _full, name) => `${match}\nvar ${name} = exports.${name};`
+  );
+
   // Prepend the exports shim (only if not already present).
   if (!content.startsWith(EXPORTS_SHIM)) {
     content = EXPORTS_SHIM + content;

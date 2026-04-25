@@ -373,7 +373,7 @@ describeE2E('E2E: commentProcessorRun() is idempotent — no duplicate replies',
 // once, and asserts each thread was dispatched to the correct agent.
 // Uses LONG_TIMEOUT because @architect and @audit call the thinking-tier model.
 //
-// Note: the test doc may lack StyleProfile / Technical Audit / Merged Content
+// Note: the test doc may lack StyleProfile / Technical Audit / Manuscript
 // tabs — that's intentional. Agents log warnings but handle empty context
 // gracefully, so a meaningful reply is still produced.
 
@@ -641,13 +641,13 @@ describeE2E('E2E: setupStandardTabs — all standard tabs exist after setup', ()
     console.log(`[E2E 8] tabs: ${JSON.stringify(tabNames)}`);
 
     const expected = [
-      'MergedContent',
+      'Manuscript',
       'Agentic Instructions',
       'Agentic Scratch',
       'StyleProfile',
       'EarTune Instructions',
       'Audit Instructions',
-      'TetherInstructions',
+      'Tether Instructions',
       'General Purpose Instructions',
     ];
     for (const name of expected) {

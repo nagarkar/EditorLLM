@@ -5,6 +5,8 @@ transcripts/
 .env
 .env.integration
 .last_*
+.integration-gemini-token-estimates.log
+.integration-gemini-cache.json
 # Jest test-pattern leak files (bare jest invocations without quoting args)
 *W2
 E2E:*

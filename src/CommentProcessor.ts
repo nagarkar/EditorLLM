@@ -131,15 +131,7 @@ const CommentProcessor = (() => {
    */
   function buildTabDirectory_(): Map<string, string> {
     const directory = new Map<string, string>();
-
-    function visit_(tabs: GoogleAppsScript.Document.Tab[]): void {
-      for (const tab of tabs) {
-        directory.set(tab.getId(), tab.getTitle());
-        visit_(tab.getChildTabs());
-      }
-    }
-
-    visit_(DocumentApp.getActiveDocument().getTabs());
+    DocOps.walkTabs(tab => directory.set(tab.getId(), tab.getTitle()));
     Tracer.info(`[CommentProcessor] buildTabDirectory_: ${directory.size} tab(s) indexed`);
     return directory;
   }

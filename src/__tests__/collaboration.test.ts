@@ -5,10 +5,8 @@
 import {
   findTextOrFallback_,
   matchesAgentPrefix_,
-  highlightRangeElement_,
   buildCommentContent_,
   MAX_COMMENT_CHARS,
-  resolveWorkflowType_,
 } from '../CollaborationHelpers';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -113,18 +111,14 @@ describe('findTextOrFallback_', () => {
     expect(body.findText).toHaveBeenCalledWith('the Chid Axiom');
   });
 
-  it('falls back to first word when exact match not found', () => {
-    const firstWordEl = { getElement: jest.fn(), getStartOffset: jest.fn(() => 0) };
-    const body = {
-      findText: jest.fn().mockImplementation((p: string) =>
-        p === '\\S+' ? firstWordEl : null
-      ),
-    } as any;
+  it('returns null when exact match not found', () => {
+    const body = { findText: jest.fn().mockReturnValue(null) } as any;
 
     const result = findTextOrFallback_(body, 'nonexistent phrase here');
 
-    expect(result).toBe(firstWordEl);
-    expect(body.findText).toHaveBeenCalledWith('\\S+');
+    expect(result).toBeNull();
+    // Only one findText call — no fallback attempted
+    expect(body.findText).toHaveBeenCalledTimes(1);
   });
 
   it('returns null when body is completely empty', () => {
@@ -133,10 +127,10 @@ describe('findTextOrFallback_', () => {
     const result = findTextOrFallback_(body, 'anything');
 
     expect(result).toBeNull();
-    expect(body.findText).toHaveBeenCalledTimes(2); // exact attempt + fallback
+    expect(body.findText).toHaveBeenCalledTimes(1); // exact attempt only — no fallback
   });
 
-  it('does not attempt fallback when exact match succeeds', () => {
+  it('calls findText exactly once when exact match succeeds', () => {
     const rangeEl = { getElement: jest.fn() };
     const body = { findText: jest.fn().mockReturnValue(rangeEl) } as any;
 
@@ -155,67 +149,6 @@ describe('findTextOrFallback_', () => {
       1,
       'price: \\$10\\.00 \\(USD\\)'
     );
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// highlightRangeElement_
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('highlightRangeElement_', () => {
-  const HIGHLIGHT_COLOR = '#FFD966';
-
-  function makeRangeEl(type: string, start = 2, end = 8) {
-    const textEl = {
-      setBackgroundColor: jest.fn(),
-      setBold:            jest.fn(),
-    };
-    const el = {
-      getType:  jest.fn().mockReturnValue(type),
-      asText:   jest.fn().mockReturnValue(textEl),
-    };
-    return {
-      rangeEl: {
-        getElement:             jest.fn().mockReturnValue(el),
-        getStartOffset:         jest.fn().mockReturnValue(start),
-        getEndOffsetInclusive:  jest.fn().mockReturnValue(end),
-      } as any,
-      textEl,
-    };
-  }
-
-  it('calls setBackgroundColor with the provided color and correct offsets', () => {
-    const { rangeEl, textEl } = makeRangeEl('TEXT', 3, 10);
-
-    highlightRangeElement_(rangeEl, HIGHLIGHT_COLOR);
-
-    expect(textEl.setBackgroundColor).toHaveBeenCalledWith(3, 10, HIGHLIGHT_COLOR);
-  });
-
-  it('calls setBold(true) with correct offsets', () => {
-    const { rangeEl, textEl } = makeRangeEl('TEXT', 3, 10);
-
-    highlightRangeElement_(rangeEl, HIGHLIGHT_COLOR);
-
-    expect(textEl.setBold).toHaveBeenCalledWith(3, 10, true);
-  });
-
-  it('does nothing when element type is not TEXT', () => {
-    const { rangeEl, textEl } = makeRangeEl('PARAGRAPH');
-
-    highlightRangeElement_(rangeEl, HIGHLIGHT_COLOR);
-
-    expect(textEl.setBackgroundColor).not.toHaveBeenCalled();
-    expect(textEl.setBold).not.toHaveBeenCalled();
-  });
-
-  it('handles zero-length range (start === end)', () => {
-    const { rangeEl, textEl } = makeRangeEl('TEXT', 5, 5);
-
-    highlightRangeElement_(rangeEl, HIGHLIGHT_COLOR);
-
-    expect(textEl.setBackgroundColor).toHaveBeenCalledWith(5, 5, HIGHLIGHT_COLOR);
-    expect(textEl.setBold).toHaveBeenCalledWith(5, 5, true);
   });
 });
 
@@ -270,50 +203,6 @@ describe('buildCommentContent_', () => {
     expect(truncated).toBe(true);
     expect(content).toContain(BM_URL);
     expect(content.length).toBeLessThanOrEqual(MAX_COMMENT_CHARS);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// resolveWorkflowType_
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('resolveWorkflowType_', () => {
-  it('routes instruction_update correctly', () => {
-    const update = {
-      workflow_type: 'instruction_update' as const,
-      review_tab: 'StyleProfile',
-      proposed_full_text: '# Style',
-      operations: [],
-    };
-    expect(resolveWorkflowType_(update)).toBe('instruction_update');
-  });
-
-  it('routes content_annotation correctly', () => {
-    const update = {
-      workflow_type: 'content_annotation' as const,
-      target_tab: 'Chapter 1',
-      operations: [{ match_text: 'some text', reason: 'reason' }],
-    };
-    expect(resolveWorkflowType_(update)).toBe('content_annotation');
-  });
-
-  it('only returns one of the two known types', () => {
-    for (const wt of ['instruction_update', 'content_annotation'] as const) {
-      const result = resolveWorkflowType_({ workflow_type: wt, operations: [] });
-      expect(['instruction_update', 'content_annotation']).toContain(result);
-    }
-  });
-
-  it('each call routes to a distinct handler — never both', () => {
-    const onInstruction = jest.fn();
-    const onAnnotation  = jest.fn();
-    const handlers = { instruction_update: onInstruction, content_annotation: onAnnotation };
-
-    handlers[resolveWorkflowType_({ workflow_type: 'instruction_update', operations: [] })]({ workflow_type: 'instruction_update', operations: [] });
-    handlers[resolveWorkflowType_({ workflow_type: 'content_annotation', operations: [] })]({ workflow_type: 'content_annotation', operations: [] });
-
-    expect(onInstruction).toHaveBeenCalledTimes(1);
-    expect(onAnnotation).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -405,7 +294,7 @@ describe('RootUpdate schema validation', () => {
   it('content_annotation does not require review_tab or proposed_full_text', () => {
     const valid: RootUpdate = {
       workflow_type: 'content_annotation',
-      target_tab: 'MergedContent',
+      target_tab: 'Manuscript',
       operations: [{ match_text: 'the observer collapses', reason: 'Awkward rhythm.' }],
     };
     expect(valid.workflow_type).toBe('content_annotation');
@@ -431,7 +320,7 @@ describe('RootUpdate schema validation', () => {
 describe('TAB_NAMES constants', () => {
   it('standard tab names are defined with no duplicates', () => {
     const expected = [
-      'MergedContent',
+      'Manuscript',
       'Agentic Instructions',
       'StyleProfile',
       'EarTune',
@@ -1017,7 +906,7 @@ describe('deleteAnnotation_ — named-range deletion paths via clearAgentAnnotat
     // returns empty in case the code path changes
     (global as any).mockDocumentTab.getNamedRanges.mockReturnValue([]);
 
-    // DocOps.getTabByName returns null (default) → clearTabHighlights_ is a no-op
+    // DocOps.getTabByName returns null (default) → removeOrphanedEntitiesOnTab_ exits early
     ((global as any).DocOps.getTabByName as jest.Mock).mockReturnValue(null);
 
     (global as any).CollaborationService.clearAgentAnnotations(

@@ -7,7 +7,7 @@ import tsParser from '@typescript-eslint/parser';
 export default [
   {
     files: ['src/**/*.ts'],
-    ignores: ['src/__tests__/**/*.ts'],
+    ignores: ['src/__tests__/**/*.ts', 'src/experimental/**/*.ts'],
     languageOptions: {
       parser: tsParser,
       parserOptions: {
@@ -59,6 +59,22 @@ export default [
       'no-console': 'warn',              // use Logger.log in GAS instead
       'eqeqeq': ['warn', 'always'],
       'no-var': 'warn',                  // prefer const/let
+    },
+  },
+  {
+    // Experimental files: TypeScript modules (import/export intentional).
+    // These compile to dist/experimental/ which is dead code in GAS — the
+    // no-restricted-syntax import/export rule does not apply here.
+    files: ['src/experimental/**/*.ts'],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: { ecmaVersion: 2019, sourceType: 'module' },
+    },
+    plugins: { '@typescript-eslint': tsPlugin },
+    rules: {
+      'no-console': 'off',
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      'no-unreachable': 'error',
     },
   },
   {

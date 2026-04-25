@@ -43,6 +43,7 @@ for (const key of Object.getOwnPropertyNames(ctx)) {
 const CODE_FUNCTIONS = [
   'getDebugMode', 'saveDebugMode', 'getUserPref', 'saveUserPref',
   'getHighlightColor', 'saveHighlightColor',
+  'getUserAllowedManagedTabs', 'getManageableTabNames',
   'runTrackedJob_', 'hasUiContext_', 'showLogSidebar',
   'architectGenerateInstructions', 'earTuneGenerateInstructions',
   'auditorGenerateInstructions', 'tetherGenerateInstructions',

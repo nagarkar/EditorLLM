@@ -16,8 +16,9 @@
 // ── Text matching ─────────────────────────────────────────────────────────────
 
 /**
- * Tries to find matchText in the body.
- * Falls back to the very first non-whitespace word if not found.
+ * Returns the first RangeElement matching matchText in the body, or null if
+ * not found. Never falls back to an arbitrary location — a missing match_text
+ * means the operation should be skipped, not silently misfired on wrong text.
  */
 export function findTextOrFallback_(
   body: GoogleAppsScript.Document.Body,
@@ -28,9 +29,9 @@ export function findTextOrFallback_(
   if (exact) return exact;
 
   Tracer.warn(
-    `CollaborationService: match_text "${matchText}" not found — falling back to first word.`
+    `CollaborationService: match_text "${matchText}" not found in passage — skipping annotation.`
   );
-  return body.findText('\\S+');
+  return null;
 }
 
 // ── Prefix matching ───────────────────────────────────────────────────────────
@@ -56,25 +57,6 @@ export function matchesAgentPrefix_(content: string, agentPrefix: string | strin
 }
 
 // ── Highlighting ──────────────────────────────────────────────────────────────
-
-/**
- * Applies highlight color and bold to a RangeElement (TEXT elements only).
- * Kept for backward compatibility. New annotations use highlightNamedRange_
- * so the exact text range is stored and can be precisely reversed at clear time.
- */
-export function highlightRangeElement_(
-  rangeEl: GoogleAppsScript.Document.RangeElement,
-  color: string
-): void {
-  const el = rangeEl.getElement();
-  if (el.getType() !== DocumentApp.ElementType.TEXT) return;
-
-  const textEl = el.asText();
-  const start = rangeEl.getStartOffset();
-  const end = rangeEl.getEndOffsetInclusive();
-  textEl.setBackgroundColor(start, end, color);
-  textEl.setBold(start, end, true);
-}
 
 /**
  * Applies highlight color and bold to every TEXT element in a NamedRange.
@@ -153,14 +135,3 @@ export function buildCommentContent_(
   return { content, truncated: true };
 }
 
-// ── Workflow routing ──────────────────────────────────────────────────────────
-
-/**
- * Returns the workflow handler key for a given update.
- * Pure — no side effects, no GAS API calls.
- */
-export function resolveWorkflowType_(update: RootUpdate): 'instruction_update' | 'content_annotation' {
-  return update.workflow_type === 'instruction_update'
-    ? 'instruction_update'
-    : 'content_annotation';
-}

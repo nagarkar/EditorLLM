@@ -20,11 +20,11 @@
 
 The error message includes a list of available models to help you choose.
 
-### "MergedContent tab is empty"
+### "Manuscript tab is empty"
 
 **Cause:** The Structural Architect was run before merging any tabs.
 
-**Fix:** Use the Tab Merger to merge your chapter tabs into MergedContent first, then rerun the Architect.
+**Fix:** Use the Tab Merger to merge your chapter tabs into Manuscript first, then rerun the Architect.
 
 ### "Tab X not found"
 

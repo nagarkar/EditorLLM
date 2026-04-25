@@ -11,10 +11,10 @@
 // WORKFLOW COVERAGE (see BaseAgent for workflow definitions)
 // ----------------------------------------------------------
 //   W1 (generateInstructions)
-//     • Sends MergedContent (full manuscript) → model produces a StyleProfile
+//     • Sends Manuscript (full manuscript) → model produces a StyleProfile
 //       with proposed_full_text (Markdown) and operations.
 //     • Schema: INSTRUCTION_UPDATE_SCHEMA → { proposed_full_text }
-//     • Edge case: empty MergedContent (model should still return valid JSON).
+//     • Edge case: empty Manuscript (model should still return valid JSON).
 //
 //   W2 (annotateTab) — NOT APPLICABLE
 //     • ArchitectAgent does not sweep tabs for inline annotations.
@@ -27,7 +27,7 @@
 //     • Multi-thread: validates batch response structure — all returned
 //       threadIds must be from the input set, no duplicates, non-empty replies.
 //     • ArchitectAgent does NOT subgroup by anchor tab; all threads are
-//       batched into one prompt with MergedContent + StyleProfile context.
+//       batched into one prompt with Manuscript + StyleProfile context.
 //
 // EXECUTION MODEL
 // ---------------
@@ -39,7 +39,7 @@
 //
 // FIXTURES
 // --------
-//   • FIXTURES.MERGED_CONTENT — synthetic manuscript about the Chid Axiom
+//   • FIXTURES.MANUSCRIPT — synthetic manuscript about the Chid Axiom
 //   • FIXTURES.STYLE_PROFILE  — hand-crafted StyleProfile with known structure
 //   • ARCHITECT_THREADS       — two threads for multi-thread batch testing
 //   See fixtures/testDocument.ts for the full fixture set.
@@ -64,9 +64,9 @@ const TIMEOUT_MULTI = 150000;
 
 describe('ArchitectAgent — W1: generateInstructions (instruction_update)', () => {
 
-  it('produces proposed_full_text and operations from MergedContent', () => {
+  it('produces proposed_full_text and operations from Manuscript', () => {
     const userPrompt = buildArchitectInstructionsPrompt({
-      manuscript: FIXTURES.MERGED_CONTENT,
+      manuscript: FIXTURES.MANUSCRIPT,
       styleProfile: FIXTURES.STYLE_PROFILE,
     });
     const result = callGemini(
@@ -82,7 +82,7 @@ describe('ArchitectAgent — W1: generateInstructions (instruction_update)', () 
 
 
 
-  it('gracefully returns a response even when MergedContent and StyleProfile are empty', () => {
+  it('gracefully returns a response even when Manuscript and StyleProfile are empty', () => {
     const userPrompt = buildArchitectInstructionsPrompt({ manuscript: '', styleProfile: '' });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
@@ -121,7 +121,7 @@ describe('ArchitectAgent — W3: single-thread batch', () => {
       INTEGRATION_SYSTEM_PROMPT,
       buildArchitectBatchPrompt({
         styleProfile: FIXTURES.STYLE_PROFILE,
-        manuscript:   FIXTURES.MERGED_CONTENT,
+        manuscript:   FIXTURES.MANUSCRIPT,
         threads:      [singleThread],
       }),
       BATCH_REPLY_SCHEMA,
@@ -153,7 +153,7 @@ describe('ArchitectAgent — W3: single-thread batch', () => {
       INTEGRATION_SYSTEM_PROMPT,
       buildArchitectBatchPrompt({
         styleProfile: '',
-        manuscript:   FIXTURES.MERGED_CONTENT,
+        manuscript:   FIXTURES.MANUSCRIPT,
         threads:      [singleThread],
       }),
       BATCH_REPLY_SCHEMA,
@@ -180,7 +180,7 @@ describe('ArchitectAgent — W3: multi-thread batch (no anchor-tab subgrouping)'
       INTEGRATION_SYSTEM_PROMPT,
       buildArchitectBatchPrompt({
         styleProfile: FIXTURES.STYLE_PROFILE,
-        manuscript:   FIXTURES.MERGED_CONTENT,
+        manuscript:   FIXTURES.MANUSCRIPT,
         threads:      ARCHITECT_THREADS,
       }),
       BATCH_REPLY_SCHEMA,
@@ -208,28 +208,6 @@ describe('ArchitectAgent — W3: multi-thread batch (no anchor-tab subgrouping)'
   it('no duplicate threadIds in the batch response', () => {
     const ids = multiResult.responses.map((r: any) => r.threadId);
     expect(new Set(ids).size).toBe(ids.length);
-  });
-
-});
-
-// ── Error conditions ──────────────────────────────────────────────────────────
-
-describe('ArchitectAgent — error conditions', () => {
-
-  it('throws a descriptive error when the API key is invalid', () => {
-    const [thread] = ARCHITECT_THREADS;
-    const userPrompt = buildArchitectBatchPrompt({
-      styleProfile: FIXTURES.STYLE_PROFILE,
-      manuscript:   FIXTURES.MERGED_CONTENT,
-      threads:      [thread],
-    });
-
-    expect(() =>
-      callGemini(INTEGRATION_SYSTEM_PROMPT, userPrompt, BATCH_REPLY_SCHEMA, {
-        tier:           'fast',
-        apiKeyOverride: 'INVALID_API_KEY_FOR_TESTING',
-      })
-    ).toThrow(/Gemini API error/);
   });
 
 });

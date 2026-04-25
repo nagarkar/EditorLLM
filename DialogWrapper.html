@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <base target="_top">
+  <?!= include('sidebar_css'); ?>
+  <style>
+    /* ── DialogWrapper layout ─────────────────────────────
+       body.dialog-mode: same four views as Sidebar (Main / TTS / Publisher / Logs) via
+       switchTab(); header mirrors Sidebar controls except no "Popup" button.
+       Host window is showModelessDialog — drag the Google title bar to move.
+       ──────────────────────────────────────────────────── */
+
+    body.dialog-mode {
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    body.dialog-mode.minimized {
+      height: auto;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    #dw-shell {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    /* ── Dialog header ──────────────────────────────────── */
+    #dw-header {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      padding: 6px 10px;
+      background: var(--surface);
+      border-bottom: 2px solid var(--accent-muted);
+      flex-shrink: 0;
+    }
+    #dw-header-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--accent);
+      margin: 0;
+      padding: 0;
+      border: 0;
+      flex-shrink: 0;
+    }
+    #dw-header-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+      margin-left: auto;
+    }
+    #dw-header-toolbar button {
+      font-size: 11px;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+    #dw-header-toolbar .dw-toolbar-sep {
+      display: inline-block;
+      width: 1px;
+      height: 16px;
+      margin: 0 2px 0 4px;
+      background: var(--border);
+      flex-shrink: 0;
+    }
+
+    /* ── Minimized chip: full-bleed art, click anywhere restores ── */
+    #dw-minimized-strip {
+      display: none;
+      box-sizing: border-box;
+      width: 100%;
+      min-width: 64px;
+      min-height: 64px;
+      padding: 0;
+      margin: 0;
+      border: 0;
+      border-radius: 10px;
+      overflow: hidden;
+      cursor: pointer;
+      flex-shrink: 0;
+      align-self: center;
+    }
+    .dw-minimized-art {
+      display: block;
+      width: 100%;
+      min-height: 64px;
+      min-width: 64px;
+      aspect-ratio: 1 / 1;
+      background-color: #0d1117;
+      background-image:
+        radial-gradient(ellipse 80% 60% at 35% 25%, rgba(138, 180, 248, 0.35), transparent 55%),
+        linear-gradient(155deg, #1a3461 0%, #121212 45%, #1e1e1e 100%);
+      background-size: cover;
+    }
+
+    body.minimized #dw-header,
+    body.minimized #dw-content {
+      display: none;
+    }
+    body.minimized #dw-minimized-strip {
+      display: block;
+    }
+    body.dialog-mode.minimized #dw-shell {
+      flex: 0 0 auto;
+    }
+
+    #dw-content {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    #dw-content #main-panel,
+    #dw-content #tts-panel,
+    #dw-content #publisher-panel {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 12px 12px;
+      min-width: 0;
+      min-height: 0;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    #dw-content #main-panel::-webkit-scrollbar,
+    #dw-content #tts-panel::-webkit-scrollbar,
+    #dw-content #publisher-panel::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+    }
+
+    /* Toolbar duplicates live in #dw-header; hide sidebar title row */
+    body.dialog-mode #dw-content #sidebar-title-row {
+      display: none !important;
+    }
+
+    body.dialog-mode:not(.log-view) #dw-content #log-section {
+      display: none !important;
+    }
+
+    body.dialog-mode.log-view #dw-content #log-section {
+      display: flex !important;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+      border-left: none;
+    }
+    body.dialog-mode.log-view #dw-content #log-panel {
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    body.dialog-mode.log-view #dw-content #log-panel::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+    }
+  </style>
+</head>
+
+<body class="dialog-mode">
+
+  <div id="dw-shell">
+    <div id="dw-header">
+      <h2 id="dw-header-title"><?= title ?></h2>
+      <div id="dw-header-toolbar">
+        <button type="button" id="dw-tab-main" class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="switchTab('main')">Main</button>
+        <button type="button" id="dw-tab-tts"  class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="switchTab('tts')">TTS</button>
+        <button type="button" id="dw-tab-publisher" class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="switchTab('publisher')">Publisher</button>
+        <button type="button" id="dw-tab-logs" class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="switchTab('logs')">Logs</button>
+        <span class="dw-toolbar-sep" aria-hidden="true"></span>
+        <button type="button" class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="dwMinimize()" title="Minimize">↓ Min</button>
+      </div>
+    </div>
+
+    <div id="dw-minimized-strip" onclick="dwRestore()" title="Click to restore EditorLLM" role="button" tabindex="0"
+         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();dwRestore();}">
+      <div class="dw-minimized-art" role="presentation"></div>
+    </div>
+
+    <div id="dw-content">
+      <?!= content ?>
+    </div>
+  </div>
+
+  <script>
+    var DW_FULL_W = <?= dialogWidth ?>;
+    var DW_FULL_H = <?= dialogHeight ?>;
+    /** Small square; host may enforce a minimum — art fills the iframe */
+    var DW_MIN_W = 72;
+    var DW_MIN_H = 72;
+
+    function dwResizeHost_(w, h) {
+      try {
+        if (typeof google !== 'undefined' && google.script && google.script.host) {
+          if (typeof google.script.host.setWidth === 'function') {
+            google.script.host.setWidth(w);
+          }
+          if (typeof google.script.host.setHeight === 'function') {
+            google.script.host.setHeight(h);
+          }
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    function dwMinimize() {
+      document.body.classList.add('minimized');
+      dwResizeHost_(DW_MIN_W, DW_MIN_H);
+    }
+    function dwRestore() {
+      document.body.classList.remove('minimized');
+      dwResizeHost_(DW_FULL_W, DW_FULL_H);
+    }
+  </script>
+
+</body>
+
+</html>

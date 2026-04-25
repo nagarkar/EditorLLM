@@ -172,19 +172,31 @@ const DocOps = (() => {
 
     // Desired tabs: [title, parentTitle | undefined]
     const desired: [string, string | undefined][] = [
-      [Constants.TAB_NAMES.MERGED_CONTENT, undefined],
+      [Constants.TAB_NAMES.MANUSCRIPT, undefined],
       [Constants.TAB_NAMES.AGENTIC_INSTRUCTIONS, undefined],
       [Constants.TAB_NAMES.AGENTIC_SCRATCH, undefined],
+      [Constants.TAB_NAMES.PUBLISHER_ROOT, undefined],
       [Constants.TAB_NAMES.STYLE_PROFILE, Constants.TAB_NAMES.AGENTIC_INSTRUCTIONS],
       [Constants.TAB_NAMES.EAR_TUNE, Constants.TAB_NAMES.AGENTIC_INSTRUCTIONS],
+      [Constants.TAB_NAMES.TTS_INSTRUCTIONS, Constants.TAB_NAMES.AGENTIC_INSTRUCTIONS],
       [Constants.TAB_NAMES.TECHNICAL_AUDIT, Constants.TAB_NAMES.AGENTIC_INSTRUCTIONS],
       [Constants.TAB_NAMES.TETHER_INSTRUCTIONS, Constants.TAB_NAMES.AGENTIC_INSTRUCTIONS],
       [Constants.TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS, Constants.TAB_NAMES.AGENTIC_INSTRUCTIONS],
+      [Constants.TAB_NAMES.PUBLISHER_INSTRUCTIONS, Constants.TAB_NAMES.AGENTIC_INSTRUCTIONS],
       [`${Constants.TAB_NAMES.STYLE_PROFILE} Scratch`, Constants.TAB_NAMES.AGENTIC_SCRATCH],
       [`${Constants.TAB_NAMES.EAR_TUNE} Scratch`, Constants.TAB_NAMES.AGENTIC_SCRATCH],
+      [`${Constants.TAB_NAMES.TTS_INSTRUCTIONS} Scratch`, Constants.TAB_NAMES.AGENTIC_SCRATCH],
       [`${Constants.TAB_NAMES.TECHNICAL_AUDIT} Scratch`, Constants.TAB_NAMES.AGENTIC_SCRATCH],
       [`${Constants.TAB_NAMES.TETHER_INSTRUCTIONS} Scratch`, Constants.TAB_NAMES.AGENTIC_SCRATCH],
       [`${Constants.TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS} Scratch`, Constants.TAB_NAMES.AGENTIC_SCRATCH],
+      [`${Constants.TAB_NAMES.PUBLISHER_INSTRUCTIONS} Scratch`, Constants.TAB_NAMES.AGENTIC_SCRATCH],
+      [Constants.TAB_NAMES.PUBLISHER_TITLE, Constants.TAB_NAMES.PUBLISHER_ROOT],
+      [Constants.TAB_NAMES.PUBLISHER_COPYRIGHT, Constants.TAB_NAMES.PUBLISHER_ROOT],
+      [Constants.TAB_NAMES.PUBLISHER_TOC, Constants.TAB_NAMES.PUBLISHER_ROOT],
+      [Constants.TAB_NAMES.PUBLISHER_ABOUT_AUTHOR, Constants.TAB_NAMES.PUBLISHER_ROOT],
+      [Constants.TAB_NAMES.PUBLISHER_SALES, Constants.TAB_NAMES.PUBLISHER_ROOT],
+      [Constants.TAB_NAMES.PUBLISHER_HOOKS, Constants.TAB_NAMES.PUBLISHER_ROOT],
+      [Constants.TAB_NAMES.PUBLISHER_COVER, Constants.TAB_NAMES.PUBLISHER_ROOT],
     ];
 
     // Filter to only missing tabs
@@ -417,6 +429,81 @@ const DocOps = (() => {
     }
   }
 
+  /**
+   * Walks the full tab tree depth-first, invoking callback for every tab.
+   * Centralises the recursive DocumentApp.getTabs() traversal so callers
+   * (CollaborationService, CommentProcessor) share one implementation.
+   */
+  function walkTabs(callback: (tab: GoogleAppsScript.Document.Tab) => void): void {
+    function walk_(tabs: GoogleAppsScript.Document.Tab[]): void {
+      for (const tab of tabs) {
+        callback(tab);
+        walk_(tab.getChildTabs());
+      }
+    }
+    walk_(getDoc_().getTabs());
+  }
+
+  /**
+   * Returns the user-configured allowlist of tabs that may receive managed
+   * destructive passes (orphan NR/bookmark removal, etc.), or null when all
+   * non-blocked tabs are eligible.
+   *
+   * TODO: Resolve allowlist from persistent config when product policy is finalized.
+   *
+   * @returns null   — every tab not under a NEVER_PROCESSED_TABS subtree is eligible.
+   *          string[] — only listed titles are eligible (still blocked if they fall
+   *                     under a never-processed root subtree).
+   */
+  function getUserAllowedManagedTabs_(): ManagedTabsList {
+    return null;
+  }
+
+  /**
+   * Titles of the three never-processed roots plus every descendant tab in the tree.
+   */
+  function collectNeverProcessedSubtreeTabTitles_(): Set<string> {
+    const roots = new Set<string>();
+    for (const t of Constants.NEVER_PROCESSED_TABS) roots.add(t);
+    const blocked = new Set<string>();
+    function walk(
+      tabs: GoogleAppsScript.Document.Tab[],
+      underBlocked: boolean
+    ): void {
+      for (const tab of tabs) {
+        const title = tab.getTitle();
+        const blockedHere = underBlocked || roots.has(title);
+        if (blockedHere) blocked.add(title);
+        walk(tab.getChildTabs(), blockedHere);
+      }
+    }
+    walk(getDoc_().getTabs(), false);
+    return blocked;
+  }
+
+  /**
+   * Returns true when `tabName` is eligible for managed operations:
+   *   (a) the tab must NOT be in the never-processed subtree
+   *       (Constants.NEVER_PROCESSED_TABS roots and all their descendants).
+   *   (b) when getUserAllowedManagedTabs() returns an allowlist, the tab must
+   *       appear in it; when it returns null, any non-blocked tab is eligible.
+   *
+   * Emits a Tracer.error and returns false when the tab is skipped so callers
+   * get observability without needing their own logging.
+   */
+  function isManagedTab_(tabName: string): boolean {
+    const neverSubtree = collectNeverProcessedSubtreeTabTitles_();
+    if (neverSubtree.has(tabName)) {
+      Tracer.error(`isManagedTab: skipping "${tabName}" — excluded (never-processed subtree)`);
+      return false;
+    }
+    const allowed = getUserAllowedManagedTabs_();
+    if (allowed === null) return true;
+    if (allowed.indexOf(tabName) !== -1) return true;
+    Tracer.error(`isManagedTab: skipping "${tabName}" — not in user-allowed managed tabs`);
+    return false;
+  }
+
   return {
     getTabByName,
     getTabIdByName,
@@ -427,5 +514,11 @@ const DocOps = (() => {
     ensureStandardTabs,
     tabExists,
     clearBodySafely,
+    walkTabs,
+    /** Returns the raw user allowlist (null = all non-blocked tabs). */
+    getUserAllowedManagedTabs: getUserAllowedManagedTabs_,
+    /** Returns true when a tab is eligible for managed destructive operations. */
+    isManagedTab: isManagedTab_,
+    getNeverProcessedSubtreeTabTitles: collectNeverProcessedSubtreeTabTitles_,
   };
 })();

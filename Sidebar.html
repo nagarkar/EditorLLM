@@ -6,190 +6,604 @@
   <?!= include('sidebar_css'); ?>
 </head>
 
-<body>
-  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; padding-bottom:8px; border-bottom:2px solid #ede7f6;">
-    <h2 style="margin:0; padding:0; border:0;">⚡ EditorLLM</h2>
-    <div style="display:flex; gap:4px; align-items:center;">
-      <button class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="copyAllSessionLogs()" title="Copy all session logs to clipboard">📥 Copy Logs</button>
-      <button class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="google.script.run.showLogSidebar()">📋 Logs</button>
+<!-- autoShowLogs is set server-side by showSidebar(true) from runTrackedJob_ -->
+<body class="<?= autoShowLogs ? 'auto-log-view' : '' ?>">
+  <!-- MultiSelectTabs component: must live in <body> so DialogWrapper can include
+       it when it extracts <body> content via openAsDialog(). Do NOT move back to
+       <head> — the dialog strips the head and MultiSelectTabs would be undefined. -->
+  <?!= include('MultiSelectTabs'); ?>
+
+  <div id="toast-host" class="toast-host" aria-live="polite"></div>
+
+  <!-- ══════════════════════════════════════════════════════
+       MAIN PANEL — hidden when log view is active
+       ══════════════════════════════════════════════════════ -->
+  <div id="main-panel">
+
+    <!-- Icon map: ⊡ = copy-logs | ≡ = toggle-log-view | ↗ = open-dialog -->
+    <div id="sidebar-title-row" style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; padding-bottom:8px; border-bottom:2px solid #1A3461;">
+      <h2 style="margin:0; padding:0; border:0;">EditorLLM</h2>
+      <div style="display:flex; gap:4px; align-items:center;">
+        <button class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="switchTab('main')">Main</button>
+        <button class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="switchTab('tts')">TTS</button>
+        <button class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="switchTab('publisher')">Publisher</button>
+        <button class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="switchTab('logs')">Logs</button>
+        <button class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="openInDialog()" id="dialog-launch-btn" title="Open in wider dialog">↗</button>
+      </div>
+    </div>
+
+    <!-- ── Model Configuration ───────────────────────────── -->
+    <details>
+      <summary class="section-label" style="cursor: pointer; user-select: none;">Model Configuration</summary>
+      <div class="agent-card" style="margin-top:4px;">
+        <div class="section-label">LLM Service</div>
+        <div style="display:flex; gap:16px; margin:6px 0 10px 0;">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+            <input type="radio" name="llm-service" id="llm-service-gemini" value="gemini" onchange="onLlmServiceChange()">
+            <span class="agent-desc" style="margin:0;">Gemini</span>
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+            <input type="radio" name="llm-service" id="llm-service-openai" value="openai" onchange="onLlmServiceChange()">
+            <span class="agent-desc" style="margin:0;">OpenAI</span>
+          </label>
+        </div>
+
+        <div id="gemini-options">
+          <div class="section-label">Gemini API key</div>
+          <div class="agent-desc" style="margin-bottom:6px;">
+            Saved to <strong>your</strong> Google account only.
+            If you have not saved one here, this shows <strong>unset</strong>
+            even when a deployment key exists in script properties.
+          </div>
+          <div class="key-row">
+            <input type="password" id="gemini-api-key" autocomplete="off" placeholder="" style="flex:1;">
+            <button class="btn-ghost btn-sm" onclick="saveGeminiApiKey()">Set</button>
+          </div>
+          <div class="status-box" id="gemini-api-key-status"></div>
+
+          <div class="agent-desc" style="margin-bottom:8px; margin-top:12px;">
+            Fast model: comments &amp; styling.
+            Thinking model: architect &amp; audit.
+          </div>
+          <div class="section-label" style="margin-top:4px;">Fast</div>
+          <select id="gemini-model-fast"
+            style="width:100%;margin-bottom:6px;padding:5px 8px;border:1px solid #383838;border-radius:4px;font-size:13px;background:#2A2A2A;color:#E0E0E0;"></select>
+          <div class="section-label">Thinking</div>
+          <select id="gemini-model-thinking"
+            style="width:100%;margin-bottom:6px;padding:5px 8px;border:1px solid #383838;border-radius:4px;font-size:13px;background:#2A2A2A;color:#E0E0E0;"></select>
+          <div class="section-label">DeepSeek</div>
+          <select id="gemini-model-deepseek"
+            style="width:100%;margin-bottom:8px;padding:5px 8px;border:1px solid #383838;border-radius:4px;font-size:13px;background:#2A2A2A;color:#E0E0E0;"></select>
+          <div class="btn-row">
+            <button class="btn-action" onclick="refreshAvailableModels()">Refresh List</button>
+            <button class="btn-secondary" onclick="loadModelConfig()">Load Saved</button>
+            <button class="btn-primary" onclick="saveModelConfig()">Save</button>
+          </div>
+          <div class="status-box" id="model-status"></div>
+        </div>
+
+        <div id="openai-options" style="display:none;">
+          <div class="section-label">OpenAI API key</div>
+          <div class="agent-desc" style="margin-bottom:6px;">
+            Saved to <strong>your</strong> Google account only.
+            Script properties may still provide a shared fallback key.
+          </div>
+          <div class="key-row">
+            <input type="password" id="openai-api-key" autocomplete="off" placeholder="" style="flex:1;">
+            <button class="btn-ghost btn-sm" onclick="saveOpenAiApiKey()">Set</button>
+          </div>
+          <div class="status-box" id="openai-api-key-status"></div>
+
+          <div class="agent-desc" style="margin-bottom:8px; margin-top:12px;">
+            Fast model: comments &amp; styling.
+            Thinking model: architect &amp; audit.
+          </div>
+          <div class="section-label" style="margin-top:4px;">Fast</div>
+          <input type="text" id="openai-model-fast"
+            style="width:100%;margin-bottom:6px;padding:5px 8px;border:1px solid #383838;border-radius:4px;font-size:13px;background:#2A2A2A;color:#E0E0E0;">
+          <div class="section-label">Thinking</div>
+          <input type="text" id="openai-model-thinking"
+            style="width:100%;margin-bottom:8px;padding:5px 8px;border:1px solid #383838;border-radius:4px;font-size:13px;background:#2A2A2A;color:#E0E0E0;">
+          <div class="btn-row">
+            <button class="btn-secondary" onclick="loadModelConfig()">Load Saved</button>
+            <button class="btn-primary" onclick="saveModelConfig()">Save</button>
+          </div>
+          <div class="status-box" id="model-status-openai"></div>
+        </div>
+
+        <div class="section-label" style="margin-top:12px;">Debug Mode</div>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:2px;">
+          <input type="checkbox" id="debug-mode-toggle" onchange="saveDebugMode(this.checked)"
+            style="width:16px; height:16px; cursor:pointer; accent-color:#8AB4F8;">
+          <span class="agent-desc" style="margin:0;">Show detailed tracing in log sidebar</span>
+        </div>
+        <div class="status-box" id="debug-mode-status"></div>
+
+        <div class="section-label" style="margin-top:10px;">Highlight Color</div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <input type="color" id="highlight-color" value="<?= Constants.HIGHLIGHT_COLOR ?>" onchange="saveHighlightColor()"
+            style="width:32px; height:32px; padding:0; border:1px solid #383838; border-radius:4px; cursor:pointer; background:#2A2A2A;">
+          <span class="agent-desc" style="margin:0;">Override default color</span>
+        </div>
+        <div class="status-box" id="color-status"></div>
+      </div>
+    </details>
+
+    <!--
+      Six cells in sidebar order (Architect → Merge). In dialog: row1 Architect|Tether,
+      row2 EarTune|GP, row3 Auditor|(col2 empty); Merge & Refresh uses
+      .dialog-agent-cell-full on row4 spanning both columns (see sidebar_css).
+    -->
+    <div class="dialog-agent-grid">
+      <div class="dialog-agent-cell">
+        <!-- ── Structural Architect ──────────────────────────── -->
+        <div class="section-label">Structural Architect</div>
+        <div class="agent-card">
+          <div class="agent-title">Style Mimic</div>
+          <div class="agent-desc">
+            Reads Manuscript and synthesises a StyleProfile that constrains all agents.
+          </div>
+          <div class="btn-row">
+            <button class="btn-primary" onclick="runArchitectInstructions()">Generate</button>
+          </div>
+          <!-- Score badge — hidden until an evaluation has been stored -->
+          <div id="style-profile-score-row" style="display:none; margin-top:8px;">
+            <span class="section-label" style="display:inline;">StyleProfile quality: </span>
+            <span id="style-profile-score-badge"
+              style="font-weight:700; font-size:13px; padding:2px 7px; border-radius:10px;
+                     background:#1A2040; color:#8AB4F8;">—/5</span>
+            <span id="style-profile-score-rationale"
+              style="display:block; font-size:11px; color:#A0A0A0; margin-top:2px;"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="dialog-agent-cell">
+        <!-- ── Ear Tune ──────────────────────────────────── -->
+        <div class="section-label">Ear Tune</div>
+        <div class="agent-card">
+          <div class="agent-title">Ear-Tune</div>
+          <div class="agent-desc">
+            Proposes rhythmic, audio-optimised rewrites for prose passages.
+          </div>
+          <div class="btn-row agent-actions agent-actions--sweep">
+            <button class="btn-green" onclick="runEarTune()">Ear-Tune</button>
+            <button class="btn-action" onclick="openSweepOverlay('eartune','EarTune')">Sweep Tabs…</button>
+            <button class="btn-primary" onclick="runEarTuneInstructions()">Generate</button>
+          </div>
+          <div id="eartune-instr-score-row" class="instr-score-row" style="display:none; margin-top:8px;">
+            <span class="section-label" style="display:inline;">Instruction quality: </span>
+            <span id="eartune-instr-score-badge" class="instr-score-badge">—/5</span>
+            <span id="eartune-instr-score-rationale" class="instr-score-rationale"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="dialog-agent-cell">
+        <!-- ── Logical Auditor ───────────────────────────────── -->
+        <div class="section-label">Logical Auditor</div>
+        <div class="agent-card">
+          <div class="agent-title">Technical Audit</div>
+          <div class="agent-desc">
+            Verifies Chid Axiom consistency and LaTeX caption completeness.
+          </div>
+          <div class="btn-row agent-actions agent-actions--sweep">
+            <button class="btn-green" onclick="runAudit()">Audit</button>
+            <button class="btn-action" onclick="openSweepOverlay('audit','Audit')">Sweep Tabs…</button>
+            <button class="btn-primary" onclick="runAuditorInstructions()">Generate</button>
+          </div>
+          <div id="audit-instr-score-row" class="instr-score-row" style="display:none; margin-top:8px;">
+            <span class="section-label" style="display:inline;">Instruction quality: </span>
+            <span id="audit-instr-score-badge" class="instr-score-badge">—/5</span>
+            <span id="audit-instr-score-rationale" class="instr-score-rationale"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="dialog-agent-cell">
+        <!-- ── Tether Agent ──────────────────────────────────── -->
+        <div class="section-label">Tether Agent</div>
+        <div class="agent-card">
+          <div class="agent-title">External Anchor</div>
+          <div class="agent-desc">
+            Validates historical citations, flags errors vs. controversies, and suggests alignment opportunities.
+          </div>
+          <div class="btn-row agent-actions agent-actions--sweep">
+            <button class="btn-green" onclick="runTether()">Tether</button>
+            <button class="btn-action" onclick="openSweepOverlay('tether','Tether')">Sweep Tabs…</button>
+            <button class="btn-primary" onclick="runTetherInstructions()">Generate</button>
+          </div>
+          <div id="tether-instr-score-row" class="instr-score-row" style="display:none; margin-top:8px;">
+            <span class="section-label" style="display:inline;">Instruction quality: </span>
+            <span id="tether-instr-score-badge" class="instr-score-badge">—/5</span>
+            <span id="tether-instr-score-rationale" class="instr-score-rationale"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="dialog-agent-cell">
+        <!-- ── General Purpose Agent ──────────────────────────── -->
+        <div class="section-label">General Purpose Agent</div>
+        <div class="agent-card">
+          <div class="agent-title">Dialogue Responder</div>
+          <div class="agent-desc">
+            Replies to comment threads ending with <strong>@AI</strong>.
+            Instructions are read from the <em>Comment Instructions</em> tab.
+          </div>
+          <div class="btn-row agent-actions">
+            <button class="btn-green" onclick="runProcessComments()">Process @AI Comments</button>
+            <button class="btn-primary" onclick="runCommentInstructions()">Generate</button>
+          </div>
+          <div id="gp-instr-score-row" class="instr-score-row" style="display:none; margin-top:8px;">
+            <span class="section-label" style="display:inline;">Instruction quality: </span>
+            <span id="gp-instr-score-badge" class="instr-score-badge">—/5</span>
+            <span id="gp-instr-score-rationale" class="instr-score-rationale"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="dialog-agent-cell">
+        <!-- ── TTS Agent ──────────────────────────────────────── -->
+        <div class="section-label">TTS Agent</div>
+        <div class="agent-card">
+          <div class="agent-title">Text-to-Speech</div>
+          <div class="agent-desc">
+            Annotates passages with TTS directives (voice, model, stability) and generates
+            instruction guidelines for the <em>TTS Instructions</em> tab.
+          </div>
+          <div class="btn-row agent-actions agent-actions--sweep">
+            <button class="btn-green" onclick="runTtsAnnotate()">Annotate</button>
+            <button class="btn-action" onclick="openSweepOverlay('tts','TTS')">Sweep Tabs…</button>
+            <button class="btn-primary" onclick="runTtsAgentInstructions()">Generate</button>
+          </div>
+          <div id="tts-instr-score-row" class="instr-score-row" style="display:none; margin-top:8px;">
+            <span class="section-label" style="display:inline;">Instruction quality: </span>
+            <span id="tts-instr-score-badge" class="instr-score-badge">—/5</span>
+            <span id="tts-instr-score-rationale" class="instr-score-rationale"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="dialog-agent-cell dialog-agent-cell-full">
+        <!-- ── Create Manuscript & Refresh — full-width row in dialog (see sidebar_css) ── -->
+        <div class="section-label">Merge &amp; Refresh</div>
+        <div class="agent-card">
+          <div class="agent-title">Create Manuscript</div>
+          <div class="agent-desc">
+            Merges listed tabs into <em>Manuscript</em> in order, then refreshes all
+            agent instructions.
+          </div>
+          <!-- Multi-select autocomplete replaces the old textarea -->
+          <div id="merge-multiselect" style="margin-bottom:8px;"></div>
+          <div class="btn-row">
+            <button class="btn-secondary" onclick="loadSavedMergeNames()">Load Saved</button>
+            <button class="btn-secondary" onclick="saveMergeNames()">Save</button>
+            <button class="btn-green" id="mergeNowBtn" onclick="runMergeNow()">Create Manuscript</button>
+          </div>
+          <div class="btn-row" style="margin-top:6px;">
+            <button class="btn-primary" id="refreshInstructionsBtn" onclick="runFullInstructionRefresh()" style="width:100%;">Refresh All Instructions</button>
+          </div>
+          <div class="merge-progress" id="merge-progress"></div>
+          <div class="status-box" id="merge-status"></div>
+          <div class="status-box" id="refresh-status"></div>
+        </div>
+      </div>
+
+      <div class="dialog-agent-cell dialog-agent-cell-full">
+        <!-- ── Managed Tabs — persistent watchlist, no merge action ── -->
+        <div class="section-label">Managed Tabs</div>
+        <div class="agent-card">
+          <div class="agent-title">Managed Tabs</div>
+          <div class="agent-desc">
+            A persistent list of tabs used as the default scope for agent sweeps and
+            other operations. Saved per-document; does not trigger a merge.
+          </div>
+          <div id="managed-multiselect" style="margin-bottom:8px;"></div>
+          <div class="btn-row">
+            <button class="btn-secondary" onclick="loadSavedManagedTabNames()">Load Saved</button>
+            <button class="btn-secondary" onclick="saveManagedTabNames()">Save</button>
+          </div>
+          <div class="status-box" id="managed-tabs-status"></div>
+        </div>
+      </div>
+
+    </div><!-- /.dialog-agent-grid -->
+
+    <!-- ── Global status ─────────────────────────────────── -->
+    <div class="status-box" id="status"></div>
+
+    <div id="recent-runs" class="recent-runs">
+      <div class="recent-runs-label">Recent activity</div>
+      <ul id="recent-runs-list" class="recent-runs-list"></ul>
+    </div>
+
+    <!-- ── Multi-Tab Sweep Overlay ───────────────────────── -->
+    <div id="sweep-overlay" class="sweep-overlay" style="display:none;">
+      <div class="sweep-panel">
+        <div class="sweep-title">Select Tabs to Sweep</div>
+        <div class="sweep-agent-badge" id="sweep-agent-badge"></div>
+        <div id="sweep-tab-list" class="sweep-tab-list"></div>
+        <div class="btn-row" style="margin-top:12px;">
+          <button class="btn-secondary" onclick="closeSweepOverlay()">Cancel</button>
+          <button class="btn-green" id="sweep-confirm-btn" onclick="confirmSweep()">Run Sweep</button>
+        </div>
+        <div class="status-box" id="sweep-status"></div>
+      </div>
+    </div>
+
+  </div><!-- /#main-panel -->
+  
+  <!-- ══════════════════════════════════════════════════════
+       TTS PANEL — for managing TTS directives and audio generation
+       ══════════════════════════════════════════════════════ -->
+  <div id="tts-panel" style="display:none;">
+    <div class="agent-card" style="padding:10px;">
+
+      <!-- Row 1: Selected Tab label + dropdown -->
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+        <span class="section-label" style="flex-shrink:0; margin:0; white-space:nowrap;">Selected Tab</span>
+        <select id="tts-tab-select" onchange="onTtsTabChange()" style="flex:1;"></select>
+      </div>
+
+      <!-- Row 2: Directives column | Configuration column -->
+      <div style="display:flex; gap:10px; align-items:flex-start;">
+
+        <!-- Left — Directives table -->
+        <div style="flex:1; min-width:0;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+            <span class="section-label" style="margin:0;">Directives</span>
+            <button class="btn-secondary btn-sm" onclick="openAddDirectiveOverlay()">Add</button>
+          </div>
+          <div id="tts-directives-list" style="overflow:auto; max-height:300px;"></div>
+        </div>
+
+        <!-- Right — Configuration table -->
+        <div style="flex:1; min-width:0;">
+          <div class="section-label" style="margin-bottom:6px;">Configuration</div>
+          <table style="width:100%; border-collapse:collapse; font-size:12px;">
+            <tr>
+              <td style="padding:2px 6px 5px 0; white-space:nowrap; color:var(--text-secondary); vertical-align:middle;">ElevenLabs Key</td>
+              <td style="padding:2px 0 5px; width:100%; vertical-align:middle;">
+                <div class="key-row">
+                  <input type="password" id="tts-apiKey" autocomplete="off" placeholder="sk_…" style="flex:1; font-size:11px;">
+                  <button class="btn-ghost btn-sm" onclick="saveTtsApiKey()">Set</button>
+                </div>
+                <div style="margin-top:4px; font-size:11px; line-height:1.35; color:var(--warn-fg); background:var(--warn-bg); border:1px solid var(--border); border-radius:4px; padding:6px 8px;">
+                  <strong>WARNING:</strong> Anyone with access to this document can use ElevenLabs features configured for it, but they cannot see the raw key.
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:2px 6px 5px 0; white-space:nowrap; color:var(--text-secondary); vertical-align:middle;">Default Model</td>
+              <td style="padding:2px 0 5px; vertical-align:middle;">
+                <select id="tts-modelSelect" style="width:100%; font-size:11px;"></select>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:2px 6px 5px 0; white-space:nowrap; color:var(--text-secondary); vertical-align:middle;">Voice Type</td>
+              <td style="padding:2px 0 5px; vertical-align:middle;">
+                <select id="tts-voiceType" onchange="loadTtsVoices()" style="width:100%; font-size:11px;">
+                  <option value="">All</option>
+                  <option value="narration">Narration</option>
+                  <option value="conversational">Conversational</option>
+                  <option value="characters">Characters</option>
+                </select>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:2px 6px 5px 0; white-space:nowrap; color:var(--text-secondary); vertical-align:middle;">Default Voice</td>
+              <td style="padding:2px 0 5px; vertical-align:middle;">
+                <select id="tts-voiceSelect" onchange="saveTtsVoicePreference()" style="width:100%; font-size:11px;"></select>
+              </td>
+            </tr>
+          </table>
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-top:4px;">
+            <select id="tts-dictSelect" style="flex:1; font-size:11px; margin-right:6px;" onchange="saveTtsDictSelection()">
+              <option value="">(no dictionary)</option>
+            </select>
+            <button class="btn-pron-link" onclick="openPronOverlay()" style="flex-shrink:0; font-size:11px; white-space:nowrap;">Pron. rules</button>
+          </div>
+          <div class="status-box" id="tts-dict-status" style="margin-top:3px;"></div>
+        </div>
+      </div>
+
+      <!-- Audio generation controls — below the two columns -->
+      <div style="margin-top:10px;">
+        <div class="btn-row">
+          <button class="btn-primary" id="tts-generateBtn" onclick="generateTtsAudio()">▶ Generate Audio</button>
+        </div>
+        <div id="tts-audio-player-container" style="display:none; margin-top:8px; padding:10px; border:1px solid #383838; border-radius:6px; background:#1E1E1E;">
+          <label>Audio Output</label>
+          <audio id="tts-audioPlayer" controls style="width:100%; margin-bottom:6px;"></audio>
+          <div id="tts-driveLinkWrap"></div>
+          <div id="tts-rename-row" style="display:none; margin-top:6px;">
+            <div class="key-row">
+              <input type="text" id="tts-rename-input" placeholder="New filename (without .mp3)" style="flex:1; font-size:12px;">
+              <button class="btn-secondary btn-sm" onclick="renameTtsAudioFile()">Rename</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Preview player: inline small player for directive previews -->
+      <div id="tts-preview-container" style="display:none; margin-top:6px; padding:6px 10px; border:1px solid #2A3A5A; border-radius:5px; background:#161E2E;">
+        <div style="font-size:11px; color:var(--text-secondary); margin-bottom:4px;">Preview</div>
+        <audio id="tts-previewPlayer" controls style="width:100%; height:28px;"></audio>
+      </div>
+
+      <div class="status-box" id="tts-status"></div>
+    </div>
+    
+    <!-- Pronunciation Dictionary Overlay -->
+    <div id="pron-overlay" class="sweep-overlay" style="display:none;" onclick="onPronBackdropClick(event)">
+      <div class="sweep-panel" style="max-width:95%; max-height:70vh; display:flex; flex-direction:column; padding:0; overflow:hidden;">
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px 10px; border-bottom:1px solid var(--border); flex-shrink:0;">
+          <div class="sweep-title" style="margin:0;">Pronunciation Dictionary</div>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <button class="btn-ghost btn-sm" id="pron-refresh-btn" onclick="refreshPronOverlay()" style="padding:3px 8px; font-size:12px; line-height:1;">&#x21BA; Refresh</button>
+            <button class="btn-ghost btn-sm" onclick="closePronOverlay()" style="padding:3px 8px; font-size:13px; line-height:1;">&#x2715;</button>
+          </div>
+        </div>
+        <!-- Dict metadata header — populated by renderPronTable() -->
+        <div id="pron-dict-meta" style="padding:8px 14px 0; flex-shrink:0; display:none;">
+          <div id="pron-dict-name" style="font-size:13px; font-weight:600; color:var(--text-primary);"></div>
+          <div id="pron-dict-ids" style="font-size:11px; color:var(--text-secondary); margin-top:2px; font-family:monospace;"></div>
+        </div>
+        <div id="pron-body" style="overflow-y:auto; padding:12px 14px; flex:1;">
+          <div id="pron-empty" style="font-size:12px; color:var(--text-secondary); text-align:center; padding:20px 0;">Loading&hellip;</div>
+        </div>
+        <!-- Static link to edit dictionaries in ElevenLabs -->
+        <div style="padding:8px 14px 10px; border-top:1px solid var(--border); flex-shrink:0;">
+          <a href="https://elevenlabs.io/app/studio?pronunciation-dictionaries=true"
+             target="_blank"
+             style="font-size:11px; color:#8AB4F8; text-decoration:none;">
+            Edit in ElevenLabs &#8599;
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit Directive Overlay -->
+      <div id="directive-edit-overlay" class="sweep-overlay" style="display:none;">
+        <div class="sweep-panel" style="max-width: 95%;">
+        <div class="sweep-title" id="directive-edit-title">Edit Directive</div>
+        <div id="directive-edit-content" style="margin-top:8px;">
+          <!-- Row 1: Model | Voice (2-col) -->
+          <div style="display:flex; gap:8px; margin-bottom:8px;">
+            <div style="flex:1; min-width:0;">
+              <label class="section-label">Model</label>
+              <select id="edit-tts-model" style="width:100%;"></select>
+            </div>
+            <div style="flex:1; min-width:0;">
+              <label class="section-label">Voice</label>
+              <select id="edit-voice-select" style="width:100%;"></select>
+            </div>
+          </div>
+          <!-- Row 2: Stability | Sim. Boost | Cancel | Save | Delete -->
+          <div style="display:flex; gap:6px; align-items:flex-end; flex-wrap:wrap;">
+            <div style="display:flex; flex-direction:column; flex:1; min-width:55px;">
+              <label class="section-label" style="font-size:10px;">Stability</label>
+              <input type="text" id="edit-stability" style="width:100%;">
+            </div>
+            <div style="display:flex; flex-direction:column; flex:1; min-width:55px;">
+              <label class="section-label" style="font-size:10px;">Sim. Boost</label>
+              <input type="text" id="edit-similarity-boost" style="width:100%;">
+            </div>
+            <button class="btn-secondary btn-sm" onclick="closeDirectiveEdit()">Cancel</button>
+            <button class="btn-primary btn-sm" onclick="saveDirectiveEdit()">Save</button>
+            <button class="btn-ghost btn-sm" id="directive-delete-btn" onclick="deleteDirectiveFromEdit()">Delete</button>
+          </div>
+          <input type="hidden" id="edit-bookmark-id">
+          <input type="hidden" id="edit-old-name">
+        </div>
+      </div>
     </div>
   </div>
 
-  <!-- ── Setup ─────────────────────────────────────────── -->
-  <div id="setup-section">
-    <div class="section-label">Setup</div>
-    <div class="btn-row">
-      <button class="btn-secondary" onclick="setupTabs()">Initialize Tabs</button>
-      <button class="btn-secondary" onclick="openApiKeyDialog()">Set API Key</button>
-    </div>
-  </div>
+  <!-- ══════════════════════════════════════════════════════
+       PUBLISHER PANEL — publishing tabs and packaging
+       ══════════════════════════════════════════════════════ -->
+  <div id="publisher-panel" style="display:none;">
+    <div class="agent-card" style="padding:10px;">
+      <h2 style="margin:0 0 10px;">Publisher &amp; Packaging</h2>
 
-  <!-- ── Model Configuration ───────────────────────────── -->
-  <details>
-    <summary class="section-label" style="cursor: pointer; user-select: none;">Model Configuration</summary>
-    <div class="agent-card" style="margin-top:4px;">
       <div class="agent-desc" style="margin-bottom:8px;">
-        Fast model: comments &amp; styling.
-        Thinking model: architect &amp; audit.
+        Generates publisher tabs under <strong>Publisher</strong>, audits <strong>Manuscript</strong>,
+        and builds EPUB or ACX-ready package folders.
       </div>
-      <div class="section-label" style="margin-top:4px;">Fast</div>
-      <select id="model-fast"
-        style="width:100%;margin-bottom:6px;padding:5px 8px;border:1px solid #bdbdbd;border-radius:4px;font-size:12px;"></select>
-      <div class="section-label">Thinking</div>
-      <select id="model-thinking"
-        style="width:100%;margin-bottom:6px;padding:5px 8px;border:1px solid #bdbdbd;border-radius:4px;font-size:12px;"></select>
-      <div class="section-label">DeepSeek</div>
-      <select id="model-deepseek"
-        style="width:100%;margin-bottom:8px;padding:5px 8px;border:1px solid #bdbdbd;border-radius:4px;font-size:12px;"></select>
+
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
+        <div class="section-label" style="margin:0;">Workflow Status</div>
+        <button class="btn-secondary btn-sm" onclick="refreshPublisherWorkflowState()">Refresh Status</button>
+      </div>
+      <div id="publisher-workflow-panel" class="publisher-workflow-shell" style="margin-bottom:12px;"></div>
+
+      <div class="section-label" style="margin-bottom:6px;">Publishing Tabs</div>
       <div class="btn-row">
-        <button class="btn-action" onclick="refreshAvailableModels()">Refresh List</button>
-        <button class="btn-secondary" onclick="loadModelConfig()">Load Saved</button>
-        <button class="btn-primary" onclick="saveModelConfig()">Save</button>
+        <button class="btn-secondary" onclick="runPublisherInstructions()">Generate Instructions</button>
+        <button class="btn-primary" onclick="openPublisherConfirm()">Generate All Publishing Tabs</button>
+        <button class="btn-action" onclick="runPublisherGenerateMissing()">Generate Missing Publishing Tabs</button>
       </div>
-      <div class="status-box" id="model-status"></div>
 
-      <div class="section-label" style="margin-top:12px;">Debug Mode</div>
-      <div style="display:flex; align-items:center; gap:8px; margin-bottom:2px;">
-        <input type="checkbox" id="debug-mode-toggle" onchange="saveDebugMode(this.checked)"
-          style="width:16px; height:16px; cursor:pointer; accent-color:#7c4dff;">
-        <span class="agent-desc" style="margin:0;">Show detailed tracing in log sidebar</span>
+      <div class="section-label" style="margin-top:12px; margin-bottom:6px;">Structure</div>
+      <div class="btn-row">
+        <button class="btn-action" onclick="runPublisherGenerateToc()">Generate Table of Contents</button>
+        <button class="btn-green" onclick="runPublisherStructuralAudit()">Run Structural Audit</button>
       </div>
-      <div class="status-box" id="debug-mode-status"></div>
 
-      <div class="section-label" style="margin-top:10px;">Highlight Color</div>
-      <div style="display:flex; align-items:center; gap:8px;">
-        <input type="color" id="highlight-color" value="<?= HIGHLIGHT_COLOR ?>" onchange="saveHighlightColor()"
-          style="width:32px; height:32px; padding:0; border:1px solid #ccc; border-radius:4px; cursor:pointer; background:none;">
-        <span class="agent-desc" style="margin:0;">Override default color</span>
+      <div class="section-label" style="margin-top:12px; margin-bottom:6px;">EPUB Export</div>
+      <div class="btn-row">
+        <button class="btn-primary" onclick="runPublisherBuildEpub()">Build EPUB Package</button>
       </div>
-      <div class="status-box" id="color-status"></div>
-    </div>
-  </details>
 
-  <!-- ── Structural Architect ──────────────────────────── -->
-  <div class="section-label">Structural Architect</div>
-  <div class="agent-card">
-    <div class="agent-title">Style Mimic</div>
-    <div class="agent-desc">
-      Reads MergedContent and synthesises a StyleProfile that constrains all agents.
-    </div>
-    <div class="btn-row">
-      <button class="btn-primary" onclick="runArchitectInstructions()">Generate</button>
-    </div>
-    <!-- Score badge — hidden until an evaluation has been stored -->
-    <div id="style-profile-score-row" style="display:none; margin-top:8px;">
-      <span class="section-label" style="display:inline;">StyleProfile quality: </span>
-      <span id="style-profile-score-badge"
-        style="font-weight:700; font-size:13px; padding:2px 7px; border-radius:10px;
-               background:#e8eaf6; color:#3949ab;">—/5</span>
-      <span id="style-profile-score-rationale"
-        style="display:block; font-size:11px; color:#666; margin-top:2px;"></span>
-    </div>
-  </div>
-
-  <!-- ── Ear Tune ──────────────────────────────────── -->
-  <div class="section-label">Ear Tune</div>
-  <div class="agent-card">
-    <div class="agent-title">Ear-Tune</div>
-    <div class="agent-desc">
-      Proposes rhythmic, audio-optimised rewrites for prose passages.
-    </div>
-    <div class="btn-row" style="margin-bottom:8px;">
-      <button class="btn-green" onclick="runEarTune()">Ear-Tune</button>
-      <button class="btn-action" onclick="openSweepOverlay('eartune','EarTune')">Sweep Tabs…</button>
-    </div>
-    <div class="btn-row">
-      <button class="btn-primary" onclick="runEarTuneInstructions()">Generate</button>
-    </div>
-  </div>
-
-  <!-- ── Logical Auditor ───────────────────────────────── -->
-  <div class="section-label">Logical Auditor</div>
-  <div class="agent-card">
-    <div class="agent-title">Technical Audit</div>
-    <div class="agent-desc">
-      Verifies Chid Axiom consistency and LaTeX caption completeness.
-    </div>
-    <div class="btn-row" style="margin-bottom:8px;">
-      <button class="btn-green" onclick="runAudit()">Audit</button>
-      <button class="btn-action" onclick="openSweepOverlay('audit','Audit')">Sweep Tabs…</button>
-    </div>
-    <div class="btn-row">
-      <button class="btn-primary" onclick="runAuditorInstructions()">Generate</button>
-    </div>
-  </div>
-
-  <!-- ── Tether Agent ──────────────────────────────────── -->
-  <div class="section-label">Tether Agent</div>
-  <div class="agent-card">
-    <div class="agent-title">External Anchor</div>
-    <div class="agent-desc">
-      Validates historical citations, flags errors vs. controversies, and suggests alignment opportunities.
-    </div>
-    <div class="btn-row" style="margin-bottom:8px;">
-      <button class="btn-green" onclick="runTether()">Tether Check</button>
-      <button class="btn-action" onclick="openSweepOverlay('tether','Tether')">Sweep Tabs…</button>
-    </div>
-    <div class="btn-row">
-      <button class="btn-primary" onclick="runTetherInstructions()">Generate</button>
-    </div>
-  </div>
-
-  <!-- ── General Purpose Agent ──────────────────────────── -->
-  <div class="section-label">General Purpose Agent</div>
-  <div class="agent-card">
-    <div class="agent-title">Dialogue Responder</div>
-    <div class="agent-desc">
-      Replies to comment threads ending with <strong>@AI</strong>.
-      Instructions are read from the <em>Comment Instructions</em> tab.
-    </div>
-    <div class="btn-row">
-      <button class="btn-green" onclick="runProcessComments()">Process @AI Comments</button>
-    </div>
-    <div class="btn-row" style="margin-top:8px;">
-      <button class="btn-primary" onclick="runCommentInstructions()">Generate</button>
-    </div>
-  </div>
-
-  <!-- ── Merge & Refresh ───────────────────────────────── -->
-  <div class="section-label">Merge &amp; Refresh</div>
-  <div class="agent-card">
-    <div class="agent-title">Tab Merger</div>
-    <div class="agent-desc">
-      Merges listed tabs (comma-separated) into <em>MergedContent</em> in order,
-      then automatically refreshes all agent instructions: Architect generates the
-      StyleProfile first; EarTune, Audit, Tether, and Comment update in parallel.
-    </div>
-    <textarea id="merge-tab-names" placeholder="Chapter 1, Chapter 2, Appendix A" rows="3"></textarea>
-    <div class="btn-row">
-      <button class="btn-secondary" onclick="loadSavedMergeNames()">Load Saved</button>
-      <button class="btn-secondary" onclick="saveMergeNames()">Save</button>
-      <button class="btn-green" id="mergeNowBtn" onclick="runMergeNow()">Merge Now</button>
-    </div>
-    <div class="btn-row" style="margin-top:6px;">
-      <button class="btn-primary" id="refreshInstructionsBtn" onclick="runFullInstructionRefresh()" style="width:100%;">Refresh All Instructions</button>
-    </div>
-    <div class="merge-progress" id="merge-progress"></div>
-    <div class="status-box" id="merge-status"></div>
-    <div class="status-box" id="refresh-status"></div>
-  </div>
-
-  <!-- ── Global status ─────────────────────────────────── -->
-  <div class="status-box" id="status"></div>
-
-  <!-- ── Multi-Tab Sweep Overlay ───────────────────────── -->
-  <div id="sweep-overlay" class="sweep-overlay" style="display:none;">
-    <div class="sweep-panel">
-      <div class="sweep-title">Select Tabs to Sweep</div>
-      <div class="sweep-agent-badge" id="sweep-agent-badge"></div>
-      <div id="sweep-tab-list" class="sweep-tab-list"></div>
-      <div class="btn-row" style="margin-top:12px;">
-        <button class="btn-secondary" onclick="closeSweepOverlay()">Cancel</button>
-        <button class="btn-green" id="sweep-confirm-btn" onclick="confirmSweep()">Run Sweep</button>
+      <div class="section-label" style="margin-top:12px; margin-bottom:6px;">ACX Audio Export</div>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
+        <div class="agent-desc" style="margin:0;">Select `.mp3` files from <strong>EditorLLM/Audio</strong>.</div>
+        <button class="btn-secondary btn-sm" onclick="refreshPublisherAudioFiles()">Refresh</button>
       </div>
-      <div class="status-box" id="sweep-status"></div>
+      <div id="publisher-audio-list" style="max-height:220px; overflow:auto; border:1px solid var(--border); border-radius:6px; padding:8px; background:#1B1B1B;"></div>
+      <div class="btn-row" style="margin-top:8px;">
+        <button class="btn-secondary btn-sm" onclick="movePublisherAudioSelection(-1)">Move Up</button>
+        <button class="btn-secondary btn-sm" onclick="movePublisherAudioSelection(1)">Move Down</button>
+        <button class="btn-primary" onclick="runPublisherBuildAcx()">Build ACX Package</button>
+      </div>
+
+      <div class="status-box" id="publisher-status"></div>
+      <div id="publisher-status-links" style="display:none; margin-top:6px; gap:8px; flex-wrap:wrap;"></div>
+    </div>
+
+    <div id="publisher-confirm-overlay" class="sweep-overlay" style="display:none;">
+      <div class="sweep-panel" style="max-width:480px;">
+        <div class="sweep-title">Generate All Publishing Tabs</div>
+        <div class="agent-desc" style="margin-top:8px;">
+          This will overwrite the current contents of <strong>Title</strong>, <strong>Copyright</strong>,
+          <strong>About The Author</strong>, <strong>Sales</strong>, <strong>Hooks</strong>, and <strong>Cover</strong>.
+        </div>
+        <div class="agent-desc" style="margin-top:8px;">
+          Existing tab content will still be passed to Gemini as preservation guidance before the tabs are rewritten.
+        </div>
+        <div class="btn-row" style="margin-top:12px;">
+          <button class="btn-secondary" onclick="closePublisherConfirm()">Cancel</button>
+          <button class="btn-primary" onclick="confirmPublisherGenerateAll()">Continue</button>
+        </div>
+      </div>
     </div>
   </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       LOG SECTION — hidden until toggleLogView() (sidebar or dialog).
+       ══════════════════════════════════════════════════════ -->
+  <div id="log-section">
+
+    <!-- Job selector -->
+    <div class="job-selector">
+      <select class="job-select" id="job-select" onchange="onJobSelectChange()">
+        <option value="">— No jobs yet —</option>
+      </select>
+      <div class="spinner hidden" id="spinner"></div>
+    </div>
+
+    <!-- Toolbar -->
+    <!-- Icon map: ↺ = refresh | ✕ = clear | ⊘ = close-completed | ↓ = autoscroll | ⊡ = copy-job | ⊞ = copy-all -->
+    <div class="log-toolbar">
+      <button class="icon-btn" onclick="refreshJobs()" title="Refresh jobs">↺</button>
+      <button class="icon-btn" onclick="clearLogPanel()" title="Clear log view">✕</button>
+      <button class="icon-btn" onclick="closeCompletedJobs()" title="Close completed jobs">⊘</button>
+      <button class="icon-btn" onclick="toggleAutoScroll()" id="autoscroll-btn" title="Auto-scroll ON — click to pause">↓</button>
+      <button class="icon-btn" onclick="copyJobLogs()" title="Copy this job's logs to clipboard">⊡</button>
+      <button class="icon-btn" onclick="copyAllLogs()" title="Copy ALL session logs to clipboard">⊞</button>
+      <span class="log-count" id="log-count">0 entries</span>
+    </div>
+
+    <!-- Scrollable log area -->
+    <div class="log-panel" id="log-panel">
+      <div class="log-empty" id="log-empty">Select a job to view logs…</div>
+    </div>
+
+    <!-- Footer -->
+    <div class="log-footer" id="log-footer">Connecting…</div>
+
+  </div><!-- /#log-section -->
 
   <?!= include('sidebar_js'); ?>
 </body>

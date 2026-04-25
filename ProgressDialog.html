@@ -3,32 +3,76 @@
 <head>
   <base target="_top">
   <style>
-    body { font-family: 'Google Sans', sans-serif; padding: 20px; font-size: 13px; text-align: center; }
-    #status { margin-top: 20px; padding: 10px; border-radius: 4px; display: none; }
-    .loading { background: #fff8e1; color: #f57f17; display: block; }
-    .error { background: #ffebee; color: #c62828; display: block; }
-    .spinner { margin-top: 10px; width: 24px; height: 24px; border: 3px solid #f3f3f3; border-top: 3px solid #6200ea; border-radius: 50%; animation: spin 1s linear infinite; display: inline-block; }
-    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    :root {
+      --bg:           #121212;
+      --text-primary: #E0E0E0;
+      --text-muted:   #A0A0A0;
+      --accent:       #8AB4F8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Google Sans', Arial, sans-serif;
+      font-size: 13px;
+      color: var(--text-primary);
+      background: var(--bg);
+      padding: 20px;
+      text-align: center;
+    }
+
+    .spinner {
+      margin: 0 auto 10px;
+      width: 24px; height: 24px;
+      border: 3px solid #2A2A2A;
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      display: inline-block;
+    }
+    @keyframes spin {
+      0%   { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .loader-text {
+      margin-top: 10px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    #status {
+      margin-top: 20px;
+      padding: 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      display: none;
+    }
+    /* error #EF9A9A on #3B1B1B → ~7.9:1 ✓ */
+    .error   { background: #3B1B1B; color: #EF9A9A; display: block; }
+    /* loading #FFD54F on #3B3020 → ~11.2:1 ✓ */
+    .loading { background: #3B3020; color: #FFD54F; display: block; }
   </style>
 </head>
 <body>
   <div id="loader">
     <div class="spinner"></div>
-    <div style="margin-top: 10px; color: #424242;">Generating instructions... Please wait.</div>
+    <div class="loader-text">Generating instructions… Please wait.</div>
   </div>
   <div id="status"></div>
+
   <script>
     var agentKey = "<?= agentKey ?>";
     window.onload = function() {
       var fn = agentKey + "GenerateInstructions";
       if (!google.script.run[fn]) {
-         document.getElementById('loader').style.display = 'none';
-         var errEl = document.getElementById('status');
-         errEl.className = 'error';
-         errEl.textContent = 'Error: Invalid agent mapping: ' + fn;
-         return;
+        document.getElementById('loader').style.display = 'none';
+        var errEl = document.getElementById('status');
+        errEl.className = 'error';
+        errEl.textContent = 'Error: Invalid agent mapping: ' + fn;
+        return;
       }
-      
+
       google.script.run
         .withSuccessHandler(function() {
           google.script.host.close();

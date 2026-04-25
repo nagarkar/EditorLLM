@@ -13,6 +13,16 @@
 
 import type { AgentDefinition, WorkflowDef, ContextSource, ModelTier } from './types';
 import { Constants } from '../Constants';
+import {
+  assertStyleProfileValid,
+  extractMarkdownFromJsonWrapper,
+  buildStandardPrompt,
+  validateOps,
+  annotationOperationsSchema,
+  threadRepliesSchema,
+  runInstructionQualityEval_,
+  instructionQualityDocumentPropKeysForAgentId_,
+} from '../agentHelpers';
 
 // ── Service interfaces ────────────────────────────────────────────────────────
 
@@ -62,56 +72,6 @@ interface RuntimeCtx {
   tabName?:        string;  // W2: name of the tab being annotated (for section title)
 }
 
-// ── Gemini schemas (mirrors BaseAgent schema methods) ────────────────────────
-
-function instructionUpdateSchema(): object {
-  return {
-    type: 'object',
-    properties: { proposed_full_text: { type: 'string' } },
-    required: ['proposed_full_text'],
-  };
-}
-
-function annotationOperationsSchema(): object {
-  return {
-    type: 'object',
-    properties: {
-      operations: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            match_text: { type: 'string' },
-            reason:     { type: 'string' },
-          },
-          required: ['match_text', 'reason'],
-        },
-      },
-    },
-    required: ['operations'],
-  };
-}
-
-function threadRepliesSchema(): object {
-  return {
-    type: 'object',
-    properties: {
-      responses: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            threadId: { type: 'string' },
-            reply:    { type: 'string' },
-          },
-          required: ['threadId', 'reply'],
-        },
-      },
-    },
-    required: ['responses'],
-  };
-}
-
 // ── AgentInterpreter ──────────────────────────────────────────────────────────
 
 export class AgentInterpreter {
@@ -136,27 +96,30 @@ export class AgentInterpreter {
     this.svc.docOps.ensureStandardTabs();
 
     if (wf.requiresStyleProfile !== false) {
-      const sp = this.svc.markdown.tabToMarkdown(Constants.TAB_NAMES.STYLE_PROFILE);
-      if (!sp.trim() || sp.trim().length < 200) {
-        throw new Error(
-          '[EditorLLM] StyleProfile is empty or incomplete (< 200 chars). ' +
-          'Run "Architect → Generate Instructions" before this workflow.'
-        );
-      }
+      assertStyleProfileValid(this.svc.markdown.tabToMarkdown(Constants.TAB_NAMES.STYLE_PROFILE));
     }
 
     const systemPrompt = this.resolveSystemPrompt_();
     const userPrompt   = this.buildPrompt_(wf, {});
 
     const raw = this.callGemini_(systemPrompt, userPrompt, wf);
-    const update = this.buildInstructionUpdate_(raw);
+    const update = this.buildInstructionUpdate_(raw, wf.responseFormat);
     this.svc.collab.processUpdate(update);
 
     // Post-steps
     for (const step of wf.postSteps ?? []) {
-      if (step.kind === 'evaluate_style_profile') {
-        const proposed = typeof raw === 'string' ? raw : (raw as any)?.proposed_full_text ?? '';
-        this.evaluateStyleProfile_(proposed);
+      if (step.kind === 'evaluate_instruction_quality') {
+        const proposed = extractMarkdownFromJsonWrapper(
+          typeof raw === 'string' ? raw : (raw as any)?.proposed_full_text ?? ''
+        );
+        runInstructionQualityEval_({
+          gemini: (s, u, o) =>
+            this.svc.gemini.generate(s, u, o.tier as ModelTier, { schema: o.schema, modelOverride: undefined }),
+          logTag: `[AgentInterpreter:${this.def.id}]`,
+          rubricMarkdown: this.def.instructionQualityRubric,
+          propKeys: instructionQualityDocumentPropKeysForAgentId_(this.def.id),
+          markdown: proposed,
+        });
       }
     }
   }
@@ -177,34 +140,45 @@ export class AgentInterpreter {
     }
 
     if (wf.requiresStyleProfile !== false) {
-      const sp = this.svc.markdown.tabToMarkdown(Constants.TAB_NAMES.STYLE_PROFILE);
-      if (!sp.trim() || sp.trim().length < 200) {
-        throw new Error(
-          '[EditorLLM] StyleProfile is empty or incomplete (< 200 chars). ' +
-          'Run "Architect → Generate Instructions" before this workflow.'
-        );
-      }
+      assertStyleProfileValid(this.svc.markdown.tabToMarkdown(Constants.TAB_NAMES.STYLE_PROFILE));
     }
 
     const systemPrompt = this.resolveSystemPrompt_();
     const userPrompt   = this.buildPrompt_(wf, { passage, tabName });
     const raw          = this.callGemini_(systemPrompt, userPrompt, wf);
 
-    const operations: Array<{ match_text: string; reason: string }> =
-      (raw as any)?.operations ?? [];
+    if (wf.responseFormat === 'bookmark_directives') {
+      const operations: any[] = (raw as any)?.operations ?? [];
+      const directives: DirectiveCreate[] = operations.map(op => {
+        const built = wf.directiveBuilder
+          ? wf.directiveBuilder(op)
+          : { type: 'custom', payload: op as Record<string, unknown> };
+        return {
+          match_text: op.match_text,
+          type: built.type,
+          payload: built.payload,
+        };
+      });
+      this.svc.collab.processUpdate({
+        workflow_type: 'bookmark_directives',
+        target_tab:    tabName,
+        directives:    directives,
+        agent_name:    this.def.commentPrefix,
+      });
+    } else {
+      const operations: Array<{ match_text: string; reason: string }> = (raw as any)?.operations ?? [];
+      // validate_operations post-step: drop ops where match_text is not in passage
+      const validOps = wf.postSteps?.some(s => s.kind === 'validate_operations')
+        ? validateOps(operations, passage)
+        : operations;
 
-    // validate_operations post-step: drop ops where match_text is not in passage
-    const validOps = wf.postSteps?.some(s => s.kind === 'validate_operations')
-      ? this.validateOps_(operations, passage)
-      : operations;
-
-    const update = {
-      workflow_type: 'content_annotation' as const,
-      target_tab:   tabName,
-      operations:   validOps,
-      agent_name:   this.def.commentPrefix,
-    };
-    this.svc.collab.processUpdate(update);
+      this.svc.collab.processUpdate({
+        workflow_type: 'content_annotation',
+        target_tab:   tabName,
+        operations:   validOps,
+        agent_name:   this.def.commentPrefix,
+      });
+    }
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────────
@@ -219,16 +193,16 @@ export class AgentInterpreter {
   private buildPrompt_(wf: WorkflowDef, rt: RuntimeCtx): string {
     const sections: Record<string, string | undefined | null> = {};
     for (const sec of wf.contextSections) {
-      const title = sec.source.kind === 'passage' && rt.tabName
-        ? `Passage To Sweep (from tab: "${rt.tabName}")`
-        : sec.title;
-      sections[title] = this.resolveSource_(sec.source, rt);
+      sections[sec.title] = this.resolveSource_(sec.source, rt);
     }
-    return this.buildStandardPrompt_(sections, wf.instructions);
+    return buildStandardPrompt(sections, wf.instructions);
   }
 
   private resolveSource_(source: ContextSource, rt: RuntimeCtx): string {
     switch (source.kind) {
+      case 'literal':
+        return source.text;
+
       case 'style_profile':
         return source.format === 'markdown'
           ? this.svc.markdown.tabToMarkdown(Constants.TAB_NAMES.STYLE_PROFILE)
@@ -239,16 +213,19 @@ export class AgentInterpreter {
           ? this.svc.markdown.tabToMarkdown(this.def.instructionTabName)
           : this.svc.docOps.getTabContent(this.def.instructionTabName);
 
-      case 'merged_content': {
-        const raw = this.svc.docOps.getTabContent(Constants.TAB_NAMES.MERGED_CONTENT);
+      case 'manuscript': {
+        const raw = this.svc.docOps.getTabContent(Constants.TAB_NAMES.MANUSCRIPT);
         return source.charLimit ? raw.slice(0, source.charLimit) : raw;
       }
 
       case 'tab': {
+        const resolvedTabName = source.tabName
+          .replace('${instructionTabName}', this.def.instructionTabName);
         const raw = source.format === 'markdown'
-          ? this.svc.markdown.tabToMarkdown(source.tabName)
-          : this.svc.docOps.getTabContent(source.tabName);
-        return source.charLimit ? raw.slice(0, source.charLimit) : raw;
+          ? this.svc.markdown.tabToMarkdown(resolvedTabName)
+          : this.svc.docOps.getTabContent(resolvedTabName);
+        const content = source.charLimit ? raw.slice(0, source.charLimit) : raw;
+        return content.trim() ? content : (source.fallback ?? '');
       }
 
       case 'passage':
@@ -262,23 +239,11 @@ export class AgentInterpreter {
     }
   }
 
-  /**
-   * Mirrors BaseAgent.buildStandardPrompt exactly — same template-literal
-   * escaping, same join separator, same trim().
-   */
-  private buildStandardPrompt_(
-    sections: Record<string, string | undefined | null>,
-    instructions: string
-  ): string {
-    const formattedParts = Object.entries(sections)
-      .map(([title, content]) => `## ${title}\\n\\n${content || '(not provided)'}\\n`);
-    return [...formattedParts, `\\n## Instructions\\n\\n${instructions || '(not provided)'}`].join('\\n').trim();
-  }
-
   private schemaFor_(wf: WorkflowDef): object | undefined {
     switch (wf.responseFormat) {
-      case 'instruction_update':    return instructionUpdateSchema();
+      case 'instruction_update':    return undefined;  // plain text — no buffering timeout
       case 'annotation_operations': return annotationOperationsSchema();
+      case 'bookmark_directives':   return wf.schemaProvider ? wf.schemaProvider() : undefined;
       case 'thread_replies':        return threadRepliesSchema();
       case 'plain_markdown':        return undefined;
     }
@@ -298,8 +263,12 @@ export class AgentInterpreter {
     );
   }
 
-  private buildInstructionUpdate_(raw: any): object {
-    const text = typeof raw === 'string' ? raw : (raw as any)?.proposed_full_text ?? '';
+  private buildInstructionUpdate_(raw: any, _responseFormat: string): object {
+    // Both instruction_update and plain_markdown now return plain text from Gemini.
+    // Always apply the JSON-wrapper guard in case the model ignores the instruction.
+    const text = extractMarkdownFromJsonWrapper(
+      typeof raw === 'string' ? raw : (raw as any)?.proposed_full_text ?? ''
+    );
     return {
       workflow_type:       'instruction_update' as const,
       review_tab:          this.def.instructionTabName,
@@ -307,58 +276,4 @@ export class AgentInterpreter {
     };
   }
 
-  private validateOps_(
-    ops: Array<{ match_text: string; reason: string }>,
-    passage: string
-  ): Array<{ match_text: string; reason: string }> {
-    const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-    const normPassage = norm(passage);
-    return ops.filter(op =>
-      op.match_text?.trim() &&
-      op.reason?.trim() &&
-      normPassage.includes(norm(op.match_text))
-    );
-  }
-
-  /**
-   * Mirrors BaseAgent.evaluateStyleProfile_: calls a fast-tier Gemini instance
-   * with a 0–5 quality rubric.
-   * Returns the score/rationale but does NOT write to PropertiesService
-   * (that is a GAS side-effect; this is a pure interpreter concern).
-   */
-  private evaluateStyleProfile_(styleProfile: string): { score: number; rationale: string } {
-    const EVAL_SYSTEM = 'You are a style-guide quality evaluator. Respond ONLY with the JSON schema provided.';
-    const EVAL_USER = `Rate the following StyleProfile on a scale of 0–5.
-
-Rubric:
-  5 = All 5 required sections (Voice, Sentence Rhythm, Vocabulary Register,
-      Structural Patterns, Thematic Motifs) present with ≥ 2 detailed bullets each.
-  4 = All 5 sections present, some have fewer than 2 bullets.
-  3 = At least 4 sections present; downstream agents can use it productively.
-  2 = 3 sections present; noticeably incomplete.
-  1 = 1–2 sections; barely structured.
-  0 = Empty, incoherent, or clearly not a StyleProfile.
-
-Required sections: Voice, Sentence Rhythm, Vocabulary Register, Structural Patterns, Thematic Motifs.
-Return {"score": <integer 0-5>, "rationale": "<one sentence>"}
-
-StyleProfile to evaluate:
----
-${styleProfile.slice(0, 4000)}
----`;
-
-    const evalSchema = {
-      type: 'object',
-      properties: {
-        score:     { type: 'integer' },
-        rationale: { type: 'string' },
-      },
-      required: ['score', 'rationale'],
-    };
-
-    const result = this.svc.gemini.generate(EVAL_SYSTEM, EVAL_USER, 'fast', { schema: evalSchema });
-    const score     = Math.max(0, Math.min(5, Math.round((result as any)?.score ?? 0)));
-    const rationale = ((result as any)?.rationale ?? '').slice(0, 300) as string;
-    return { score, rationale };
-  }
 }

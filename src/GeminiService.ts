@@ -36,7 +36,7 @@ const GeminiService = (() => {
     }
     if (!cachedApiKey_) {
       throw new Error(
-        `Gemini API key not set. Open the ${Constants.EXTENSION_NAME} sidebar and click Set API Key.`
+        `Gemini API key not set. Open Extensions → ${Constants.EXTENSION_NAME} → Settings and save your Gemini API key.`
       );
     }
     return cachedApiKey_;
@@ -84,6 +84,28 @@ const GeminiService = (() => {
     return Constants.DEFAULT_MODELS[tier];
   }
 
+  /**
+   * Vertex rejects generationConfig.thinkingConfig on models that do not
+   * support thinking. Keep the check model-aware instead of assuming every
+   * "thinking" tier selection maps to a thinking-capable model.
+   *
+   * Supported families are taken from the Vertex AI thinking docs:
+   * Gemini 3 Flash Preview, Gemini 3 Pro Preview, Gemini 3 Pro Image Preview,
+   * Gemini 2.5 Pro, Gemini 2.5 Flash / Flash-Lite, and their preview variants.
+   */
+  function supportsThinkingConfig_(model: string): boolean {
+    const normalized = model.trim().toLowerCase();
+    if (!normalized) return false;
+
+    return [
+      /^gemini-2\.5-pro(?:-|$)/,
+      /^gemini-2\.5-flash(?:-lite)?(?:-|$)/,
+      /^gemini-3(?:\.\d+)?-flash-preview(?:-|$)/,
+      /^gemini-3(?:\.\d+)?-pro-preview(?:-|$)/,
+      /^gemini-3(?:\.\d+)?-pro-image-preview(?:-|$)/,
+    ].some(rx => rx.test(normalized));
+  }
+
   // ── Payload construction ───────────────────────────────────────────────────
 
   /**
@@ -95,6 +117,7 @@ const GeminiService = (() => {
     systemPrompt: string,
     userPrompt: string,
     tier: ModelTier,
+    model: string,
     schema?: object
   ): object {
     const payload: any = {
@@ -104,7 +127,7 @@ const GeminiService = (() => {
         ? { responseMimeType: 'application/json', responseSchema: schema }
         : {},
     };
-    if (tier === Constants.MODEL.THINKING) {
+    if (tier === Constants.MODEL.THINKING && supportsThinkingConfig_(model)) {
       payload.generationConfig.thinkingConfig = { thinkingBudget: 8192 };
     }
     return payload;
@@ -127,6 +150,16 @@ const GeminiService = (() => {
       },
       muteHttpExceptions: true,
     };
+  }
+
+  /**
+   * Token count for logging: prefers API usageMetadata.totalTokenCount; otherwise
+   * ~1 token per 4 UTF-16 code units of request+response JSON (rough upper-ish bound).
+   */
+  function estimateGeminiTokens_(result: any, raw: string, payload: object): number {
+    const t = result?.usageMetadata?.totalTokenCount;
+    if (typeof t === 'number' && t > 0) return t;
+    return Math.max(1, Math.ceil((JSON.stringify(payload).length + raw.length) / 4));
   }
 
   /**
@@ -211,6 +244,9 @@ const GeminiService = (() => {
         throw new Error('Gemini returned no usable content. Full response: ' + raw);
       }
 
+      const est = estimateGeminiTokens_(result, raw, payload);
+      Tracer.info(`GEMINI MODEL USED: ${model} | ~${est} tokens (est.)`);
+
       return parseJson ? JSON.parse(textPart.text) : (textPart.text as string);
     }
 
@@ -237,7 +273,7 @@ const GeminiService = (() => {
   ): any {
     const apiKey  = getApiKey_();
     const model   = opts.modelOverride || resolveModel_(tier);
-    const payload = buildPayload_(systemPrompt, userPrompt, tier, opts.schema);
+    const payload = buildPayload_(systemPrompt, userPrompt, tier, model, opts.schema);
     return callApi_(apiKey, model, payload, /* parseJson */ !!opts.schema);
   }
 
@@ -247,9 +283,26 @@ const GeminiService = (() => {
    * Calls the Gemini ListModels endpoint and returns the names of every model
    * that supports generateContent, sorted alphabetically.
    */
-  function listGenerateContentModels(): string[] {
+  const MODELS_CACHE_KEY_ = 'gemini_available_models_v1';
+  const MODELS_CACHE_TTL_ = 3600; // 1 hour
+
+  /**
+   * Returns the list of Gemini models that support generateContent.
+   * Results are cached in UserCache for 1 hour to avoid a live API call on
+   * every sidebar/dialog open.  Pass `force=true` to bypass the cache and
+   * re-fetch from the API (used by the "Refresh List" button).
+   */
+  function listGenerateContentModels(force = false): string[] {
     const apiKey = resolveApiKey_();
     if (!apiKey) throw new Error('API key not set. Cannot list models.');
+
+    // Try cache first (unless force-refresh requested).
+    if (!force) {
+      try {
+        const cached = CacheService.getUserCache().get(MODELS_CACHE_KEY_);
+        if (cached) return JSON.parse(cached) as string[];
+      } catch (_) { /* treat as cache miss */ }
+    }
 
     // API key travels in the x-goog-api-key header — NOT in the URL.
     const resp = UrlFetchApp.fetch(
@@ -261,12 +314,19 @@ const GeminiService = (() => {
       throw new Error(`ListModels error: ${result.error.message}`);
     }
 
-    return ((result.models ?? []) as any[])
+    const models = ((result.models ?? []) as any[])
       .filter((m: any) =>
         (m.supportedGenerationMethods ?? []).includes('generateContent')
       )
       .map((m: any) => (m.name as string).replace('models/', ''))
       .sort() as string[];
+
+    // Store in cache for subsequent calls.
+    try {
+      CacheService.getUserCache().put(MODELS_CACHE_KEY_, JSON.stringify(models), MODELS_CACHE_TTL_);
+    } catch (_) { /* non-fatal */ }
+
+    return models;
   }
 
   /**
@@ -307,10 +367,17 @@ const GeminiService = (() => {
     return !!key && key.length > 0;
   }
 
+  /** True only when GEMINI_API_KEY is stored in the current user's UserProperties (not script-only). */
+  function hasUserApiKey(): boolean {
+    const raw = PropertiesService.getUserProperties().getProperty(PROP_KEY_API);
+    return !!(raw && String(raw).trim().length > 0);
+  }
+
   return {
     generate,
     saveApiKey,
     hasApiKey,
+    hasUserApiKey,
     listGenerateContentModels,
     saveModelConfig,
     getModelConfig,

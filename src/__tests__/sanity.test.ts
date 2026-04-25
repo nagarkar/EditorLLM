@@ -48,7 +48,7 @@ describe('Core interfaces', () => {
 
 describe('TAB_NAMES constants', () => {
   const EXPECTED = {
-    MERGED_CONTENT: 'MergedContent',
+    MANUSCRIPT:                    'Manuscript',
     AGENTIC_INSTRUCTIONS: 'Agentic Instructions',
     STYLE_PROFILE: 'StyleProfile',
     EAR_TUNE: 'EarTune',
@@ -202,7 +202,7 @@ describe('Comment routing types', () => {
   it('COMMENT_ANCHOR_TAB does not collide with any TAB_NAMES value', () => {
     const sentinel = '__comment_anchor_tab__';
     const tabValues = [
-      'MergedContent',
+      'Manuscript',
       'Agentic Instructions',
       'StyleProfile',
       'EarTune',
@@ -251,7 +251,7 @@ describe('Agent tag and contextKeys declarations', () => {
   });
 
   it('ArchitectAgent contextKeys is non-empty', () => {
-    const expected = ['MergedContent'];
+    const expected = ['Manuscript'];
     expect(expected.length).toBeGreaterThan(0);
   });
 
@@ -268,7 +268,7 @@ describe('Agent tag and contextKeys declarations', () => {
   });
 
   it('GeneralPurposeAgent contextKeys is non-empty and does not include COMMENT_ANCHOR_TAB', () => {
-    const expected = ['MergedContent', 'General Purpose Instructions'];
+    const expected = ['Manuscript', 'General Purpose Instructions'];
     expect(expected.length).toBeGreaterThan(0);
     expect(expected).not.toContain('__comment_anchor_tab__');
   });

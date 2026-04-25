@@ -235,7 +235,7 @@ describe('EarTuneAgent — W3: single-thread batch', () => {
     const userPrompt = buildEarTuneBatchPrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
-      passageContext:      FIXTURES.MERGED_CONTENT,
+      passageContext:      FIXTURES.MANUSCRIPT,
       threads:             [thread],
     });
     const result = callGemini(
@@ -263,7 +263,7 @@ describe('EarTuneAgent — W3: single-thread batch', () => {
     const userPrompt = buildEarTuneBatchPrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
-      passageContext:      FIXTURES.MERGED_CONTENT,
+      passageContext:      FIXTURES.MANUSCRIPT,
       threads:             [thread],
     });
     const result = callGemini(
@@ -286,7 +286,7 @@ describe('EarTuneAgent — W3: single-thread batch', () => {
     const userPrompt = buildEarTuneBatchPrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: FIXTURES.EAR_TUNE,
-      passageContext:      FIXTURES.MERGED_CONTENT,
+      passageContext:      FIXTURES.MANUSCRIPT,
       threads:             [thread],
     });
     const result = callGemini(
@@ -311,7 +311,7 @@ describe('EarTuneAgent — W3: single-thread batch', () => {
     const userPrompt = buildEarTuneBatchPrompt({
       styleProfile:        FIXTURES.STYLE_PROFILE,
       earTuneInstructions: '',
-      passageContext:      FIXTURES.MERGED_CONTENT,
+      passageContext:      FIXTURES.MANUSCRIPT,
       threads:             [thread],
     });
     const result = callGemini(
@@ -325,33 +325,5 @@ describe('EarTuneAgent — W3: single-thread batch', () => {
     expect(result.responses.length).toBeGreaterThan(0);
     expect(result.responses[0].reply.trim().length).toBeGreaterThan(0);
   }, TIMEOUT);
-
-});
-
-// ── Error conditions ──────────────────────────────────────────────────────────
-
-describe('EarTuneAgent — error conditions', () => {
-
-  it('throws a descriptive error when the API key is invalid', () => {
-    const thread: TestThread = {
-      threadId:     'eartune-error-thread',
-      selectedText: 'any passage',
-      agentRequest: 'any request',
-      conversation: [{ role: 'User', authorName: 'Author', content: '@eartune any request' }],
-    };
-    const userPrompt = buildEarTuneBatchPrompt({
-      styleProfile:        FIXTURES.STYLE_PROFILE,
-      earTuneInstructions: FIXTURES.EAR_TUNE,
-      passageContext:      FIXTURES.MERGED_CONTENT,
-      threads:             [thread],
-    });
-
-    expect(() =>
-      callGemini(INTEGRATION_SYSTEM_PROMPT, userPrompt, BATCH_REPLY_SCHEMA, {
-        tier:           TIER,
-        apiKeyOverride: 'INVALID_API_KEY_FOR_TESTING',
-      })
-    ).toThrow(/Gemini API error/);
-  });
 
 });

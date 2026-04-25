@@ -1,0 +1,190 @@
+---
+description: Rules for developing the experimental declarative agent system in src/experimental/.
+globs: src/experimental/**/*.ts, src/__tests__/experimental/**/*.ts
+alwaysApply: true
+---
+
+# Experimental Agent System — Development Rules
+
+These rules govern the declarative model in `src/experimental/` and its tests.
+They exist to keep the boundary clean between production code and the experimental
+layer, and to ensure definitions stay in perfect parity with the concrete agents.
+
+---
+
+## 1. Dependency Direction (hard boundary)
+
+- `src/experimental/*.ts` **must not** duplicate code from `src/*.ts`.
+  Import constants and types from `src/*.ts` directly:
+
+  ```typescript
+  // ✅ correct
+  import { Constants } from '../../../Constants';
+  import type { AgentDefinition } from '../../types';
+
+  // ❌ wrong — copy-pasting SYSTEM_PREAMBLE, TAB_NAMES, or any other src/ constant
+  const SYSTEM_PREAMBLE = `# EditorLLM Context ...`;
+  ```
+
+- `src/*.ts` (production files) **must never** import from `src/experimental/*`.
+  The experimental layer is a consumer of production code, never a dependency.
+
+- Test files in `src/__tests__/*.ts` and `src/__tests__/integration/*.ts` **must
+  never** import from `src/__tests__/experimental/*.ts`.
+
+---
+
+## 2. SYSTEM_PREAMBLE
+
+The shared agent preamble lives in `Constants.SYSTEM_PREAMBLE` (src/Constants.ts).
+Every agent definition builds its system prompt from it:
+
+```typescript
+const AGENT_SYSTEM_PROMPT = `${Constants.SYSTEM_PREAMBLE}
+
+# Role: ...`.trim();
+```
+
+Never redeclare the preamble string inside a definition file.
+
+---
+
+## 3. W2 Passage Section Title
+
+All W2 (annotateTab) workflows must use `Constants.W2_PASSAGE_SECTION_TITLE` as
+the title for the passage content section:
+
+```typescript
+{
+  title:  Constants.W2_PASSAGE_SECTION_TITLE,
+  source: { kind: 'passage' },
+}
+```
+
+The concrete agents use the same constant. Never use a per-agent variant
+(e.g. "Passage To Sweep", "Passage To Audit") — the uniform title lets the LLM
+receive the same heading regardless of which agent performs the sweep.
+
+---
+
+## 4. Definition Parity Requirements
+
+Every `AgentDefinition` object must be a perfect mirror of its concrete agent.
+The following must match exactly:
+
+| Field | Source of truth |
+|---|---|
+| `id` | Concrete agent's `getAgentId()` (stable persistence id, not display) |
+| `instructionTabName` | `Constants.TAB_NAMES.*` used in the concrete agent's `generateInstructions()` |
+| `instructionQualityRubric` | Concrete agent's `getInstructionQualityRubric()` return value (definition string after `.trim()`) |
+| `systemPrompt.text` | Concrete agent's `SYSTEM_PROMPT` property (after `.trim()`) |
+| `workflows.*.modelTier` | `Constants.MODEL.*` value passed to `callGemini_()` |
+| `workflows.*.contextSections` (order + content) | Argument to `buildStandardPrompt()` in the concrete prompt builder |
+| `workflows.*.instructions` | Second argument to `buildStandardPrompt()` in the concrete prompt builder |
+| `workflows.*.chunkSize` | `CHUNK_SIZE` constant on the concrete agent class |
+| `workflows.*.requiresStyleProfile` | Whether the concrete workflow calls `assertStyleProfileValid_()` |
+
+Any discrepancy will cause a parity test failure. When the concrete agent changes,
+update the definition first, then verify with `npm run test:experimental`.
+
+---
+
+## 5. Instruction String Separators
+
+All multi-line instruction strings in definitions must use `'\\n'` (the two-character
+literal backslash-n) as the `.join()` separator — matching the concrete agents:
+
+```typescript
+// ✅ correct
+const INSTRUCTIONS = [
+  'Line one.',
+  'Line two.',
+].join('\\n');
+
+// ❌ wrong — actual newline character, diverges from concrete agents
+].join('\n');
+```
+
+---
+
+## 6. Parity Test Requirements
+
+Every concrete agent must have a corresponding parity test in
+`src/__tests__/experimental/agent-parity.test.ts`. Each test must assert:
+
+1. **systemPrompt** — exact string match between concrete and interpreter
+2. **userPrompt** — exact string match between concrete and interpreter
+3. **tier** — the model tier string (`'fast'` | `'thinking'`)
+4. **schema** — deep equality of the JSON schema object (or `undefined` for `plain_markdown`)
+5. **processUpdate payload** — at minimum `workflow_type` and `review_tab`
+   (catches `instructionTabName` typos that would silently route to the wrong tab)
+
+Tests that only compare `systemPrompt` and `userPrompt` are incomplete.
+
+---
+
+## 7. No New Files Without Definitions and Tests
+
+When adding a new agent to the concrete system:
+1. Create `src/experimental/config/agents/<agentName>.ts` with a complete `AgentDefinition`.
+2. Add parity tests for every implemented workflow (W1 at minimum).
+3. Export the definition from the definition file; import it in the test.
+
+---
+
+## 8. Shared Pure Logic Lives in `src/agentHelpers.ts`
+
+Any logic that is needed by both concrete agents (`BaseAgent` subclasses) and
+`AgentInterpreter` — and that has **no GAS side-effects** — belongs in
+`src/agentHelpers.ts`, not duplicated or re-implemented in both places.
+
+The test: _can this function be called from a Node.js Jest test with no GAS
+globals mocked?_ If yes, it belongs in `agentHelpers.ts`.
+
+Current exports: `assertStyleProfileValid`, `extractMarkdownFromJsonWrapper`,
+`buildStandardPrompt`, `validateOps`, `instructionUpdateSchema`,
+`annotationOperationsSchema`, `threadRepliesSchema`.
+
+```typescript
+// ✅ correct — AgentInterpreter imports from agentHelpers
+import { buildStandardPrompt, validateOps } from '../agentHelpers';
+
+// ❌ wrong — re-implementing the same logic as a private static on AgentInterpreter
+private static buildStandardPrompt_(...) { ... }
+```
+
+When a `protected` method on `BaseAgent` is needed by the interpreter, promote
+it to a top-level exported function in `agentHelpers.ts`. Do not re-implement it.
+
+**`agentHelpers.ts` must never call `Tracer.*`, `PropertiesService.*`, or any
+other GAS global.** Those are GAS side-effects. Log inside the concrete class
+after calling the helper, not inside the helper itself.
+
+---
+
+## 9. extractMarkdownFromJsonWrapper — Applied by Interpreter, Not a PostStep
+
+`extractMarkdownFromJsonWrapper` (from `agentHelpers.ts`) is applied automatically
+by `AgentInterpreter.buildInstructionUpdate_` whenever `responseFormat === 'plain_markdown'`.
+Do not add it as a `PostStep` kind and do not call it from definition files.
+
+---
+
+## 10. Tab Name Naming Convention
+
+Values in `Constants.TAB_NAMES` must use **Title Case with spaces** — consistent
+with how they appear as actual Google Doc tab labels:
+
+```typescript
+// ✅ correct
+TETHER_INSTRUCTIONS: 'Tether Instructions'
+EAR_TUNE:            'EarTune Instructions'
+
+// ❌ wrong — CamelCase with no space (looks like a code identifier, not a tab label)
+TETHER_INSTRUCTIONS: 'TetherInstructions'
+```
+
+When a tab name is changed, update `Constants.TAB_NAMES`, the ambient declaration
+in `Types.ts`, any matching definition `instructionTabName`, and parity tests.
+The parity tests' `processUpdate` assertion on `review_tab` will catch most
+mismatches automatically.

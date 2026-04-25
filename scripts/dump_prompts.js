@@ -8,10 +8,14 @@ const vm = require('vm');
 const distFiles = [
   'Types.js',
   'Constants.js',
+  'agentHelpers.js',
+  'w1FormatGuidelines.js',
+  'agentPrompts.js',
   'BaseAgent.js',
   'ArchitectAgent.js',
   'EarTuneAgent.js',
   'AuditAgent.js',
+  'TetherAgent.js',
   'GeneralPurposeAgent.js'
 ];
 
@@ -86,11 +90,13 @@ for (const agent of agents) {
   out += `## Instructions Prompt (generateInstructionPrompt)\n\n`;
   try {
     const instr = agent.instance.generateInstructionPrompt({
-      manuscript: FIXTURES.MERGED_CONTENT,
+      manuscript: FIXTURES.MANUSCRIPT,
       styleProfile: FIXTURES.STYLE_PROFILE,
       existingEarTune: "Existing eartune rules...",
       existingAudit: "Existing audit rules...",
-      existingInstructions: "Existing comment instructions..."
+      existingTether: "Existing tether rules...",
+      existingInstructions: "Existing comment instructions...",
+      lastGenerated: "(none — first run)",
     });
     out += '```markdown\n' + instr + '\n```\n\n';
   } catch (e) {
@@ -107,7 +113,7 @@ for (const agent of agents) {
       styleProfile: FIXTURES.STYLE_PROFILE,
       earTuneInstructions: "Draft Ear Tune instructions.",
       auditInstructions: "Draft audit instructions.",
-      passage: FIXTURES.MERGED_CONTENT,
+      passage: FIXTURES.MANUSCRIPT,
       tabName: "Chapter 1"
     });
     out += '```markdown\n' + tabAnnot + '\n```\n\n';
@@ -125,9 +131,9 @@ for (const agent of agents) {
       styleProfile: FIXTURES.STYLE_PROFILE,
       earTuneInstructions: "Draft Ear Tune instructions.",
       auditInstructions: "Draft audit instructions.",
-      passageContext: FIXTURES.MERGED_CONTENT,
-      manuscript: FIXTURES.MERGED_CONTENT,
-      anchorContent: FIXTURES.MERGED_CONTENT,
+      passageContext: FIXTURES.MANUSCRIPT,
+      manuscript: FIXTURES.MANUSCRIPT,
+      anchorContent: FIXTURES.MANUSCRIPT,
       threads: agent.threads
     });
     out += '```markdown\n' + comms + '\n```\n\n';

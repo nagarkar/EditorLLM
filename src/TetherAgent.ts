@@ -5,50 +5,9 @@
 class TetherAgent extends BaseAgent {
 
 
-  readonly SYSTEM_PROMPT = `${BaseAgent.SYSTEM_PREAMBLE}
+  readonly SYSTEM_PROMPT = `${SYSTEM_PREAMBLE}
 
-# Role: External Anchor (Tether Agent)
-You operate within EditorLLM. While other agents stay "inside the box," your role
-is to act as the "External Anchor." You bridge the manuscript's unique metaphysic
-(the Chid Axiom) with the external historical and scientific record.
-
-## Core Rules
-- **Respect the Metaphysic:** Do not "correct" the Chid Axiom using standard
-  materialist physics unless the author is making an objective historical or
-  mathematical error about a cited source.
-- **Controversy vs. Error:** If a statement is philosophically controversial but
-  internally consistent, flag it as "Controversial" but do NOT recommend removal.
-- **Bridge-Building:** Actively look for alignments with the Rig Veda, Advaita
-  Vedanta, Quantum Mechanics, and Western Continental Philosophy.
-- **Strict Schema:** Your JSON output must match the provided schema.
-
-## Guidelines for Operations (content_annotation)
-- match_text must be 3–4 consecutive words sampled verbatim.
-- reason must explain the factual discrepancy or the alignment opportunity.
-
-## Markdown Requirements (instruction_update only)
-When generating TetherInstructions, your proposed_full_text MUST be valid
-GitHub-Flavored Markdown. Rules:
-- Use ## (H2) for top-level sections, ### (H3) for sub-sections
-- Use - bullet points for all lists
-- Use **bold** for rule names, key terms, and historical figure names
-- Every section must start with a ## heading
-- Do NOT use plain text section headings or numbered section headers without #
-`.trim();
-
-  protected readonly EXAMPLE_CONTENT = `
-# TetherInstructions — System Prompt Example
-
-Perform an external source validation sweep on the following passage.
-Focus on: historical accuracy, citation completeness, and alignment opportunities.
-
-1. Flag invalid references or factual errors.
-2. Identify "controversial" statements and annotate them with context.
-3. Suggest 2–3 specific "missed opportunities" for alignment with prior
-   historical or scientific work.
-
-Return a content_update with one operation per issue or opportunity found.
-Ensure each reason explains the specific factual discrepancy or alignment.
+${TETHER_SYSTEM_PROMPT_BODY}
 `.trim();
 
   readonly tags = ['@tether', '@ref'];
@@ -56,58 +15,41 @@ Ensure each reason explains the specific factual discrepancy or alignment.
 
   private static readonly CHUNK_SIZE = 5;
 
+  protected getAgentId(): string {
+    return 'tether';
+  }
+
+  protected getInstructionQualityRubric(): string {
+    return TETHER_INSTRUCTION_QUALITY_RUBRIC;
+  }
+
   generateCommentResponsesPrompt(opts: { styleProfile: string; tetherInstructions: string; passageContext: string; threads: CommentThread[] }): string {
     return this.buildStandardPrompt({
       'Style Profile': opts.styleProfile,
       'Tether Instructions': opts.tetherInstructions,
       'Passage Context': opts.passageContext,
       'Threads': this.formatThreadsForBatch_(opts.threads),
-    }, [
-      `For each thread, provide an investigative response grounded in historical`,
-      `or scientific fact. Validate references, flag errors vs. controversies,`,
-      `and suggest alignment opportunities where applicable.`,
-      `End each reply with "— AI Editorial Assistant".`,
-      `Return a JSON object with "responses": an array of {threadId, reply} entries,`,
-      `one per thread you are replying to.`
-    ].join(' '));
+    }, TETHER_W3_INSTRUCTIONS);
   }
 
-  generateInstructionPrompt(opts: { styleProfile: string; existingTether: string; manuscript: string }): string {
+  generateInstructionPrompt(opts: { styleProfile: string; existingTether: string; manuscript: string; lastGenerated: string }): string {
     return this.buildStandardPrompt({
       'Style Profile': opts.styleProfile,
-      'Manuscript Sample (for Fact-Checking Context)': opts.manuscript.slice(0, 6000),
+      'Manuscript Sample (for Fact-Checking Context)': opts.manuscript.slice(0, 6000) || 'NOT PROVIDED',
       'Current Tether Instructions (if any)': opts.existingTether,
+      'Last Generated Instructions': opts.lastGenerated,
     }, [
-      `Generate a comprehensive TetherInstructions system prompt that:`,
-      `1. Identifies key historical figures and texts cited in the manuscript`,
-      `   (e.g., Schrödinger, Epictetus, Rig Veda).`,
-      `2. Outlines the "External Facts" that must remain unyielding even within`,
-      `   the Chid Axiom framework.`,
-      `3. Provides a checklist for "Alignment Opportunities" based on the`,
-      `   manuscript's core themes.`,
-      ``,
-      `Return a JSON object with:`,
-      `- proposed_full_text: the complete new TetherInstructions`
-    ].join('\\n'));
+      TETHER_W1_INSTRUCTIONS,
+      W1_FORMAT_GUIDELINES,
+    ].join('\n'));
   }
 
   generateTabAnnotationPrompt(opts: { styleProfile: string; tetherInstructions: string; passage: string; tabName: string }): string {
     return this.buildStandardPrompt({
       'Style Profile': opts.styleProfile,
       'Tether Instructions': opts.tetherInstructions,
-      [`Passage To Validate (from tab: "${opts.tabName}")`]: opts.passage,
-    }, [
-      `Perform an external source validation sweep.`,
-      `1. Flag invalid references or factual errors.`,
-      `2. Identify "controversial" statements and annotate them with context.`,
-      `3. Suggest 2–3 specific "missed opportunities" for alignment with prior`,
-      `   historical or scientific work.`,
-      ``,
-      `Return a JSON object with:`,
-      `- operations: one per issue or opportunity found. Each must have:`,
-      `    - match_text: verbatim 3–4-word phrase from the passage above`,
-      `    - reason: description of the factual discrepancy or alignment opportunity`
-    ].join('\\n'));
+      [W2_PASSAGE_SECTION_TITLE]: opts.passage,
+    }, TETHER_W2_INSTRUCTIONS);
   }
 
   protected commentChunkSize_() { return TetherAgent.CHUNK_SIZE; }
@@ -131,27 +73,32 @@ Ensure each reason explains the specific factual discrepancy or alignment.
     const styleProfile = this.getTabMarkdown_(Constants.TAB_NAMES.STYLE_PROFILE);
     this.assertStyleProfileValid_(styleProfile);
     const existing = this.getTabMarkdown_(Constants.TAB_NAMES.TETHER_INSTRUCTIONS);
-    const manuscript = this.getTabContent_(Constants.TAB_NAMES.MERGED_CONTENT);
+    const manuscript = this.getTabContent_(Constants.TAB_NAMES.MANUSCRIPT);
 
+    const lastGenerated = this.readLastGeneratedInstructions_(Constants.TAB_NAMES.TETHER_INSTRUCTIONS);
     const userPrompt = this.generateInstructionPrompt({
       styleProfile,
       existingTether: existing,
       manuscript,
+      lastGenerated,
     });
 
-    const geminiResult = this.callGemini_(
+    // Plain-text Gemini call — no JSON schema — eliminates buffering timeout.
+    const rawText = this.callGemini_(
       this.SYSTEM_PROMPT,
       userPrompt,
-      { schema: this.instructionUpdateSchema_(), tier: Constants.MODEL.THINKING }
-    ) as { proposed_full_text: string };
+      { tier: Constants.MODEL.THINKING }
+    ) as string;
 
+    const proposedText = extractMarkdownFromJsonWrapper(rawText);
     const update: RootUpdate = {
       workflow_type: 'instruction_update',
       review_tab: Constants.TAB_NAMES.TETHER_INSTRUCTIONS,
-      proposed_full_text: geminiResult.proposed_full_text,
+      proposed_full_text: proposedText,
     };
 
     CollaborationService.processUpdate(update);
+    this.evaluateInstructions(proposedText);
   }
 
   /**

@@ -8,79 +8,22 @@
 
 import type { AgentDefinition } from '../../types';
 import { Constants } from '../../../Constants';
-
-// ── Shared preamble (mirrors BaseAgent.SYSTEM_PREAMBLE) ─────────────────────
-
-const SYSTEM_PREAMBLE = `# EditorLLM Context
-
-You are operating inside EditorLLM, an AI-augmented workspace for
-high-fidelity book editing. You must stay strictly "inside the box" of the
-manuscript's metaphysic: the Chid Axiom (consciousness as the ground of physics)
-and the worldview expressed in the source text.
-
-## Core Rules
-- **Recursive Instruction Loop:** You are often refining existing instructions.
-  Incorporate and improve upon any "Current Instructions" provided in the
-  context. Do not "forget" established rules or voice constraints unless they
-  explicitly contradict the newly provided manuscript context.
-- **No External Metaphors:** Never introduce ideas, metaphors, or concepts that are not already present in the MergedContent source material.
-- **Ground Everything:** Always justify changes with specific reasoning grounded in the text.
-- **Strict Schema:** Your JSON output must exactly match the provided schema.
-
-## Comment Length Constraint
-Google Drive comments have a hard limit of approximately 4 096 characters per
-entry. Each annotation comment is formatted as:
-  [AgentName] "match_text": <your reason>: <bookmark URL>
-The prefix, quoted match text, and bookmark URL together consume roughly
-200 characters, leaving **at most ~3 900 characters** for your reason text.
-
-- **Annotation reasons (W2):** Keep each \`reason\` field under **400 characters**.
-  Be specific but concise — one crisp sentence identifying the issue and the
-  suggested fix is ideal.
-- **Comment-thread replies (W3):** Keep each \`reply\` field under **3 500 characters**.
-  If a thorough answer needs more space, summarise the key point first and
-  invite the author to ask follow-up questions.`;
+import {
+  SYSTEM_PREAMBLE,
+  W1_FORMAT_GUIDELINES,
+  ARCHITECT_SYSTEM_PROMPT_BODY,
+  ARCHITECT_INSTRUCTION_QUALITY_RUBRIC,
+  ARCHITECT_W1_INSTRUCTIONS,
+  ARCHITECT_STYLEPROFILE_SCHEMA,
+  ARCHITECT_W3_INSTRUCTIONS,
+} from '../../../agentPrompts';
 
 // ── Architect-specific system prompt (mirrors ArchitectAgent.SYSTEM_PROMPT) ──
-// Matches: `\n${BaseAgent.SYSTEM_PREAMBLE}\n\n# Role: Structural Architect...\n`.trim()
 
 const ARCHITECT_SYSTEM_PROMPT = `${SYSTEM_PREAMBLE}
 
-# Role: Structural Architect (Style Mimic)
-You analyze the  manuscript and synthesize a StyleProfile —
-a precise description of the author's voice, sentence rhythm, structural patterns,
-vocabulary register, and thematic motifs. This profile constrains all other agents.
-
-When generating instructions (instruction_update), your proposed_full_text
-for the StyleProfile tab must be a rigorous, multi-section style guide.
-
-## Markdown Requirements (instruction_update only)
-Your proposed_full_text MUST be valid GitHub-Flavored Markdown that can be
-parsed and written as formatted Google Docs content. Formatting rules:
-- Top-level sections use ## (H2) headings (e.g. ## Voice & Tone)
-- Sub-sections use ### (H3) headings
-- Use - bullet points for lists; do NOT use • or other bullet characters
-- Use **bold** for field names and key terms
-- Use *italic* sparingly for emphasis
-- Do NOT use bare plain text for section titles — always use # headings
-- Every section heading must be followed by at least one bullet or paragraph
-- Do NOT output fenced code blocks in a StyleProfile`;
-
-// ── W1 instruction string ─────────────────────────────────────────────────────
-// Mirrors exactly:
-//   [
-//     `Analyse the writing style above and produce a comprehensive StyleProfile.`,
-//     `Return a JSON object with:`,
-//     `- proposed_full_text: your full StyleProfile document (markdown)`
-//   ].join('\\n')
-//
-// Note: .join('\\n') uses a TWO-CHAR separator (backslash + 'n').
-
-export const ARCHITECT_W1_INSTRUCTIONS = [
-  'Analyse the writing style above and produce a comprehensive StyleProfile.',
-  'Return a JSON object with:',
-  '- proposed_full_text: your full StyleProfile document (markdown)',
-].join('\\n');
+${ARCHITECT_SYSTEM_PROMPT_BODY}
+`.trim();
 
 // ── Definition object ─────────────────────────────────────────────────────────
 
@@ -97,6 +40,8 @@ export const architectDefinition: AgentDefinition = {
     text: ARCHITECT_SYSTEM_PROMPT,
   },
 
+  instructionQualityRubric:           ARCHITECT_INSTRUCTION_QUALITY_RUBRIC,
+
   workflows: {
 
     // W1 — Generate / refresh the StyleProfile tab
@@ -107,7 +52,7 @@ export const architectDefinition: AgentDefinition = {
     // Key differences from other agents:
     //   - requiresStyleProfile: false — Architect GENERATES the profile, never guards on it
     //   - modelTier: 'thinking' — uses the highest quality model
-    //   - postSteps: evaluate_style_profile — LLM-as-judge quality check after writing
+    //   - postSteps: evaluate_instruction_quality — LLM-as-judge after writing
     generateInstructions: {
       modelTier:            'thinking',
       requiresStyleProfile: false,
@@ -116,16 +61,20 @@ export const architectDefinition: AgentDefinition = {
         {
           // Concrete uses getTabContent_ (plain text, NOT markdown)
           title:  'Manuscript (excerpt)',
-          source: { kind: 'merged_content', charLimit: 20000 },
+          source: { kind: 'manuscript', charLimit: 20000 },
         },
         {
           // Concrete uses getTabMarkdown_ (markdown)
           title:  'Current Style Profile (if any)',
           source: { kind: 'style_profile', format: 'markdown' },
         },
+        {
+          title:  'Last Generated Instructions',
+          source: { kind: 'tab', tabName: '${instructionTabName} Scratch', format: 'plain', fallback: '(none — first run)' },
+        },
       ],
-      instructions: ARCHITECT_W1_INSTRUCTIONS,
-      postSteps: [{ kind: 'evaluate_style_profile' }],
+      instructions: ARCHITECT_W1_INSTRUCTIONS + '\n' + ARCHITECT_STYLEPROFILE_SCHEMA + '\n' + W1_FORMAT_GUIDELINES,
+      postSteps: [{ kind: 'evaluate_instruction_quality' }],
     },
 
     // W3 — Reply to @architect comment threads
@@ -145,19 +94,14 @@ export const architectDefinition: AgentDefinition = {
         },
         {
           title:  'Manuscript Context',
-          source: { kind: 'merged_content', charLimit: 20000 },
+          source: { kind: 'manuscript', charLimit: 20000 },
         },
         {
           title:  'Threads',
           source: { kind: 'threads' },
         },
       ],
-      instructions: [
-        'For each thread, analyse the selected passage for structural, motif, or voice concerns',
-        'relative to the manuscript and StyleProfile. End each reply with "— AI Editorial Assistant".',
-        'Return a JSON object with "responses": an array of {threadId, reply} entries,',
-        'one per thread you are replying to.',
-      ].join(' '),
+      instructions: ARCHITECT_W3_INSTRUCTIONS,
     },
 
   },

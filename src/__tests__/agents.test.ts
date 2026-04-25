@@ -1367,10 +1367,18 @@ ${opts.passage}
 ---
 
 Identify every passage with a rhythmic, phonetic, or cadence problem.
+Also scout for "Pronunciation Traps" in the passage:
+- Scan for proper nouns (character/place names), technical jargon, or uncommon words (e.g., "Chid", "Axiom", "Eigenstate").
+- For any annotation involving a pronunciation trap, append to the end of that operation's \`reason\` a markdown section headed \`## Phonetic Lexicon Suggestions\`.
+- Under that heading, include one entry per trap in this format:
+  - Word: [Exact Spelling]
+  - Phonetic: [IPA or simple phonetic, e.g., CHID AK-see-um]
+  - Context: [Short phrase using the word]
+
 Return a JSON object with:
 - operations: one per problem found. Each must have:
     - match_text: verbatim 3–4-word phrase from the passage above
-    - reason: description of the issue and suggested improvement
+    - reason: description of the issue and suggested improvement; when relevant, end with the \`## Phonetic Lexicon Suggestions\` section described above
 `.trim();
 }
 
@@ -1390,6 +1398,11 @@ describe('EarTuneAgent annotateTab prompt structure (W2)', () => {
   it('asks for operations with match_text and reason', () => {
     expect(prompt).toContain('match_text');
     expect(prompt).toContain('reason');
+  });
+
+  it('includes pronunciation trap lexicon guidance', () => {
+    expect(prompt).toContain('Pronunciation Traps');
+    expect(prompt).toContain('## Phonetic Lexicon Suggestions');
   });
 
   it('does not reference THREADS or batch response format', () => {
@@ -1572,9 +1585,9 @@ describe('TetherAgent annotateTab prompt structure (W2)', () => {
 // Tests reproduce the score-band logic and rubric without GAS / Gemini calls.
 // The full GeminiService.generate (structured JSON) path is validated in E2E tests only.
 
-describe('§4.1 evaluateStyleProfile_ — score clamping and band semantics', () => {
+describe('§4.1 instruction quality eval — score clamping and band semantics', () => {
 
-  // Mimic the clamping logic from BaseAgent.evaluateStyleProfile_()
+  // Mimic the clamping logic from runInstructionQualityEval_ (agentHelpers)
   function clampScore(raw: number): number {
     return Math.max(0, Math.min(5, Math.round(raw)));
   }

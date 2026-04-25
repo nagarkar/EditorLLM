@@ -413,16 +413,29 @@ const MarkdownService = (() => {
       if (/^\s*[-*+]\s+/.test(line)) {
         while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) {
           const itemMatch = lines[i].match(/^(\s*)[-*+]\s+(.*)/);
-          if (itemMatch) {
-            const nesting = Math.floor(itemMatch[1].length / 2);
-            const content = itemMatch[2];
-            const item = body.appendListItem('');
-            applyInlineFormatting_(item, content);
-            item.setNestingLevel(nesting);
-            item.setGlyphType(DocumentApp.GlyphType.BULLET);
-            firstElement = false;
-          }
+          if (!itemMatch) break;
+          const nesting = Math.floor(itemMatch[1].length / 2);
+          let content = itemMatch[2];
           i++;
+
+          while (i < lines.length) {
+            const nextLine = lines[i];
+            if (nextLine.trim() === '') break;
+            if (/^\s*[-*+]\s+/.test(nextLine)) break;
+            if (/^\s*\d+\.\s+/.test(nextLine)) break;
+            if (/^\s{2,}/.test(nextLine)) {
+              content += '\n' + nextLine.trim();
+              i++;
+            } else {
+              break;
+            }
+          }
+
+          const item = body.appendListItem('');
+          applyInlineFormatting_(item, content);
+          item.setNestingLevel(nesting);
+          item.setGlyphType(DocumentApp.GlyphType.BULLET);
+          firstElement = false;
         }
         continue;
       }
@@ -431,14 +444,46 @@ const MarkdownService = (() => {
       if (/^\s*\d+\.\s+/.test(line)) {
         while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
           const itemMatch = lines[i].match(/^(\s*)\d+\.\s+(.*)/);
-          if (itemMatch) {
-            const nesting = Math.floor(itemMatch[1].length / 2);
-            const content = itemMatch[2];
-            const item = body.appendListItem('');
-            applyInlineFormatting_(item, content);
-            item.setNestingLevel(nesting);
-            item.setGlyphType(DocumentApp.GlyphType.NUMBER);
-            firstElement = false;
+          if (!itemMatch) break;
+          const nesting = Math.floor(itemMatch[1].length / 2);
+          let content = itemMatch[2];
+          i++;
+
+          while (i < lines.length) {
+            const nextLine = lines[i];
+            if (nextLine.trim() === '') break;
+            if (/^\s*\d+\.\s+/.test(nextLine)) break;
+            if (/^\s*[-*+]\s+/.test(nextLine)) break;
+            if (/^\s{2,}/.test(nextLine)) {
+              content += '\n' + nextLine.trim();
+              i++;
+            } else {
+              break;
+            }
+          }
+
+          const item = body.appendListItem('');
+          applyInlineFormatting_(item, content);
+          item.setNestingLevel(nesting);
+          item.setGlyphType(DocumentApp.GlyphType.NUMBER);
+          firstElement = false;
+        }
+        continue;
+      }
+
+      // --- Blockquote ---
+      if (/^\s*>/.test(line)) {
+        while (i < lines.length && /^\s*>/.test(lines[i])) {
+          const content = lines[i].replace(/^\s*>\s?/, '');
+          const para = appendOrReplace_(body, '', firstElement);
+          firstElement = false;
+          applyInlineFormatting_(para, content);
+          para.setIndentStart(36);
+          para.setIndentFirstLine(36);
+          
+          const textEl = para.editAsText();
+          if (textEl.getText().length > 0) {
+            textEl.setItalic(0, textEl.getText().length - 1, true);
           }
           i++;
         }

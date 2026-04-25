@@ -46,7 +46,7 @@ Click **Initialize Tabs** in the Setup section of the sidebar. This creates the 
 
 | Tab | Location | Purpose |
 |---|---|---|
-| MergedContent | Root | Holds the combined manuscript text |
+| Manuscript | Root | Holds the combined manuscript text |
 | Agentic Instructions | Root | Parent tab for all agent configuration |
 | StyleProfile | Under Agentic Instructions | The generated style guide |
 | EarTune | Under Agentic Instructions | Ear-Tune system prompt |
@@ -62,11 +62,11 @@ Every agent can regenerate its own "system prompt" or instruction tab (e.g., the
 
 | Agent | Tab Context Used for Generation | Format Read |
 |---|---|---|
-| **Structural Architect** | `MergedContent`, `StyleProfile` | Plain Text / **Markdown** |
+| **Structural Architect** | `Manuscript`, `StyleProfile` | Plain Text / **Markdown** |
 | **Audio EarTune** | `StyleProfile`, `EarTune` | **Markdown** |
-| **Logical Auditor** | `StyleProfile`, `TechnicalAudit`, `MergedContent` (First 6,000 chars) | **Markdown** / Plain |
+| **Logical Auditor** | `StyleProfile`, `TechnicalAudit`, `Manuscript` (First 6,000 chars) | **Markdown** / Plain |
 | **Comment Agent** | `StyleProfile`, `Comment Instructions` | **Markdown** |
-| **External Anchor** | `StyleProfile`, `TetherInstructions`, `MergedContent` (First 6,000 chars) | **Markdown** / Plain |
+| **External Anchor** | `StyleProfile`, `TetherInstructions`, `Manuscript` (First 6,000 chars) | **Markdown** / Plain |
 
 ### Recursive Instruction Loop
 
@@ -88,6 +88,10 @@ This ensures that any manual refinements you make to the instructions are preser
 The key is stored in your personal user properties. If an administrator has set a shared key via script properties, that key takes precedence and you can skip this step.
 
 To get a Gemini API key, visit [Google AI Studio](https://aistudio.google.com/apikey).
+
+### ElevenLabs Document Warning
+
+> **WARNING:** If you set an ElevenLabs API key for this document, anyone with access to the document can use ElevenLabs-related features from this add-on for that document. They cannot see the raw API key, but they can use the configured capability. Only enable ElevenLabs on documents you share with people you trust.
 
 ## Model Configuration
 
@@ -120,12 +124,12 @@ Default models are used when no configuration has been saved:
 
 ## What It Does
 
-The Tab Merger combines content from multiple document tabs into a single **MergedContent** tab. This is the foundation for all agent work — agents read MergedContent as the canonical source of the manuscript.
+The Tab Merger combines content from multiple document tabs into a single **Manuscript** tab. This is the foundation for all agent work — agents read Manuscript as the canonical source of the manuscript.
 
 ## When to Use
 
 - After writing or editing chapter tabs, merge them so agents see the latest text.
-- Before generating a StyleProfile (the Architect reads MergedContent).
+- Before generating a StyleProfile (the Architect reads Manuscript).
 - Before running a technical audit across the full manuscript.
 
 ## How to Use
@@ -133,17 +137,17 @@ The Tab Merger combines content from multiple document tabs into a single **Merg
 ### From the Sidebar
 
 1. Open the sidebar (**EditorLLM** > **Open Sidebar**).
-2. Scroll to the **Merge Tabs** section.
+2. Scroll to the **Create Manuscript** section.
 3. In the text area, enter the tab names you want to merge, separated by commas:
    ```
    Chapter 1, Chapter 2, Chapter 3, Appendix A
    ```
 4. Click **Save** to remember this list for next time.
-5. Click **Merge Now**.
+5. Click **Create Manuscript**.
 
 The merger:
-1. Clears the MergedContent tab completely.
-2. Copies the content of each listed tab into MergedContent, in the order you specified.
+1. Clears the Manuscript tab completely.
+2. Copies the content of each listed tab into Manuscript, in the order you specified.
 3. Inserts a page break between each tab's content.
 4. Shows a progress indicator (e.g., "Merging 2 / 5: Chapter 2").
 
@@ -155,15 +159,15 @@ Click **Load Saved** to restore the last-saved comma-separated list. This is use
 
 - **Tab names are case-sensitive.** "Chapter 1" and "chapter 1" are different.
 - **Ordering matters.** Tabs are merged in the exact order you list them.
-- **MergedContent is overwritten** every time you merge. The previous content is lost.
+- **Manuscript is overwritten** every time you merge. The previous content is lost.
 - If a listed tab doesn't exist, that tab is skipped and reported as an error in the status. Other tabs still merge successfully.
 - The merge preserves formatting: paragraphs, tables, and list items are copied with their original styling.
 
 ## Typical Workflow
 
 1. Write/edit your chapter tabs.
-2. Open the sidebar, enter tab names, click **Merge Now**.
-3. Run the Structural Architect to regenerate the StyleProfile from the fresh MergedContent.
+2. Open the sidebar, enter tab names, click **Create Manuscript**.
+3. Run the Structural Architect to regenerate the StyleProfile from the fresh Manuscript.
 4. Run Ear-Tune or Technical Audit on specific tabs.
 
 ---
@@ -180,7 +184,7 @@ The Structural Architect analyses your manuscript and produces a **StyleProfile*
 
 Click **Generate** to run the full StyleProfile generation:
 
-1. The Architect reads the **MergedContent** tab (up to 20,000 characters).
+1. The Architect reads the **Manuscript** tab (up to 20,000 characters).
 2. It sends the text to Gemini (thinking tier) with instructions to analyse voice, rhythm, vocabulary, structure, and motifs.
 3. The result is written to a **StyleProfile Scratch** review tab.
 4. Each style dimension is highlighted and annotated with comments explaining the reasoning.
@@ -199,14 +203,14 @@ You can also invoke the Architect from a comment thread:
 3. Click **Process @AI Comments** in the sidebar (or run it from the menu).
 
 The Architect will:
-- Analyse the selected passage in the context of the full MergedContent.
+- Analyse the selected passage in the context of the full Manuscript.
 - Decide whether the issue requires a **content fix** (rewriting the passage) or a **StyleProfile update** (codifying a new pattern).
 - Apply the changes via the collaboration system.
 - Post a reply summarising what was done.
 
 ## When to Run
 
-- **After merging tabs** — whenever MergedContent changes, regenerate the StyleProfile so other agents use current data.
+- **After merging tabs** — whenever Manuscript changes, regenerate the StyleProfile so other agents use current data.
 - **After significant edits** — if you've rewritten major sections, the style characteristics may have shifted.
 - **On demand via comments** — for targeted architectural questions about specific passages.
 
@@ -214,7 +218,7 @@ The Architect will:
 
 | Tab | Why |
 |---|---|
-| MergedContent | The source manuscript to analyse |
+| Manuscript | The source manuscript to analyse |
 
 ## Model Tier
 
@@ -336,7 +340,7 @@ The Auditor will:
 
 Click **Generate** to regenerate the TechnicalAudit system prompt:
 
-1. The Auditor reads the current StyleProfile, any existing audit instructions, and a sample of the MergedContent.
+1. The Auditor reads the current StyleProfile, any existing audit instructions, and a sample of the Manuscript.
 2. It produces comprehensive audit rules: Chid Axioms, LaTeX caption requirements, unit systems, and a checklist.
 3. The result is written to a **TechnicalAudit Scratch** review tab.
 
@@ -562,11 +566,11 @@ When an agent edits your prose (Ear-Tune, Technical Audit, or comment-triggered 
 
 The error message includes a list of available models to help you choose.
 
-### "MergedContent tab is empty"
+### "Manuscript tab is empty"
 
 **Cause:** The Structural Architect was run before merging any tabs.
 
-**Fix:** Use the Tab Merger to merge your chapter tabs into MergedContent first, then rerun the Architect.
+**Fix:** Use the Tab Merger to merge your chapter tabs into Manuscript first, then rerun the Architect.
 
 ### "Tab X not found"
 

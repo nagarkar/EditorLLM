@@ -12,7 +12,7 @@ import { TestThread } from '../helpers/prompts';
 
 export const FIXTURES = {
 
-  MERGED_CONTENT: `
+  MANUSCRIPT: `
 Chapter 1: The Ground of Being
 
 The Chid Axiom asserts that consciousness — pure awareness, the Sanskrit Chit — is the

@@ -27,7 +27,7 @@
             document.execCommand('copy');
             setStatus('Copied ' + lines.length + ' log lines to clipboard.', 'info');
           } catch (_) {
-            setStatus('Copy failed — try the 📋 Logs sidebar instead.', 'error');
+            setStatus('Copy failed — use the log view (≡ Logs) to copy instead.', 'error');
           }
           document.body.removeChild(ta);
         }
@@ -45,16 +45,125 @@
       .getAllSessionLogs();
   }
 
+  /** Max lines kept in Recent activity (sidebar). */
+  var RECENT_RUNS_MAX = 25;
+  var _toastHideTimer = null;
+
+  function truncateOneLine(text, maxLen) {
+    if (!text) return '';
+    var parts = String(text).split(/\r?\n/);
+    var one = '';
+    for (var i = 0; i < parts.length; i++) {
+      var s = parts[i].trim();
+      if (s) { one = s; break; }
+    }
+    if (!one) one = String(text).trim();
+    if (one.length <= maxLen) return one;
+    return one.slice(0, maxLen - 1) + '…';
+  }
+
+  function escapeHtml(text) {
+    return String(text == null ? '' : text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function timeHHMMSS() {
+    var d = new Date();
+    function z(n) { return n < 10 ? '0' + n : '' + n; }
+    return z(d.getHours()) + ':' + z(d.getMinutes()) + ':' + z(d.getSeconds());
+  }
+
+  /**
+   * Prepends a completed or failed run to Recent activity.
+   * @param {string} sourceLabel Short tag: Status, Merge, Refresh, Sweep.
+   */
+  function appendRecentRun(sourceLabel, msg, ok) {
+    var list = document.getElementById('recent-runs-list');
+    if (!list) return;
+    var line = String(msg || '').trim();
+    if (!line) return;
+
+    var li = document.createElement('li');
+    li.className = 'recent-run-line ' + (ok ? 'recent-run-ok' : 'recent-run-fail');
+    if (line.length > 100) li.title = line;
+
+    var t = document.createElement('span');
+    t.className = 'recent-run-time';
+    t.textContent = timeHHMMSS();
+
+    var mark = document.createElement('span');
+    mark.className = 'recent-run-mark';
+    mark.textContent = ok ? '✓ ' : '✗ ';
+
+    var src = document.createElement('span');
+    src.className = 'recent-run-src';
+    src.textContent = '[' + (sourceLabel || 'Task') + '] ';
+
+    var body = document.createElement('span');
+    body.textContent = truncateOneLine(line, 220);
+
+    li.appendChild(t);
+    li.appendChild(mark);
+    li.appendChild(src);
+    li.appendChild(body);
+
+    list.insertBefore(li, list.firstChild);
+    while (list.children.length > RECENT_RUNS_MAX) {
+      list.removeChild(list.lastChild);
+    }
+  }
+
+  /** Brief toast for success / error so users see feedback without opening logs. */
+  function showOutcomeToast(msg, type) {
+    var host = document.getElementById('toast-host');
+    if (!host) return;
+    var line = truncateOneLine(msg, 160);
+    if (!line) return;
+
+    if (_toastHideTimer) {
+      clearTimeout(_toastHideTimer);
+      _toastHideTimer = null;
+    }
+    host.innerHTML = '';
+
+    var t = document.createElement('div');
+    t.className = 'toast ' + (type === 'error' ? 'toast-error' : 'toast-success');
+    t.textContent = line;
+    host.appendChild(t);
+
+    _toastHideTimer = setTimeout(function() {
+      t.classList.add('toast-out');
+      setTimeout(function() {
+        if (t.parentNode === host) host.removeChild(t);
+      }, 280);
+      _toastHideTimer = null;
+    }, 4800);
+  }
+
+  function notifyOutcomeIfTerminal(sourceLabel, msg, type) {
+    if (type !== 'info' && type !== 'error') return;
+    var line = String(msg || '').trim();
+    if (!line) return;
+    appendRecentRun(sourceLabel, line, type !== 'error');
+    showOutcomeToast(line, type);
+  }
+
   function setStatus(msg, type) {
     var el = document.getElementById('status');
     el.textContent = msg;
     el.className = 'status-box' + (type ? ' ' + type : '');
+    notifyOutcomeIfTerminal('Status', msg, type);
   }
 
   function setMergeStatus(msg, type) {
     var el = document.getElementById('merge-status');
     el.textContent = msg;
     el.className = 'status-box' + (type ? ' ' + type : '');
+    notifyOutcomeIfTerminal('Merge', msg, type);
   }
 
   function setMergeProgress(msg) {
@@ -66,6 +175,7 @@
     if (!el) return;
     el.textContent = msg;
     el.className = 'status-box' + (type ? ' ' + type : '');
+    notifyOutcomeIfTerminal('Refresh', msg, type);
   }
 
   /** Wraps google.script.run in a Promise for sequential async calls. */
@@ -77,22 +187,6 @@
         .withFailureHandler(reject);
       call[fnName].apply(call, args);
     });
-  }
-
-  // ── Setup ──────────────────────────────────────────────
-
-  function setupTabs() {
-    setStatus('Initialising standard tabs…', 'loading');
-    google.script.run
-      .withSuccessHandler(function () {
-        setStatus('Standard tabs created.', 'info');
-      })
-      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
-      .setupStandardTabs();
-  }
-
-  function openApiKeyDialog() {
-    google.script.run.showApiKeyConfig();
   }
 
   // ── StyleProfile quality score ─────────────────────────
@@ -111,8 +205,8 @@
       return;
     }
     var score = data.score;
-    var color = score >= 4 ? '#2e7d32' : score >= 3 ? '#e65100' : '#c62828';
-    var bg    = score >= 4 ? '#e8f5e9' : score >= 3 ? '#fff3e0' : '#ffebee';
+    var color = score >= 4 ? '#81C784' : score >= 3 ? '#FFB74D' : '#EF9A9A';
+    var bg    = score >= 4 ? '#1B3B2A' : score >= 3 ? '#3B2C15' : '#3B1B1B';
     badge.textContent = score + '/5';
     badge.style.color = color;
     badge.style.background = bg;
@@ -129,20 +223,58 @@
       .getStyleProfileScore();
   }
 
+  /** Row prefix matches Sidebar ids: `{prefix}-row`, `{prefix}-badge`, `{prefix}-rationale`. */
+  function renderOneInstructionScoreRow(rowPrefix, data) {
+    var row = document.getElementById(rowPrefix + '-row');
+    var badge = document.getElementById(rowPrefix + '-badge');
+    var rationale = document.getElementById(rowPrefix + '-rationale');
+    if (!row || !badge) return;
+    if (!data || data.score === null) {
+      row.style.display = 'none';
+      return;
+    }
+    var score = data.score;
+    var color = score >= 4 ? '#81C784' : score >= 3 ? '#FFB74D' : '#EF9A9A';
+    var bg = score >= 4 ? '#1B3B2A' : score >= 3 ? '#3B2C15' : '#3B1B1B';
+    badge.textContent = score + '/5';
+    badge.style.color = color;
+    badge.style.background = bg;
+    if (rationale) rationale.textContent = data.rationale || '';
+    row.style.display = 'block';
+  }
+
+  function renderInstructionQualityRows(scores) {
+    if (!scores) return;
+    renderOneInstructionScoreRow('eartune-instr-score', scores.earTune);
+    renderOneInstructionScoreRow('audit-instr-score', scores.audit);
+    renderOneInstructionScoreRow('tether-instr-score', scores.tether);
+    renderOneInstructionScoreRow('gp-instr-score', scores.generalPurpose);
+    renderOneInstructionScoreRow('tts-instr-score', scores.tts);
+  }
+
+  function loadInstructionQualityScores() {
+    google.script.run
+      .withSuccessHandler(renderInstructionQualityRows)
+      .withFailureHandler(function () { /* silent */ })
+      .getInstructionQualityScores();
+  }
+
   // ── Architect ──────────────────────────────────────────
 
 
   async function runArchitectInstructions() {
+    _notifyJobStart_();
     setStatus('Architect generating StyleProfile…', 'loading');
     try {
       await runServer('architectGenerateInstructions');
       setStatus('StyleProfile Scratch tab updated. Fetching quality score…', 'info');
-      // Fetch and display the quality score written by evaluateStyleProfile_().
+      // Fetch and display the StyleProfile quality score (ArchitectAgent.evaluateInstructions).
       var scoreData = await runServer('getStyleProfileScore');
       renderStyleProfileScore(scoreData);
       var scoreMsg = (scoreData && scoreData.score !== null)
         ? ' Quality: ' + scoreData.score + '/5.' : '';
       setStatus('StyleProfile Scratch tab updated.' + scoreMsg, 'info');
+      loadInstructionQualityScores();
     } catch (e) {
       setStatus('Error: ' + e.message, 'error');
     }
@@ -151,17 +283,25 @@
   // ── EarTune ────────────────────────────────────────────
 
 
-  function runEarTuneInstructions() {
+  async function runEarTuneInstructions() {
+    _notifyJobStart_();
     setStatus('EarTune generating instructions…', 'loading');
-    google.script.run
-      .withSuccessHandler(function () { setStatus('EarTune Scratch tab updated.', 'info'); })
-      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
-      .earTuneGenerateInstructions();
+    try {
+      await runServer('earTuneGenerateInstructions');
+      var scores = await runServer('getInstructionQualityScores');
+      renderInstructionQualityRows(scores);
+      var e = scores && scores.earTune;
+      var scoreMsg = (e && e.score !== null) ? ' Instruction quality: ' + e.score + '/5.' : '';
+      setStatus('EarTune Scratch tab updated.' + scoreMsg, 'info');
+    } catch (err) {
+      setStatus('Error: ' + err.message, 'error');
+    }
   }
 
   // ── Active tab display ─────────────────────────────────────
 
   async function runEarTune() {
+    _notifyJobStart_();
     try {
       setStatus('Identifying active tab…', 'loading');
       var tabName = await runServer('getActiveTabName');
@@ -177,15 +317,23 @@
   // ── Auditor ────────────────────────────────────────────
 
 
-  function runAuditorInstructions() {
+  async function runAuditorInstructions() {
+    _notifyJobStart_();
     setStatus('Auditor generating instructions…', 'loading');
-    google.script.run
-      .withSuccessHandler(function () { setStatus('TechnicalAudit Scratch tab updated.', 'info'); })
-      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
-      .auditorGenerateInstructions();
+    try {
+      await runServer('auditorGenerateInstructions');
+      var scores = await runServer('getInstructionQualityScores');
+      renderInstructionQualityRows(scores);
+      var a = scores && scores.audit;
+      var scoreMsg = (a && a.score !== null) ? ' Instruction quality: ' + a.score + '/5.' : '';
+      setStatus('TechnicalAudit Scratch tab updated.' + scoreMsg, 'info');
+    } catch (err) {
+      setStatus('Error: ' + err.message, 'error');
+    }
   }
 
   async function runAudit() {
+    _notifyJobStart_();
     try {
       setStatus('Identifying active tab…', 'loading');
       var tabName = await runServer('getActiveTabName');
@@ -198,18 +346,71 @@
     }
   }
 
+  // ── Publisher Agent (main panel quick actions) ────────
+
+  async function runPublisherInstructions() {
+    _notifyJobStart_();
+    setStatus('Publisher generating instructions…', 'loading');
+    try {
+      await runServer('publisherGenerateInstructions');
+      setStatus('Publisher Instructions Scratch tab updated.', 'info');
+      refreshPublisherWorkflowState(true);
+    } catch (err) {
+      setStatus('Error: ' + err.message, 'error');
+    }
+  }
+
+  // ── TTS Agent (main panel) ─────────────────────────────
+
+  async function runTtsAgentInstructions() {
+    _notifyJobStart_();
+    setStatus('TTS Agent generating instructions…', 'loading');
+    try {
+      await runServer('ttsGenerateInstructions');
+      var scores = await runServer('getInstructionQualityScores');
+      renderInstructionQualityRows(scores);
+      var t = scores && scores.tts;
+      var scoreMsg = (t && t.score !== null) ? ' Instruction quality: ' + t.score + '/5.' : '';
+      setStatus('TTS Instructions Scratch tab updated.' + scoreMsg, 'info');
+    } catch (err) {
+      setStatus('Error: ' + err.message, 'error');
+    }
+  }
+
+  async function runTtsAnnotate() {
+    _notifyJobStart_();
+    try {
+      setStatus('Identifying active tab…', 'loading');
+      var tabName = await runServer('getActiveTabName');
+      var name = tabName || 'active tab';
+      setStatus("Running TTS annotation on Tab '" + name + "'…", 'loading');
+      await runServer('ttsAnnotateTab');
+      setStatus("TTS directives applied to Tab '" + name + "'.", 'info');
+    } catch (e) {
+      setStatus('Error: ' + e.message, 'error');
+    }
+  }
+
   // ── Tether ─────────────────────────────────────────────
 
 
-  function runTetherInstructions() {
+  async function runTetherInstructions() {
+    _notifyJobStart_();
     setStatus('Tether generating instructions…', 'loading');
-    google.script.run
-      .withSuccessHandler(function () { setStatus('TetherInstructions Scratch tab updated.', 'info'); })
-      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
-      .tetherGenerateInstructions();
+    try {
+      await runServer('tetherGenerateInstructions');
+      var scores = await runServer('getInstructionQualityScores');
+      renderInstructionQualityRows(scores);
+      var t = scores && scores.tether;
+      var scoreMsg = (t && t.score !== null) ? ' Instruction quality: ' + t.score + '/5.' : '';
+      setStatus('TetherInstructions Scratch tab updated.' + scoreMsg, 'info');
+    } catch (err) {
+      setStatus('Error: ' + err.message, 'error');
+    }
   }
 
   async function runTether() {
+    _notifyJobStart_();
     try {
       setStatus('Identifying active tab…', 'loading');
       var tabName = await runServer('getActiveTabName');
@@ -225,6 +426,7 @@
   // ── General Purpose Agent ─────────────────────────────
 
   function runProcessComments() {
+    _notifyJobStart_();
     setStatus('Processing @AI comment threads…', 'loading');
     google.script.run
       .withSuccessHandler(function (result) {
@@ -237,12 +439,19 @@
   }
 
 
-  function runCommentInstructions() {
+  async function runCommentInstructions() {
+    _notifyJobStart_();
     setStatus('Generating Comment Instructions…', 'loading');
-    google.script.run
-      .withSuccessHandler(function () { setStatus('Comment Instructions Scratch tab updated.', 'info'); })
-      .withFailureHandler(function (e) { setStatus('Error: ' + e.message, 'error'); })
-      .generalPurposeAgentGenerateInstructions();
+    try {
+      await runServer('generalPurposeAgentGenerateInstructions');
+      var scores = await runServer('getInstructionQualityScores');
+      renderInstructionQualityRows(scores);
+      var g = scores && scores.generalPurpose;
+      var scoreMsg = (g && g.score !== null) ? ' Instruction quality: ' + g.score + '/5.' : '';
+      setStatus('Comment Instructions Scratch tab updated.' + scoreMsg, 'info');
+    } catch (err) {
+      setStatus('Error: ' + err.message, 'error');
+    }
   }
 
   // ── Merge & Refresh ────────────────────────────────────
@@ -263,6 +472,7 @@
   var _scoreGateAcknowledged = false;
 
   async function runFullInstructionRefresh() {
+    _notifyJobStart_();
     var refreshBtn = document.getElementById('refreshInstructionsBtn');
     if (refreshBtn) refreshBtn.disabled = true;
     setRefreshStatus('', '');
@@ -328,10 +538,8 @@
       // We run these serially to avoid "Service Documents failed" errors that
       // commonly occur in GAS when multiple concurrent threads hit the same doc.
       var agentSteps = [
-        { name: 'EarTune', fn: 'earTuneGenerateInstructions' },
         { name: 'Audit',   fn: 'auditorGenerateInstructions' },
         { name: 'Tether',  fn: 'tetherGenerateInstructions' },
-        { name: 'General Purpose', fn: 'generalPurposeAgentGenerateInstructions' }
       ];
 
       // Batch the step-start message with its per-agent count — one round-trip
@@ -376,13 +584,55 @@
       setRefreshStatus(globalMsg, 'error');
     } finally {
       if (refreshBtn) refreshBtn.disabled = false;
+      google.script.run
+        .withSuccessHandler(renderInstructionQualityRows)
+        .withFailureHandler(function () { /* silent */ })
+        .getInstructionQualityScores();
     }
   }
+
+  // ── MultiSelectTabs instances ──────────────────────────────
+  // Created lazily on first initMainTab() so the DOM is ready.
+  var _mergeMultiselect   = null;
+  var _managedMultiselect = null;
+
+  /**
+   * Initialise both multiselect widgets and load the document tab list
+   * into them as the available option set.
+   */
+  function initMultiselects() {
+    var mergeContainer   = document.getElementById('merge-multiselect');
+    var managedContainer = document.getElementById('managed-multiselect');
+    if (!mergeContainer || !managedContainer) return;
+
+    if (!_mergeMultiselect) {
+      _mergeMultiselect = MultiSelectTabs.create({
+        container:   mergeContainer,
+        placeholder: 'Add tab to merge…',
+      });
+    }
+    if (!_managedMultiselect) {
+      _managedMultiselect = MultiSelectTabs.create({
+        container:   managedContainer,
+        placeholder: 'Add managed tab…',
+      });
+    }
+
+    // Populate option lists from live document tab names.
+    google.script.run
+      .withSuccessHandler(function(tabNames) {
+        if (_mergeMultiselect)   _mergeMultiselect.setOptions(tabNames);
+        if (_managedMultiselect) _managedMultiselect.setOptions(tabNames);
+      })
+      .getTabNames();
+  }
+
+  // ── Create Manuscript ───────────────────────────────────────
 
   function loadSavedMergeNames() {
     google.script.run
       .withSuccessHandler(function (names) {
-        document.getElementById('merge-tab-names').value = names.join(', ');
+        if (_mergeMultiselect) _mergeMultiselect.setValues(names);
         setMergeProgress(names.length ? 'Loaded ' + names.length + ' saved tab name(s).' : 'No saved names found.');
       })
       .withFailureHandler(function (e) { setMergeStatus('Error loading: ' + e.message, 'error'); })
@@ -390,7 +640,8 @@
   }
 
   function saveMergeNames(silent) {
-    var csv = document.getElementById('merge-tab-names').value;
+    var names = _mergeMultiselect ? _mergeMultiselect.getValues() : [];
+    var csv   = names.join(', ');
     google.script.run
       .withSuccessHandler(function () {
         if (!silent) setMergeProgress('Tab names saved.');
@@ -399,9 +650,37 @@
       .saveMergeTabs(csv);
   }
 
+  // ── Managed Tabs ────────────────────────────────────────────
+
+  function setManagedTabsStatus(msg, type) {
+    var el = document.getElementById('managed-tabs-status');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'status-box' + (type ? ' ' + type : '');
+  }
+
+  function loadSavedManagedTabNames() {
+    google.script.run
+      .withSuccessHandler(function(names) {
+        if (_managedMultiselect) _managedMultiselect.setValues(names);
+        setManagedTabsStatus(names.length ? 'Loaded ' + names.length + ' tab(s).' : 'No saved managed tabs found.', 'info');
+      })
+      .withFailureHandler(function(e) { setManagedTabsStatus('Error loading: ' + e.message, 'error'); })
+      .getManagedTabNamesList();
+  }
+
+  function saveManagedTabNames() {
+    var names = _managedMultiselect ? _managedMultiselect.getValues() : [];
+    var csv   = names.join(', ');
+    google.script.run
+      .withSuccessHandler(function() { setManagedTabsStatus('Managed tabs saved.', 'info'); })
+      .withFailureHandler(function(e) { setManagedTabsStatus('Error saving: ' + e.message, 'error'); })
+      .saveManagedTabNamesList(csv);
+  }
+
   async function runMergeNow() {
-    var raw = document.getElementById('merge-tab-names').value || '';
-    var names = raw.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    _notifyJobStart_();
+    var names = _mergeMultiselect ? _mergeMultiselect.getValues() : [];
     if (!names.length) {
       setMergeStatus('Enter at least one tab name to merge.', 'error');
       return;
@@ -416,14 +695,14 @@
     if (refreshBtn) refreshBtn.disabled = true;
     setMergeStatus('', '');
     setRefreshStatus('', '');
-    setMergeProgress('Merging ' + names.length + ' tab(s)… Please wait.');
+    setMergeProgress('Creating manuscript from ' + names.length + ' tab(s)… Please wait.');
 
     try {
       var res = await runServer('runMergeAllTabs', names);
       if (res && res.ok) {
         setMergeProgress('');
-        setMergeStatus('Merged ' + res.successes + ' tab(s) into MergedContent.', 'info');
-        // Chain: refresh all agent instructions now that MergedContent is up to date.
+        setMergeStatus('Created Manuscript from ' + res.successes + ' tab(s).', 'info');
+        // Chain: refresh all agent instructions now that Manuscript is up to date.
         // runFullInstructionRefresh manages its own refreshBtn disable/enable.
         await runFullInstructionRefresh();
       } else {
@@ -444,11 +723,27 @@
     }
   }
 
-  loadModelConfig();
-  loadHighlightColor();
-  loadDebugMode();
-  loadSavedMergeNames();
-  loadStyleProfileScore();
+  var _mainInitialized = false;
+  function initMainTab() {
+    if (_mainInitialized) return;
+    _mainInitialized = true;
+    loadModelConfig();
+    loadHighlightColor();
+    loadDebugMode();
+    try {
+      initMultiselects();      // create multiselect widgets + populate tab options
+    } catch (e) {
+      // Guard: if MultiSelectTabs is unavailable (e.g. script load order issue),
+      // don't let the exception abort quality-score loading below.
+      console.error('[initMainTab] initMultiselects failed:', e);
+    }
+    loadSavedMergeNames();     // pre-select saved merge tab names
+    loadSavedManagedTabNames(); // pre-select saved managed tab names
+    loadStyleProfileScore();
+    loadInstructionQualityScores();
+  }
+
+  initMainTab();
 
   // ── Global Setting Functions ───────────────────────────
 
@@ -514,41 +809,184 @@
 
   // ── Model Configuration ────────────────────────────────
 
+  /** Gemini key in User Properties only — script/deployment key shows as unset. */
+  function refreshGeminiApiKeyUi() {
+    var inp = document.getElementById('gemini-api-key');
+    if (!inp) return;
+    google.script.run
+      .withSuccessHandler(function (hasUser) {
+        inp.value = '';
+        inp.placeholder = hasUser ? '**** (set)' : 'unset';
+      })
+      .withFailureHandler(function () {
+        inp.placeholder = 'unset';
+      })
+      .geminiHasUserApiKey();
+  }
+
+  function refreshOpenAiApiKeyUi() {
+    var inp = document.getElementById('openai-api-key');
+    if (!inp) return;
+    google.script.run
+      .withSuccessHandler(function (hasUser) {
+        inp.value = '';
+        inp.placeholder = hasUser ? '**** (set)' : 'unset';
+      })
+      .withFailureHandler(function () {
+        inp.placeholder = 'unset';
+      })
+      .openAiHasUserApiKey();
+  }
+
+  function saveGeminiApiKey() {
+    var inp = document.getElementById('gemini-api-key');
+    var statusEl = document.getElementById('gemini-api-key-status');
+    if (!inp) return;
+    var key = inp.value.trim();
+    if (!key) {
+      if (statusEl) {
+        statusEl.textContent = 'Enter API key.';
+        statusEl.className = 'status-box error';
+      }
+      return;
+    }
+    if (statusEl) {
+      statusEl.textContent = 'Saving…';
+      statusEl.className = 'status-box loading';
+    }
+    google.script.run
+      .withSuccessHandler(function () {
+        inp.value = '';
+        inp.placeholder = '**** (set)';
+        if (statusEl) {
+          statusEl.textContent = 'Key saved to your account.';
+          statusEl.className = 'status-box info';
+        }
+      })
+      .withFailureHandler(function (e) {
+        if (statusEl) {
+          statusEl.textContent = 'Error: ' + e.message;
+          statusEl.className = 'status-box error';
+        }
+      })
+      .saveGeminiApiKey(key);
+  }
+
+  function saveOpenAiApiKey() {
+    var inp = document.getElementById('openai-api-key');
+    var statusEl = document.getElementById('openai-api-key-status');
+    if (!inp) return;
+    var key = inp.value.trim();
+    if (!key) {
+      if (statusEl) {
+        statusEl.textContent = 'Enter API key.';
+        statusEl.className = 'status-box error';
+      }
+      return;
+    }
+    if (statusEl) {
+      statusEl.textContent = 'Saving…';
+      statusEl.className = 'status-box loading';
+    }
+    google.script.run
+      .withSuccessHandler(function () {
+        inp.value = '';
+        inp.placeholder = '**** (set)';
+        if (statusEl) {
+          statusEl.textContent = 'Key saved to your account.';
+          statusEl.className = 'status-box info';
+        }
+      })
+      .withFailureHandler(function (e) {
+        if (statusEl) {
+          statusEl.textContent = 'Error: ' + e.message;
+          statusEl.className = 'status-box error';
+        }
+      })
+      .saveOpenAiApiKey(key);
+  }
+
   function setModelStatus(msg, type) {
-    var el = document.getElementById('model-status');
-    el.textContent = msg;
-    el.className = 'status-box' + (type ? ' ' + type : '');
+    ['model-status', 'model-status-openai'].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = msg;
+      el.className = 'status-box' + (type ? ' ' + type : '');
+    });
+  }
+
+  function getSelectedLlmService() {
+    var openAi = document.getElementById('llm-service-openai');
+    return openAi && openAi.checked ? 'openai' : 'gemini';
+  }
+
+  function onLlmServiceChange() {
+    var service = getSelectedLlmService();
+    var gemini = document.getElementById('gemini-options');
+    var openai = document.getElementById('openai-options');
+    if (gemini) gemini.style.display = service === 'gemini' ? 'block' : 'none';
+    if (openai) openai.style.display = service === 'openai' ? 'block' : 'none';
+    setModelStatus('', '');
   }
 
   function loadModelConfig() {
+    refreshGeminiApiKeyUi();
+    refreshOpenAiApiKeyUi();
     google.script.run
       .withSuccessHandler(function (cfg) {
-        document.getElementById('model-fast').innerHTML = '<option value="' + cfg.fast + '">' + cfg.fast + '</option>';
-        document.getElementById('model-fast').value = cfg.fast;
+        document.getElementById('llm-service-gemini').checked = cfg.service === 'gemini';
+        document.getElementById('llm-service-openai').checked = cfg.service === 'openai';
+        onLlmServiceChange();
 
-        document.getElementById('model-thinking').innerHTML = '<option value="' + cfg.thinking + '">' + cfg.thinking + '</option>';
-        document.getElementById('model-thinking').value = cfg.thinking;
+        document.getElementById('gemini-model-fast').innerHTML = '<option value="' + cfg.gemini.fast + '">' + cfg.gemini.fast + '</option>';
+        document.getElementById('gemini-model-fast').value = cfg.gemini.fast;
 
-        document.getElementById('model-deepseek').innerHTML = '<option value="' + cfg.deepseek + '">' + cfg.deepseek + '</option>';
-        document.getElementById('model-deepseek').value = cfg.deepseek;
+        document.getElementById('gemini-model-thinking').innerHTML = '<option value="' + cfg.gemini.thinking + '">' + cfg.gemini.thinking + '</option>';
+        document.getElementById('gemini-model-thinking').value = cfg.gemini.thinking;
+
+        document.getElementById('gemini-model-deepseek').innerHTML = '<option value="' + cfg.gemini.deepseek + '">' + cfg.gemini.deepseek + '</option>';
+        document.getElementById('gemini-model-deepseek').value = cfg.gemini.deepseek;
+
+        document.getElementById('openai-model-fast').value = cfg.openai.fast || '';
+        document.getElementById('openai-model-thinking').value = cfg.openai.thinking || '';
+
+        // Auto-load the Gemini model list from the server cache when Gemini is active.
+        if (cfg.service === 'gemini') {
+          refreshAvailableModels(false);
+        }
       })
       .withFailureHandler(function (e) { setModelStatus('Error loading config: ' + e.message, 'error'); })
       .getModelConfig();
   }
 
   function saveModelConfig() {
-    var fast = document.getElementById('model-fast').value.trim();
-    var thinking = document.getElementById('model-thinking').value.trim();
-    var deepseek = document.getElementById('model-deepseek').value.trim();
-    if (!fast || !thinking || !deepseek) {
-      setModelStatus('All three model fields are required.', 'error');
-      return;
+    var service = getSelectedLlmService();
+    var geminiFast = document.getElementById('gemini-model-fast').value.trim();
+    var geminiThinking = document.getElementById('gemini-model-thinking').value.trim();
+    var geminiDeepseek = document.getElementById('gemini-model-deepseek').value.trim();
+    var openAiFast = document.getElementById('openai-model-fast').value.trim();
+    var openAiThinking = document.getElementById('openai-model-thinking').value.trim();
+
+    if (service === 'gemini') {
+      if (!geminiFast || !geminiThinking || !geminiDeepseek) {
+        setModelStatus('All Gemini model fields are required.', 'error');
+        return;
+      }
+    } else {
+      if (!openAiFast || !openAiThinking) {
+        setModelStatus('All OpenAI model fields are required.', 'error');
+        return;
+      }
     }
     setModelStatus('Saving…', 'loading');
     google.script.run
-      .withSuccessHandler(function () { setModelStatus('Model configuration saved.', 'info'); })
+      .withSuccessHandler(function () { setModelStatus('Model configuration saved. Changes apply to the next agent run.', 'info'); })
       .withFailureHandler(function (e) { setModelStatus('Error saving: ' + e.message, 'error'); })
-      .saveModelConfig(fast, thinking, deepseek);
+      .saveModelConfig({
+        service: service,
+        gemini: { fast: geminiFast, thinking: geminiThinking, deepseek: geminiDeepseek },
+        openai: { fast: openAiFast, thinking: openAiThinking }
+      });
   }
 
   var cachedModels = null;
@@ -567,12 +1005,18 @@
         populateDropdowns(models);
         setModelStatus('Found ' + models.length + ' model(s).', 'info');
       })
-      .withFailureHandler(function (e) { setModelStatus('Error: ' + e.message, 'error'); })
-      .listAvailableModels();
+      .withFailureHandler(function (e) {
+        if (e.message && e.message.includes('API key not set')) {
+          setModelStatus('Set a Gemini API key to load available models.', 'info');
+        } else {
+          setModelStatus('Error: ' + e.message, 'error');
+        }
+      })
+      .listAvailableModels(!!force);
   }
 
   function populateDropdowns(models) {
-    ['model-fast', 'model-thinking', 'model-deepseek'].forEach(function (id) {
+    ['gemini-model-fast', 'gemini-model-thinking', 'gemini-model-deepseek'].forEach(function (id) {
       var select = document.getElementById(id);
       var currentVal = select.value;
       select.innerHTML = '';
@@ -597,6 +1041,7 @@
     var el = document.getElementById('sweep-status');
     el.textContent = msg;
     el.className = 'status-box' + (type ? ' ' + type : '');
+    notifyOutcomeIfTerminal('Sweep', msg, type);
   }
 
   /**
@@ -607,7 +1052,7 @@
   function openSweepOverlay(agentKey, agentLabel) {
     _sweepAgentKey = agentKey;
     document.getElementById('sweep-agent-badge').textContent = agentLabel + ' Annotation Sweep';
-    document.getElementById('sweep-tab-list').innerHTML = '<span style="color:#9e9e9e;font-size:11px;">Loading tabs…</span>';
+    document.getElementById('sweep-tab-list').innerHTML = '<span style="color:#A0A0A0;font-size:11px;">Loading tabs…</span>';
     setSweepStatus('', '');
     document.getElementById('sweep-confirm-btn').disabled = false;
     document.getElementById('sweep-overlay').style.display = 'flex';
@@ -621,7 +1066,7 @@
       var mergeSet = new Set(mergeNames);
       var listEl = document.getElementById('sweep-tab-list');
       if (!allTabs.length) {
-        listEl.innerHTML = '<span style="color:#9e9e9e;font-size:11px;">No tabs found.</span>';
+        listEl.innerHTML = '<span style="color:#A0A0A0;font-size:11px;">No tabs found.</span>';
         return;
       }
       listEl.innerHTML = '';
@@ -638,13 +1083,15 @@
       });
     }
 
+    // Only show tabs that are eligible for agent operations (not in never-processed
+    // subtrees; within the user allowlist when one is configured).
     google.script.run
       .withSuccessHandler(function (tabs) { allTabs = tabs || []; maybeRender(); })
       .withFailureHandler(function (e) {
         document.getElementById('sweep-tab-list').innerHTML =
-          '<span style="color:#c62828;font-size:11px;">Error loading tabs: ' + e.message + '</span>';
+          '<span style="color:#EF9A9A;font-size:11px;">Error loading tabs: ' + e.message + '</span>';
       })
-      .getTabNames();
+      .getManageableTabNames();
 
     google.script.run
       .withSuccessHandler(function (names) { mergeNames = names || []; maybeRender(); })
@@ -658,6 +1105,7 @@
 
   /** Collects checked tabs and kicks off the annotation sweep via google.script.run. */
   async function confirmSweep() {
+    _notifyJobStart_();
     var checkboxes = document.querySelectorAll('#sweep-tab-list input[type=checkbox]:checked');
     var selected = [];
     checkboxes.forEach(function (cb) { selected.push(cb.value); });
@@ -669,7 +1117,7 @@
 
     var btn = document.getElementById('sweep-confirm-btn');
     btn.disabled = true;
-    setSweepStatus('Sweeping ' + selected.length + ' tab(s)… See Log Sidebar for progress.', 'loading');
+    setSweepStatus('Sweeping ' + selected.length + ' tab(s)… See log view for progress.', 'loading');
 
     try {
       var result = await runServer('annotateSelectedTabs', _sweepAgentKey, selected);
@@ -685,4 +1133,1841 @@
       btn.disabled = false;
     }
   }
+
+  // ── Log View Toggle ────────────────────────────────────
+  // Switches between main panel, tts panel, and log panel (sidebar or dialog-mode).
+
+  var _logInitialized = false;
+
+  function switchTab(tabId) {
+    var mainPanel  = document.getElementById('main-panel');
+    var logSection = document.getElementById('log-section');
+    var ttsPanel   = document.getElementById('tts-panel');
+    var publisherPanel = document.getElementById('publisher-panel');
+
+    mainPanel.style.display = 'none';
+    logSection.style.display = 'none';
+    ttsPanel.style.display = 'none';
+    publisherPanel.style.display = 'none';
+    document.body.classList.remove('log-view');
+
+    if (tabId === 'logs') {
+      logSection.style.display = '';  // remove inline override so CSS display:flex applies
+      document.body.classList.add('log-view');
+      initLogPanel();
+    } else if (tabId === 'tts') {
+      ttsPanel.style.display = 'block';
+      initTtsTab();
+    } else if (tabId === 'publisher') {
+      publisherPanel.style.display = 'block';
+      initPublisherTab();
+    } else {
+      mainPanel.style.display = 'block';
+      initMainTab();
+      refreshPublisherWorkflowState(true);
+    }
+
+    // Hide the button for the tab currently being shown; show all others.
+    ['main', 'tts', 'publisher', 'logs'].forEach(function(id) {
+      var hidden = (id === tabId);
+      ['sb-tab-', 'dw-tab-'].forEach(function(prefix) {
+        var btn = document.getElementById(prefix + id);
+        if (btn) btn.style.display = hidden ? 'none' : '';
+      });
+    });
+  }
+
+  function toggleLogView() {
+    var showingLogs = document.body.classList.contains('log-view');
+    switchTab(showingLogs ? 'main' : 'logs');
+  }
+
+  // ── Publisher Panel ─────────────────────────────────────
+
+  var _publisherInitialized = false;
+  var _publisherAudioFiles = [];
+  var _publisherSelectedIndex = -1;
+  var _publisherWorkflowState = null;
+
+  function clearPublisherStatusLinks() {
+    var host = document.getElementById('publisher-status-links');
+    if (!host) return;
+    host.innerHTML = '';
+    host.style.display = 'none';
+  }
+
+  function setPublisherStatusLinks(links) {
+    var host = document.getElementById('publisher-status-links');
+    if (!host) return;
+    host.innerHTML = '';
+    if (!links || !links.length) {
+      host.style.display = 'none';
+      return;
+    }
+    host.style.display = 'flex';
+    links.forEach(function(link) {
+      var a = document.createElement('a');
+      a.href = link.href;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = link.label;
+      a.className = 'btn-secondary btn-sm';
+      a.style.textDecoration = 'none';
+      host.appendChild(a);
+    });
+  }
+
+  function setPublisherStatus(msg, kind) {
+    var box = document.getElementById('publisher-status');
+    if (!box) return;
+    box.textContent = msg || '';
+    box.className = 'status-box' + (kind ? ' ' + kind : '');
+    if (kind !== 'info') clearPublisherStatusLinks();
+    notifyOutcomeIfTerminal('Publisher', msg, kind);
+  }
+
+  function initPublisherTab() {
+    if (!_publisherInitialized) _publisherInitialized = true;
+    refreshPublisherWorkflowState(true);
+    refreshPublisherAudioFiles(true);
+  }
+
+  function refreshPublisherWorkflowState(silent) {
+    google.script.run
+      .withSuccessHandler(function(state) {
+        _publisherWorkflowState = state || null;
+        renderPublisherWorkflowState();
+        if (!silent && state) {
+          setPublisherStatus('Publisher workflow status refreshed.', 'info');
+        }
+      })
+      .withFailureHandler(function(e) {
+        renderPublisherWorkflowError(e && e.message ? e.message : String(e || 'Unknown error'));
+        if (!silent) {
+          setPublisherStatus('Error loading workflow status: ' + (e.message || e), 'error');
+        }
+      })
+      .getPublisherWorkflowState();
+  }
+
+  function renderPublisherWorkflowError(message) {
+    var html = '<div class="publisher-workflow-empty">Error loading workflow: ' + escapeHtml(message) + '</div>';
+    ['publisher-workflow-main', 'publisher-workflow-panel'].forEach(function(id) {
+      var host = document.getElementById(id);
+      if (host) host.innerHTML = html;
+    });
+  }
+
+  function renderPublisherWorkflowState() {
+    var state = _publisherWorkflowState;
+    var hosts = ['publisher-workflow-main', 'publisher-workflow-panel'];
+    if (!state) {
+      hosts.forEach(function(id) {
+        var host = document.getElementById(id);
+        if (host) host.innerHTML = '<div class="publisher-workflow-empty">Publisher workflow state has not been loaded yet.</div>';
+      });
+      return;
+    }
+
+    var steps = [
+      {
+        title: 'Generate Instructions',
+        status: state.instructions && state.instructions.done ? 'done' : 'pending',
+        detail: state.instructions && state.instructions.done
+          ? 'Publisher Instructions tab is present.'
+          : (state.instructions && state.instructions.missingReason) || 'Publisher Instructions is missing.',
+        pills: []
+      },
+      {
+        title: 'Generate All Tabs',
+        status: state.tabs && state.tabs.done ? 'done' : ((state.tabs && state.tabs.present && state.tabs.present.length) ? 'partial' : 'pending'),
+        detail: state.tabs && state.tabs.done
+          ? 'All required publisher tabs are present.'
+          : 'Missing publisher tabs prevent full packaging coverage.',
+        pills: (state.tabs && state.tabs.missing || []).map(function(name) {
+          return { label: name, kind: 'missing' };
+        }).concat((state.tabs && state.tabs.present || []).slice(0, 3).map(function(name) {
+          return { label: name, kind: 'present' };
+        }))
+      },
+      {
+        title: 'Generate TOC',
+        status: state.toc && state.toc.done ? 'done' : 'pending',
+        detail: (state.toc && state.toc.detail) || 'Table of Contents has not been generated yet.',
+        pills: []
+      },
+      {
+        title: 'Structural Audit',
+        status: state.structuralAudit && state.structuralAudit.done ? 'done' : 'pending',
+        detail: (state.structuralAudit && state.structuralAudit.detail) || 'No structural audit detected.',
+        pills: []
+      },
+      {
+        title: 'Publish To ACX / EPUB',
+        status: (state.publish && state.publish.status) || 'pending',
+        detail: (state.publish && state.publish.detail) || 'Packaging prerequisites are incomplete.',
+        pills: [
+          { label: 'EPUB ' + ((state.publish && state.publish.epubReady) ? 'ready' : 'not ready'), kind: (state.publish && state.publish.epubReady) ? 'present' : 'missing' },
+          { label: 'ACX ' + ((state.publish && state.publish.acxReady) ? 'ready' : 'needs audio'), kind: (state.publish && state.publish.acxReady) ? 'present' : 'missing' }
+        ]
+      }
+    ];
+
+    var html = steps.map(function(step) {
+      var pills = (step.pills || []).length
+        ? '<div class="publisher-workflow-pills">' + step.pills.map(function(pill) {
+            return '<span class="publisher-workflow-pill publisher-workflow-pill--' + escapeHtml(pill.kind) + '">' + escapeHtml(pill.label) + '</span>';
+          }).join('') + '</div>'
+        : '';
+      return '' +
+        '<div class="publisher-workflow-step publisher-workflow-step--' + escapeHtml(step.status) + '">' +
+          '<div class="publisher-workflow-marker"></div>' +
+          '<div>' +
+            '<div class="publisher-workflow-title">' + escapeHtml(step.title) + '</div>' +
+            '<div class="publisher-workflow-detail">' + escapeHtml(step.detail) + '</div>' +
+            pills +
+          '</div>' +
+        '</div>';
+    }).join('');
+
+    hosts.forEach(function(id) {
+      var host = document.getElementById(id);
+      if (host) host.innerHTML = html;
+    });
+  }
+
+  function openPublisherConfirm() {
+    document.getElementById('publisher-confirm-overlay').style.display = 'flex';
+  }
+
+  function closePublisherConfirm() {
+    document.getElementById('publisher-confirm-overlay').style.display = 'none';
+  }
+
+  function confirmPublisherGenerateAll() {
+    closePublisherConfirm();
+    _notifyJobStart_();
+    setPublisherStatus('Generating all publishing tabs…', 'loading');
+    google.script.run
+      .withSuccessHandler(function(result) {
+        var parts = [];
+        if ((result.writtenTabs || []).length) parts.push('Written: ' + result.writtenTabs.join(', '));
+        if ((result.missingTabs || []).length) parts.push('Missing from Gemini response: ' + result.missingTabs.join(', '));
+        if ((result.unexpectedTabs || []).length) parts.push('Unexpected tabs ignored: ' + result.unexpectedTabs.join(', '));
+        setPublisherStatus(parts.join(' | ') || 'No tabs were generated.', (result.missingTabs || []).length ? 'error' : 'info');
+        refreshPublisherWorkflowState(true);
+      })
+      .withFailureHandler(function(e) {
+        setPublisherStatus('Error: ' + e.message, 'error');
+      })
+      .publisherGenerateAllTabs();
+  }
+
+  function runPublisherGenerateMissing() {
+    _notifyJobStart_();
+    setPublisherStatus('Generating missing publishing tabs…', 'loading');
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (!(result.requestedTabs || []).length) {
+          setPublisherStatus('No missing publisher tabs were found.', 'info');
+          refreshPublisherWorkflowState(true);
+          return;
+        }
+        var parts = [];
+        if ((result.writtenTabs || []).length) parts.push('Written: ' + result.writtenTabs.join(', '));
+        if ((result.missingTabs || []).length) parts.push('Missing from Gemini response: ' + result.missingTabs.join(', '));
+        if ((result.unexpectedTabs || []).length) parts.push('Unexpected tabs ignored: ' + result.unexpectedTabs.join(', '));
+        setPublisherStatus(parts.join(' | '), (result.missingTabs || []).length ? 'error' : 'info');
+        refreshPublisherWorkflowState(true);
+      })
+      .withFailureHandler(function(e) {
+        setPublisherStatus('Error: ' + e.message, 'error');
+      })
+      .publisherGenerateMissingTabs();
+  }
+
+  function runPublisherGenerateToc() {
+    _notifyJobStart_();
+    setPublisherStatus('Generating table of contents…', 'loading');
+    google.script.run
+      .withSuccessHandler(function(result) {
+        setPublisherStatus('Table of Contents updated with ' + (result.entries || 0) + ' heading entries.', 'info');
+        refreshPublisherWorkflowState(true);
+      })
+      .withFailureHandler(function(e) {
+        setPublisherStatus('Error: ' + e.message, 'error');
+      })
+      .publisherGenerateTableOfContents();
+  }
+
+  function runPublisherStructuralAudit() {
+    _notifyJobStart_();
+    setPublisherStatus('Running structural audit on Manuscript…', 'loading');
+    google.script.run
+      .withSuccessHandler(function() {
+        setPublisherStatus('Structural audit annotations applied to Manuscript.', 'info');
+        refreshPublisherWorkflowState(true);
+      })
+      .withFailureHandler(function(e) {
+        setPublisherStatus('Error: ' + e.message, 'error');
+      })
+      .publisherRunStructuralAudit();
+  }
+
+  function runPublisherBuildEpub() {
+    _notifyJobStart_();
+    clearPublisherStatusLinks();
+    setPublisherStatus('Building EPUB package…', 'loading');
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (!result || !result.ok) {
+          setPublisherStatus('Error: ' + ((result && result.error) || 'EPUB packaging failed.'), 'error');
+          return;
+        }
+        setPublisherStatus('EPUB package created in "' + result.folderName + '" as ' + result.fileName + '.', 'info');
+        setPublisherStatusLinks([
+          { label: 'Open Drive Folder', href: result.folderUrl },
+          { label: 'Open EPUB Reader', href: 'https://epub-reader.online' }
+        ]);
+        refreshPublisherWorkflowState(true);
+      })
+      .withFailureHandler(function(e) {
+        setPublisherStatus('Error: ' + e.message, 'error');
+      })
+      .publisherBuildEpubPackage();
+  }
+
+  function refreshPublisherAudioFiles(silent) {
+    if (!silent) setPublisherStatus('Loading audio files…', 'loading');
+    google.script.run
+      .withSuccessHandler(function(files) {
+        _publisherAudioFiles = files || [];
+        _publisherSelectedIndex = _publisherAudioFiles.length ? 0 : -1;
+        renderPublisherAudioFiles();
+        refreshPublisherWorkflowState(true);
+        if (!silent) {
+          setPublisherStatus(_publisherAudioFiles.length
+            ? (_publisherAudioFiles.length + ' audio file(s) available.')
+            : 'No `.mp3` files found in EditorLLM/Audio.', 'info');
+        }
+      })
+      .withFailureHandler(function(e) {
+        setPublisherStatus('Error loading audio files: ' + e.message, 'error');
+      })
+      .listEditorLLMAudioFiles();
+  }
+
+  function renderPublisherAudioFiles() {
+    var host = document.getElementById('publisher-audio-list');
+    if (!host) return;
+    host.innerHTML = '';
+    if (!_publisherAudioFiles.length) {
+      host.innerHTML = '<div class="agent-desc" style="margin:0;">No `.mp3` files found.</div>';
+      return;
+    }
+
+    _publisherAudioFiles.forEach(function(file, idx) {
+      var row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.alignItems = 'center';
+      row.style.gap = '8px';
+      row.style.padding = '6px 4px';
+      row.style.cursor = 'pointer';
+      row.style.borderBottom = idx === _publisherAudioFiles.length - 1 ? 'none' : '1px solid var(--border)';
+      row.style.background = idx === _publisherSelectedIndex ? 'rgba(138,180,248,0.12)' : 'transparent';
+      row.onclick = function() {
+        _publisherSelectedIndex = idx;
+        renderPublisherAudioFiles();
+      };
+
+      var num = document.createElement('div');
+      num.textContent = String(idx + 1);
+      num.style.width = '20px';
+      num.style.textAlign = 'right';
+      num.style.color = 'var(--text-secondary)';
+
+      var checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = file.selected !== false;
+      checkbox.onclick = function(ev) { ev.stopPropagation(); };
+      checkbox.onchange = function() {
+        file.selected = checkbox.checked;
+      };
+
+      var name = document.createElement('div');
+      name.textContent = file.name;
+      name.style.flex = '1';
+      name.style.minWidth = '0';
+      name.style.fontSize = '12px';
+
+      row.appendChild(num);
+      row.appendChild(checkbox);
+      row.appendChild(name);
+      host.appendChild(row);
+    });
+  }
+
+  function movePublisherAudioSelection(dir) {
+    var idx = _publisherSelectedIndex;
+    if (idx < 0) {
+      setPublisherStatus('Select an audio row first.', 'error');
+      return;
+    }
+    var target = idx + dir;
+    if (target < 0 || target >= _publisherAudioFiles.length) return;
+    var tmp = _publisherAudioFiles[idx];
+    _publisherAudioFiles[idx] = _publisherAudioFiles[target];
+    _publisherAudioFiles[target] = tmp;
+    _publisherSelectedIndex = target;
+    renderPublisherAudioFiles();
+  }
+
+  function runPublisherBuildAcx() {
+    _notifyJobStart_();
+    var selectedIds = _publisherAudioFiles
+      .filter(function(file) { return file.selected !== false; })
+      .map(function(file) { return file.id; });
+
+    if (!selectedIds.length) {
+      setPublisherStatus('Select at least one audio file.', 'error');
+      return;
+    }
+
+    setPublisherStatus('Building ACX package…', 'loading');
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (!result || !result.ok) {
+          setPublisherStatus('Error: ' + ((result && result.error) || 'ACX packaging failed.'), 'error');
+          return;
+        }
+        setPublisherStatus('ACX package created in "' + result.folderName + '" with ' + (result.copied || []).length + ' file(s).', 'info');
+        refreshPublisherWorkflowState(true);
+      })
+      .withFailureHandler(function(e) {
+        setPublisherStatus('Error: ' + e.message, 'error');
+      })
+      .publisherBuildAcxPackage(selectedIds);
+  }
+
+  // ── Open in Dialog ─────────────────────────────────────
+
+  function openInDialog() {
+    google.script.run.openAsDialog('Sidebar', 'EditorLLM');
+  }
+
+  // ── Log Panel Init ─────────────────────────────────────
+  // Called lazily when the user first opens the log view (sidebar or dialog).
+
+  function initLogPanel() {
+    if (_logInitialized) return;
+    _logInitialized = true;
+    setLogFooter('Connecting…', '');
+    document.getElementById('autoscroll-btn').classList.add('active');
+    pollJobDashboard();
+    listTimer = setInterval(pollJobDashboard, JOB_DASHBOARD_MS);
+  }
+
+  // ── Log Panel State ────────────────────────────────────
+
+  var jobs             = [];
+  var activeJobId      = null;
+  var lastSeq          = 0;
+  var entryCount       = 0;
+  var autoScroll       = true;
+  var pollTimer        = null;
+  var listTimer        = null;
+  var LOG_POLL_MS      = 1500;
+  var JOB_DASHBOARD_MS = 10000;
+
+  // ── Log DOM Helpers ────────────────────────────────────
+
+  function logPanel()   { return document.getElementById('log-panel'); }
+  function logEmpty()   { return document.getElementById('log-empty'); }
+  function logFooterEl(){ return document.getElementById('log-footer'); }
+  function logSpinner() { return document.getElementById('spinner'); }
+  function logCountEl() { return document.getElementById('log-count'); }
+  function jobSelectEl(){ return document.getElementById('job-select'); }
+
+  function setLogFooter(msg, cls) {
+    var el = logFooterEl();
+    el.textContent = msg;
+    el.className = 'log-footer' + (cls ? ' ' + cls : '');
+  }
+
+  // ── Log Rendering ──────────────────────────────────────
+
+  function appendEntries(entries) {
+    if (!entries || !entries.length) return;
+    var p       = logPanel();
+    var emptyEl = logEmpty();
+
+    entries.forEach(function(entry) {
+      if (emptyEl) emptyEl.style.display = 'none';
+
+      var div     = document.createElement('div');
+      div.className = 'log-entry ' + (entry.level || 'INFO');
+
+      var tsSpan  = document.createElement('span');
+      tsSpan.className = 'log-ts';
+      tsSpan.textContent = entry.ts || '';
+
+      var lvlSpan = document.createElement('span');
+      lvlSpan.className = 'log-level';
+      lvlSpan.textContent = (entry.level || 'INFO').toUpperCase();
+
+      div.appendChild(tsSpan);
+      div.appendChild(lvlSpan);
+      div.appendChild(document.createTextNode(entry.msg || ''));
+
+      p.appendChild(div);
+      entryCount++;
+
+      if (entry.seq > lastSeq) lastSeq = entry.seq;
+    });
+
+    logCountEl().textContent = entryCount + (entryCount === 1 ? ' entry' : ' entries');
+    if (autoScroll) p.scrollTop = p.scrollHeight;
+  }
+
+  function clearLogPanel() {
+    var p = logPanel();
+    while (p.lastChild && p.lastChild !== logEmpty()) {
+      p.removeChild(p.lastChild);
+    }
+    var emptyEl = logEmpty();
+    if (emptyEl) emptyEl.style.display = '';
+    entryCount = 0;
+    logCountEl().textContent = '0 entries';
+  }
+
+  function toggleAutoScroll() {
+    autoScroll = !autoScroll;
+    var btn = document.getElementById('autoscroll-btn');
+    btn.textContent = autoScroll ? '↓' : '▶';
+    btn.title = autoScroll
+      ? 'Auto-scroll ON — click to pause'
+      : 'Auto-scroll OFF — click to resume';
+    if (autoScroll) btn.classList.add('active');
+    else            btn.classList.remove('active');
+  }
+
+  // ── Job Dropdown ───────────────────────────────────────
+
+  function statusIcon(jobId) {
+    var meta = jobs.find(function(j) { return j.id === jobId; });
+    if (!meta) return '⟳';
+    if (meta._done && meta._error) return '✕';
+    if (meta._done)                return '✓';
+    return '⟳';
+  }
+
+  function renderJobDropdown() {
+    var sel = jobSelectEl();
+    sel.innerHTML = '';
+    if (!jobs.length) {
+      var opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '— No jobs yet —';
+      sel.appendChild(opt);
+      return;
+    }
+    // Show all jobs (running and completed) so recently-finished jobs remain visible.
+    jobs.forEach(function(job) {
+      var opt = document.createElement('option');
+      opt.value = job.id;
+      opt.textContent = statusIcon(job.id) + ' ' + job.label + '  (' + job.startedAt + ')';
+      if (job.id === activeJobId) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+
+  function onJobSelectChange() {
+    var sel   = jobSelectEl();
+    var jobId = sel.value;
+    if (jobId && jobId !== activeJobId) selectJob(jobId);
+  }
+
+  // ── Job Selection ──────────────────────────────────────
+
+  function selectJob(jobId) {
+    if (activeJobId === jobId) return;
+    activeJobId = jobId;
+    lastSeq     = 0;
+    entryCount  = 0;
+    clearLogPanel();
+    renderJobDropdown();
+    stopLogPolling();
+
+    setLogFooter('Loading logs…', '');
+    logSpinner().classList.remove('hidden');
+    google.script.run
+      .withSuccessHandler(function(entries) {
+        appendEntries(entries);
+        google.script.run
+          .withSuccessHandler(function(status) {
+            updateJobMeta(jobId, status);
+            renderJobDropdown();
+            if (status && status.done) {
+              showJobDone(status);
+            } else {
+              setLogFooter('Live polling…', '');
+              startLogPolling();
+            }
+          })
+          .withFailureHandler(function() {
+            setLogFooter('Polling…', '');
+            startLogPolling();
+          })
+          .getJobStatus(jobId);
+      })
+      .withFailureHandler(function(e) {
+        setLogFooter('Error loading logs: ' + (e.message || e), 'error');
+      })
+      .getLogsSince(jobId, 0);
+  }
+
+  function showJobDone(status) {
+    logSpinner().classList.add('hidden');
+    if (status.error) {
+      setLogFooter('Error: ' + status.error, 'error');
+    } else {
+      setLogFooter('Completed successfully.', 'success');
+    }
+  }
+
+  function updateJobMeta(jobId, status) {
+    if (!status) return;
+    var job = jobs.find(function(j) { return j.id === jobId; });
+    if (job) {
+      job._done  = status.done;
+      job._error = status.error;
+    }
+  }
+
+  // ── Close Completed Jobs ───────────────────────────────
+
+  function closeCompletedJobs() {
+    setLogFooter('Removing completed jobs…', '');
+    google.script.run
+      .withSuccessHandler(function(remainingJobs) {
+        var oldMap = {};
+        jobs.forEach(function(j) { oldMap[j.id] = j; });
+        remainingJobs.forEach(function(j) {
+          if (oldMap[j.id]) {
+            j._done  = oldMap[j.id]._done;
+            j._error = oldMap[j.id]._error;
+          }
+        });
+        jobs = remainingJobs;
+
+        var activeStillExists = jobs.some(function(j) { return j.id === activeJobId; });
+        if (!activeStillExists) {
+          activeJobId = null;
+          clearLogPanel();
+          stopLogPolling();
+          var runningJobs = jobs.filter(function(j) { return !j._done; });
+          if (runningJobs.length) {
+            selectJob(runningJobs[0].id);
+          } else {
+            setLogFooter('No running jobs.', '');
+          }
+        }
+        renderJobDropdown();
+        setLogFooter('Completed jobs removed.', 'success');
+      })
+      .withFailureHandler(function(e) {
+        setLogFooter('Error: ' + (e.message || e), 'error');
+      })
+      .removeCompletedJobs();
+  }
+
+  // ── Log Polling ────────────────────────────────────────
+
+  function stopLogPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    logSpinner().classList.add('hidden');
+  }
+
+  function startLogPolling() {
+    stopLogPolling();
+    logSpinner().classList.remove('hidden');
+    pollTimer = setInterval(pollLogs, LOG_POLL_MS);
+  }
+
+  function pollLogs() {
+    if (!activeJobId) return;
+    var jid         = activeJobId;
+    var capturedSeq = lastSeq;
+    google.script.run
+      .withSuccessHandler(function(entries) {
+        if (jid !== activeJobId) return;
+        if (entries && entries.length) appendEntries(entries);
+      })
+      .withFailureHandler(function() { /* ignore */ })
+      .getLogsSince(jid, capturedSeq);
+  }
+
+  function pollJobDashboard() {
+    google.script.run
+      .withSuccessHandler(function(serverJobs) {
+        if (!serverJobs || !serverJobs.length) {
+          jobs = [];
+          renderJobDropdown();
+          return;
+        }
+        serverJobs.forEach(function(j) {
+          j._done  = j.done;
+          j._error = j.error;
+        });
+
+        var previousNewest = jobs.length ? jobs[0].id : null;
+        jobs = serverJobs;
+        renderJobDropdown();
+
+        var newestId = serverJobs[0] ? serverJobs[0].id : null;
+        if (newestId && (!activeJobId || newestId !== previousNewest)) {
+          selectJob(newestId);
+        }
+
+        var current = jobs.find(function(j) { return j.id === activeJobId; });
+        if (current) {
+          if (current._done) {
+            if (pollTimer) { stopLogPolling(); showJobDone(current); }
+          } else {
+            if (!pollTimer) startLogPolling();
+          }
+        }
+      })
+      .withFailureHandler(function() { /* ignore */ })
+      .getJobDashboard();
+  }
+
+  function refreshJobs() {
+    setLogFooter('Refreshing…', '');
+    pollJobDashboard();
+  }
+
+  // ── Log Copy Helpers ───────────────────────────────────
+
+  function formatLogsAsText(entries) {
+    return entries.map(function(e) {
+      return (e.ts || '') + '  ' + (e.level || 'INFO').padEnd(5) + '  ' + (e.msg || '');
+    }).join('\n');
+  }
+
+  function copyToClipboard(text, label) {
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        setLogFooter((label || 'Logs') + ' copied (' + text.split('\n').length + ' lines).', 'success');
+      } catch (_) {
+        setLogFooter('Copy failed — select text manually.', 'error');
+      }
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function() {
+        setLogFooter((label || 'Logs') + ' copied (' + text.split('\n').length + ' lines).', 'success');
+      }, fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  function copyJobLogs() {
+    var entries = logPanel().querySelectorAll('.log-entry');
+    if (!entries.length) { setLogFooter('No log entries to copy.', ''); return; }
+    var lines = [];
+    entries.forEach(function(div) {
+      var ts  = div.querySelector('.log-ts')    ? div.querySelector('.log-ts').textContent    : '';
+      var lvl = div.querySelector('.log-level') ? div.querySelector('.log-level').textContent : '';
+      var msg = '';
+      div.childNodes.forEach(function(node) {
+        if (node.nodeType === 3) msg += node.textContent;
+      });
+      lines.push(ts + '  ' + lvl.padEnd(5) + '  ' + msg.trim());
+    });
+    copyToClipboard(lines.join('\n'), 'Job logs');
+  }
+
+  function copyAllLogs() {
+    setLogFooter('Fetching all session logs…', '');
+    google.script.run
+      .withSuccessHandler(function(entries) {
+        if (!entries || !entries.length) { setLogFooter('No session logs found.', ''); return; }
+        copyToClipboard(formatLogsAsText(entries), 'All session logs');
+      })
+      .withFailureHandler(function(e) {
+        setLogFooter('Error fetching logs: ' + (e.message || e), 'error');
+      })
+      .getAllSessionLogs();
+  }
+
+  // ── Auto log-view (server-requested via showSidebar(true)) ─
+  // body.auto-log-view is set by the Sidebar.html template when
+  // showSidebar(true) is called from runTrackedJob_.
+
+  (function() {
+    var initialTab = 'main';
+    primeTabCache_();
+    if (document.body.classList.contains('auto-log-view')) {
+      document.body.classList.remove('auto-log-view');
+      initialTab = 'logs';
+    }
+    switchTab(initialTab); // sets initial panel visibility and hides the active tab button
+  })();
+
+  // ── TTS Tab Logic ──────────────────────────────────────
+
+  var _ttsInitialized = false;
+  var _ttsSavedPrefs = { voiceId: null, modelId: null };
+  /** {voiceId: voiceName} map prefetched at startup; null = not yet loaded. */
+  var _ttsVoiceMappings = null;
+  /** Array of {voice_id, name} from ElevenLabs; null = not yet loaded. */
+  var _ttsVoices = null;
+  /** Array of {model_id, name} from ElevenLabs; null = not yet loaded. */
+  var _ttsModels = null;
+  /** Array of cached ElevenLabsPronunciationDictionary objects; null = not yet loaded. */
+  var _ttsDicts = null;
+  /** Drive file ID of the most recently generated audio, used for rename. */
+  var _ttsLastFileId = null;
+  /** Directive currently open in the edit overlay (used by deleteDirectiveFromEdit). */
+  var _currentEditDirective = null;
+  /** True when the directive overlay is creating a new directive rather than editing an existing one. */
+  var _isAddingDirective = false;
+  /** Client-side cache of tab names for fast TTS-tab switching. */
+  var _cachedTabNames = null;
+  /** Client-side cache of the current active tab name. */
+  var _cachedActiveTabName = null;
+  /** Last-rendered TTS directives for progressive voice-name upgrades. */
+  var _currentTtsDirectives = [];
+
+  function setSelectLoading_(id, label) {
+    var sel = document.getElementById(id);
+    if (!sel) return;
+    sel.disabled = true;
+    sel.innerHTML = '';
+    var opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = label;
+    sel.appendChild(opt);
+  }
+
+  function setSelectReady_(id) {
+    var sel = document.getElementById(id);
+    if (sel) sel.disabled = false;
+  }
+
+  function renderDirectiveListSkeleton_() {
+    var list = document.getElementById('tts-directives-list');
+    if (!list) return;
+    list.innerHTML =
+      '<div class="tts-skeleton-row"></div>' +
+      '<div class="tts-skeleton-row"></div>' +
+      '<div class="tts-skeleton-row"></div>';
+  }
+
+  function applyCachedTabNames_(tabs) {
+    _cachedTabNames = tabs || [];
+    var sel = document.getElementById('tts-tab-select');
+    if (!sel) return;
+    sel.innerHTML = '';
+    (_cachedTabNames || []).forEach(function(t) {
+      var opt = document.createElement('option');
+      opt.value = t;
+      opt.textContent = t;
+      sel.appendChild(opt);
+    });
+  }
+
+  function primeTabCache_() {
+    if (!_cachedTabNames) {
+      google.script.run
+        .withSuccessHandler(function(tabs) { applyCachedTabNames_(tabs || []); })
+        .getTabNames();
+    }
+    if (!_cachedActiveTabName) {
+      google.script.run
+        .withSuccessHandler(function(activeTab) { _cachedActiveTabName = activeTab || null; })
+        .getActiveTabName();
+    }
+  }
+
+  // ── Pronunciation dictionary overlay ───────────────────
+
+  /**
+   * Returns the currently-selected dict from _ttsDicts, defaulting to first.
+   * Returns null when _ttsDicts is empty or not loaded.
+   */
+  function _getSelectedDict() {
+    if (!_ttsDicts || !_ttsDicts.length) return null;
+    var sel = document.getElementById('tts-dictSelect');
+    var selectedId = sel ? sel.value : '';
+    if (selectedId) {
+      for (var i = 0; i < _ttsDicts.length; i++) {
+        if (_ttsDicts[i].id === selectedId) return _ttsDicts[i];
+      }
+    }
+    return _ttsDicts[0];
+  }
+
+  function openPronOverlay() {
+    var overlay = document.getElementById('pron-overlay');
+    var body    = document.getElementById('pron-body');
+    clearPronMeta_();
+    body.innerHTML = '<div style="font-size:12px;color:var(--text-secondary);text-align:center;padding:20px 0;">Loading\u2026</div>';
+    overlay.style.display = 'flex';
+
+    // Use cached dicts if available; otherwise fetch from server.
+    if (_ttsDicts) {
+      renderPronTable(_ttsDicts);
+    } else {
+      google.script.run
+        .withSuccessHandler(function(dicts) {
+          _ttsDicts = dicts;
+          renderPronTable(dicts);
+        })
+        .withFailureHandler(function(e) {
+          body.innerHTML = '<div style="font-size:12px;color:var(--error-fg);text-align:center;padding:20px 0;">Could not load: ' + pronEsc(e.message || String(e)) + '</div>';
+        })
+        .elevenLabsGetPronunciationDictionaries();
+    }
+  }
+
+  function closePronOverlay() {
+    var overlay = document.getElementById('pron-overlay');
+    if (overlay) overlay.style.display = 'none';
+  }
+
+  function refreshPronOverlay() {
+    var body = document.getElementById('pron-body');
+    var btn  = document.getElementById('pron-refresh-btn');
+    clearPronMeta_();
+    body.innerHTML = '<div style="font-size:12px;color:var(--text-secondary);text-align:center;padding:20px 0;">Refreshing\u2026</div>';
+    if (btn) btn.disabled = true;
+
+    google.script.run
+      .withSuccessHandler(function(dicts) {
+        if (btn) btn.disabled = false;
+        _ttsDicts = dicts;
+        // Repopulate the dropdown with fresh data, then render table.
+        populateDictDropdown_(dicts);
+        renderPronTable(dicts);
+      })
+      .withFailureHandler(function(e) {
+        if (btn) btn.disabled = false;
+        body.innerHTML = '<div style="font-size:12px;color:var(--error-fg);text-align:center;padding:20px 0;">Refresh failed: ' + pronEsc(e.message || String(e)) + '</div>';
+      })
+      .elevenLabsRefreshPronunciationDictionaries();
+  }
+
+  function onPronBackdropClick(e) {
+    if (e.target === document.getElementById('pron-overlay')) closePronOverlay();
+  }
+
+  function clearPronMeta_() {
+    var meta = document.getElementById('pron-dict-meta');
+    if (meta) meta.style.display = 'none';
+  }
+
+  /**
+   * Renders the selected dictionary's rules into the overlay body.
+   * Shows dict name / id / version_id as a header, then a table with
+   * three columns: Replace | With | Alphabet.
+   */
+  function renderPronTable(dicts) {
+    var body = document.getElementById('pron-body');
+    clearPronMeta_();
+
+    if (!dicts || !dicts.length) {
+      body.innerHTML = '<div style="font-size:12px;color:var(--text-secondary);text-align:center;padding:20px 0;">No pronunciation dictionaries cached.<br>Click \u21BA Refresh or set an API key first.</div>';
+      return;
+    }
+
+    // Show only the selected (or default first) dict.
+    var dict = _getSelectedDict();
+    if (!dict) dict = dicts[0];
+
+    // Populate the metadata header.
+    var meta    = document.getElementById('pron-dict-meta');
+    var nameEl  = document.getElementById('pron-dict-name');
+    var idsEl   = document.getElementById('pron-dict-ids');
+    if (meta && nameEl && idsEl) {
+      nameEl.textContent = dict.name || '(unnamed)';
+      idsEl.textContent  = 'id: ' + (dict.id || '\u2014') + '  \u2022  version: ' + (dict.version_id || '\u2014');
+      meta.style.display = 'block';
+    }
+
+    var rules = dict.rules || [];
+    if (!rules.length) {
+      body.innerHTML = '<div style="font-size:12px;color:var(--text-secondary);text-align:center;padding:20px 0;">Dictionary has no rules.</div>';
+      return;
+    }
+
+    var html = '<table class="pron-table"><thead><tr><th>#</th><th>Replace</th><th>With</th><th>Alphabet</th></tr></thead><tbody>';
+    rules.forEach(function(rule, idx) {
+      html += '<tr>' +
+        '<td class="col-num">' + (idx + 1) + '</td>' +
+        '<td class="col-source">' + pronEsc(rule.string_to_replace || '\u2014') + '</td>' +
+        '<td class="col-target">' + pronEsc(rule.replace_with     || '\u2014') + '</td>' +
+        '<td style="font-size:11px;color:var(--text-secondary);text-align:center;">' + pronEsc(rule.alphabet || 'alias') + '</td>' +
+      '</tr>';
+    });
+    html += '</tbody></table>';
+    body.innerHTML = html;
+  }
+
+  function pronEsc(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Dictionary dropdown ─────────────────────────────────
+
+  /**
+   * Populates #tts-dictSelect from a dicts array and restores the saved selection.
+   * savedId may be null (defaults to first entry).
+   */
+  function populateDictDropdown_(dicts, savedId) {
+    var sel = document.getElementById('tts-dictSelect');
+    if (!sel) return;
+    sel.disabled = false;
+    sel.innerHTML = '';
+    if (!dicts || !dicts.length) {
+      var empty = document.createElement('option');
+      empty.value = '';
+      empty.textContent = '(no dictionaries)';
+      sel.appendChild(empty);
+      return;
+    }
+    dicts.forEach(function(d) {
+      var opt = document.createElement('option');
+      opt.value = d.id;
+      opt.textContent = d.name || d.id;
+      if (savedId && d.id === savedId) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    // If nothing matched, first entry is auto-selected — save it as the default.
+    if (!savedId) {
+      google.script.run.elevenLabsSaveSelectedDictionaryId(sel.value);
+    }
+  }
+
+  /** Loads cached dicts from server and populates the dropdown. */
+  function loadTtsDictionaries() {
+    setSelectLoading_('tts-dictSelect', 'Loading dictionaries…');
+    google.script.run
+      .withSuccessHandler(function(dicts) {
+        _ttsDicts = dicts || [];
+        if (!_ttsDicts.length) {
+          populateDictDropdown_([], null);
+          return;
+        }
+        // Restore saved selection.
+        google.script.run
+          .withSuccessHandler(function(savedId) {
+            populateDictDropdown_(_ttsDicts, savedId);
+          })
+          .withFailureHandler(function() {
+            populateDictDropdown_(_ttsDicts, null);
+          })
+          .elevenLabsGetSelectedDictionaryId();
+      })
+      .withFailureHandler(function() {
+        populateDictDropdown_([], null);
+      })
+      .elevenLabsGetPronunciationDictionaries();
+  }
+
+  /** Called onchange on #tts-dictSelect — saves the selected dict ID. */
+  function saveTtsDictSelection() {
+    var sel = document.getElementById('tts-dictSelect');
+    if (!sel || !sel.value) return;
+    google.script.run
+      .withSuccessHandler(function() {
+        var el = document.getElementById('tts-dict-status');
+        if (el) { el.textContent = 'Dictionary saved.'; el.className = 'status-box info'; }
+        setTimeout(function() { if (el) { el.textContent = ''; el.className = 'status-box'; } }, 2000);
+      })
+      .elevenLabsSaveSelectedDictionaryId(sel.value);
+  }
+
+  function initTtsTab() {
+    if (_ttsInitialized) {
+      var existingSel = document.getElementById('tts-tab-select');
+      if (_cachedActiveTabName && existingSel) existingSel.value = _cachedActiveTabName;
+      loadTtsDirectives();
+      return;
+    }
+    _ttsInitialized = true;
+
+    setTtsStatus('Initializing TTS tab…', 'loading');
+    renderDirectiveListSkeleton_();
+    setSelectLoading_('tts-voiceSelect', 'Loading voices…');
+    setSelectLoading_('tts-modelSelect', 'Loading models…');
+    setSelectLoading_('tts-dictSelect', 'Loading dictionaries…');
+
+    if (_cachedTabNames && _cachedTabNames.length) {
+      applyCachedTabNames_(_cachedTabNames);
+      var sel = document.getElementById('tts-tab-select');
+      if (_cachedActiveTabName && sel) sel.value = _cachedActiveTabName;
+      loadTtsDirectives();
+    } else {
+      google.script.run
+        .withSuccessHandler(function(tabs) {
+          applyCachedTabNames_(tabs || []);
+          var sel = document.getElementById('tts-tab-select');
+          if (_cachedActiveTabName && sel) sel.value = _cachedActiveTabName;
+          loadTtsDirectives();
+        })
+        .withFailureHandler(function(e) {
+          setTtsStatus('Error loading tabs: ' + e.message, 'error');
+        })
+        .getTabNames();
+    }
+
+    google.script.run
+      .withSuccessHandler(function(activeTab) {
+        _cachedActiveTabName = activeTab || null;
+        var sel = document.getElementById('tts-tab-select');
+        if (activeTab && sel) {
+          sel.value = activeTab;
+          loadTtsDirectives();
+        }
+      })
+      .getActiveTabName();
+
+    // Init ElevenLabs audio controls in parallel.
+    checkTtsApiKey();
+    loadTtsLastGeneration();
+  }
+
+  function onTtsTabChange() {
+    var tabName = document.getElementById('tts-tab-select').value;
+    _cachedActiveTabName = tabName || null;
+    google.script.run.setActiveTabByName(tabName);
+    loadTtsDirectives();
+  }
+
+  function setTtsStatus(msg, type) {
+    var el = document.getElementById('tts-status');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'status-box' + (type ? ' ' + type : '');
+  }
+
+  function loadTtsDirectives() {
+    var tabName = document.getElementById('tts-tab-select').value;
+    if (!tabName) return;
+
+    // Proceed even when _ttsVoiceMappings is null (no ElevenLabs API key set):
+    // directives still load; voice names are omitted and only voice IDs are shown.
+    setTtsStatus('Loading directives for ' + tabName + '…', 'loading');
+    renderDirectiveListSkeleton_();
+    google.script.run
+      .withSuccessHandler(function(directives) {
+        _currentTtsDirectives = directives || [];
+        renderTtsDirectives(directives);
+        setTtsStatus(directives.length + ' directive(s) found.', 'info');
+      })
+      .withFailureHandler(function(e) {
+        setTtsStatus('Error loading directives: ' + e.message, 'error');
+      })
+      .getTabDirectives(tabName);
+  }
+
+  /** Truncates a string to at most maxLen chars, appending '…' if trimmed. */
+  function truncate_(s, maxLen) {
+    if (!s) return '';
+    return s.length <= maxLen ? s : s.slice(0, maxLen) + '…';
+  }
+
+  function voiceNameForId_(voiceId) {
+    if (!voiceId) return '';
+    if (_ttsVoices && _ttsVoices.length) {
+      for (var i = 0; i < _ttsVoices.length; i++) {
+        if (_ttsVoices[i].voice_id === voiceId) return _ttsVoices[i].name;
+      }
+    }
+    if (_ttsVoiceMappings && _ttsVoiceMappings[voiceId]) return _ttsVoiceMappings[voiceId];
+    return voiceId;
+  }
+
+  function firstWord_(s) {
+    var trimmed = (s || '').trim();
+    if (!trimmed) return '';
+    return trimmed.split(/\s+/)[0];
+  }
+
+  function formatDirectiveNumber_(n) {
+    var value = Number(n);
+    if (!isFinite(value)) return '\u2014';
+    return value.toFixed(2).replace(/\.?0+$/, '');
+  }
+
+  function isVoicePermissionError_(err) {
+    var msg = err && err.message ? String(err.message) : String(err || '');
+    return msg.indexOf('missing_permissions') >= 0 || msg.indexOf('voices_read') >= 0;
+  }
+
+  function populateVoiceSelect_(selectEl, selectedVoiceId) {
+    if (!selectEl) return;
+    selectEl.innerHTML = '';
+
+    var voices = _ttsVoices && _ttsVoices.length
+      ? _ttsVoices.map(function(v) { return { id: v.voice_id, name: v.name }; })
+      : (_ttsVoiceMappings
+        ? Object.keys(_ttsVoiceMappings).map(function(voiceId) {
+            return { id: voiceId, name: _ttsVoiceMappings[voiceId] };
+          })
+        : []);
+
+    if (!voices.length) {
+      var empty = document.createElement('option');
+      empty.value = '';
+      empty.textContent = '(no voices)';
+      selectEl.appendChild(empty);
+      return;
+    }
+
+    var hasSelectedVoice = false;
+    voices.forEach(function(v) {
+      var opt = document.createElement('option');
+      opt.value = v.id;
+      opt.textContent = v.name;
+      if (v.id === selectedVoiceId) {
+        opt.selected = true;
+        hasSelectedVoice = true;
+      }
+      selectEl.appendChild(opt);
+    });
+
+    if (selectedVoiceId && !hasSelectedVoice) {
+      var fallback = document.createElement('option');
+      fallback.value = selectedVoiceId;
+      fallback.textContent = voiceNameForId_(selectedVoiceId);
+      fallback.selected = true;
+      selectEl.appendChild(fallback);
+    }
+  }
+
+  function refreshVoiceDependentUi_() {
+    var defaultVoiceSel = document.getElementById('tts-voiceSelect');
+    if (defaultVoiceSel) {
+      var selectedVoiceId = defaultVoiceSel.value || _ttsSavedPrefs.voiceId || '';
+      populateVoiceSelect_(defaultVoiceSel, selectedVoiceId);
+      setSelectReady_('tts-voiceSelect');
+    }
+
+    var editVoiceSel = document.getElementById('edit-voice-select');
+    if (editVoiceSel && editVoiceSel.offsetParent !== null) {
+      var editSelectedVoiceId = editVoiceSel.value
+        || (_currentEditDirective && _currentEditDirective.voice_id)
+        || _ttsSavedPrefs.voiceId
+        || '';
+      populateVoiceSelect_(editVoiceSel, editSelectedVoiceId || '');
+    }
+
+    if (_currentTtsDirectives && _currentTtsDirectives.length) {
+      renderTtsDirectives(_currentTtsDirectives);
+    }
+  }
+
+  /** Switches the audio controls between simple (no directives) and directive mode. */
+  function updateTtsGenerationMode(hasDirectives) {
+    var simple    = document.getElementById('tts-simple-controls');
+    var directive = document.getElementById('tts-directive-controls');
+    if (!simple || !directive) return;
+    simple.style.display    = hasDirectives ? 'none'  : '';
+    directive.style.display = hasDirectives ? 'block' : 'none';
+  }
+
+  /** Shows the audio player with the result from either generation path. */
+  function showTtsAudioResult(result) {
+    if (!result || !result.ok) {
+      setTtsStatus('Error: ' + (result ? result.error : 'unknown'), 'error');
+      return;
+    }
+
+    var player = document.getElementById('tts-audioPlayer');
+    if (result.audioBase64) {
+      var binary = atob(result.audioBase64);
+      var bytes  = new Uint8Array(binary.length);
+      for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      var blob = new Blob([bytes], { type: 'audio/mpeg' });
+      player.src = URL.createObjectURL(blob);
+      document.getElementById('tts-audio-player-container').style.display = 'block';
+    }
+
+    var linkWrap = document.getElementById('tts-driveLinkWrap');
+    if (result.driveUrl) {
+      var fileLabel = result.driveFileName
+        ? '<span style="font-size:11px; color:var(--text-secondary); display:block; margin-bottom:4px;">EditorLLM/audio/' + result.driveFileName + '</span>'
+        : '';
+      linkWrap.innerHTML = fileLabel +
+        '<a href="' + result.driveUrl + '" target="_blank" class="drive-link">Download from Drive</a>';
+    }
+
+    // Store file ID and show rename row when we have a Drive file.
+    var renameRow = document.getElementById('tts-rename-row');
+    if (result.driveFileId) {
+      _ttsLastFileId = result.driveFileId;
+      if (renameRow) renameRow.style.display = 'block';
+    } else {
+      _ttsLastFileId = null;
+      if (renameRow) renameRow.style.display = 'none';
+    }
+  }
+
+  function renderTtsDirectives(directives) {
+    var list = document.getElementById('tts-directives-list');
+    list.innerHTML = '';
+
+    if (!directives.length) {
+      list.innerHTML = '<div class="agent-desc" style="font-size:12px;">No directives on this tab.</div>';
+      updateTtsGenerationMode(false);
+      return;
+    }
+
+    updateTtsGenerationMode(true);
+
+    var table = document.createElement('div');
+    table.className = 'tts-directive-table';
+
+    var header = document.createElement('div');
+    header.className = 'tts-directive-row tts-directive-row--header';
+    ['Text', 'Voice', 'Stab', 'Sim', '', '', ''].forEach(function(label, idx) {
+      var head = document.createElement('div');
+      head.className = 'tts-directive-cell tts-directive-cell--head' +
+        ((idx === 2 || idx === 3) ? ' tts-directive-cell--num' : '');
+      head.textContent = label;
+      header.appendChild(head);
+    });
+    table.appendChild(header);
+
+    directives.forEach(function(d) {
+      var row = document.createElement('div');
+      row.className = 'tts-directive-row tts-directive-row--data';
+      row.onclick = function() { openDirectiveEdit(d); };
+
+      // First two words of match text, max 24 chars
+      var words = (d.matchText || '').split(/\s+/).slice(0, 2).join(' ');
+      var matchDisplay = words.length > 24 ? words.slice(0, 24) + '\u2026' : words;
+      var fullVoiceName = voiceNameForId_(d.voice_id);
+      var shortVoiceName = firstWord_(fullVoiceName);
+
+      var matchCol = document.createElement('div');
+      matchCol.className = 'tts-directive-cell';
+      matchCol.textContent = matchDisplay;
+      row.title = (d.matchText || '') + (fullVoiceName ? '\nVoice: ' + fullVoiceName : '');
+      matchCol.title = row.title;
+
+      var voiceCol = document.createElement('div');
+      voiceCol.className = 'tts-directive-cell';
+      voiceCol.textContent = shortVoiceName || '\u2014';
+      voiceCol.title = fullVoiceName || d.voice_id || '';
+
+      var stabCol = document.createElement('div');
+      stabCol.className = 'tts-directive-cell tts-directive-cell--num';
+      stabCol.textContent = formatDirectiveNumber_(d.stability);
+
+      var simCol = document.createElement('div');
+      simCol.className = 'tts-directive-cell tts-directive-cell--num';
+      simCol.textContent = formatDirectiveNumber_(d.similarity_boost);
+
+      // Play (preview) button — ▶
+      var playBtn = document.createElement('button');
+      playBtn.type = 'button';
+      playBtn.textContent = '\u25B6';
+      playBtn.title = 'Preview first sentence';
+      playBtn.style.cssText = 'flex-shrink:0; width:22px; height:22px; padding:0; border:none; border-radius:3px; background:#1A3461; color:#8AB4F8; cursor:pointer; font-size:11px; line-height:1; display:flex; align-items:center; justify-content:center;';
+      playBtn.onclick = function(e) {
+        e.stopPropagation();
+        previewDirective_(d);
+      };
+
+      // Jump button — ⌖
+      var jumpBtn = document.createElement('button');
+      jumpBtn.type = 'button';
+      jumpBtn.textContent = '\u2316';
+      jumpBtn.title = 'Jump to directive in document';
+      jumpBtn.style.cssText = 'flex-shrink:0; width:22px; height:22px; padding:0; border:none; border-radius:3px; background:none; color:#8AB4F8; cursor:pointer; font-size:11px; line-height:1; display:flex; align-items:center; justify-content:center;';
+      jumpBtn.onclick = function(e) {
+        e.stopPropagation();
+        jumpToDirective_(d);
+      };
+
+      // Delete button — ✕
+      var delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.textContent = '\u2715';
+      delBtn.title = 'Delete directive';
+      delBtn.style.cssText = 'flex-shrink:0; width:22px; height:22px; padding:0; border:none; border-radius:3px; background:none; color:#A0A0A0; cursor:pointer; font-size:11px; line-height:1; display:flex; align-items:center; justify-content:center;';
+      delBtn.onclick = function(e) {
+        e.stopPropagation();
+        deleteDirective(d);
+      };
+
+      row.appendChild(matchCol);
+      row.appendChild(voiceCol);
+      row.appendChild(stabCol);
+      row.appendChild(simCol);
+      row.appendChild(playBtn);
+      row.appendChild(jumpBtn);
+      row.appendChild(delBtn);
+      table.appendChild(row);
+    });
+
+    list.appendChild(table);
+  }
+
+  /**
+   * Generates a short audio preview for the directive — first sentence from
+   * its location in the tab — and plays it in the dedicated preview player.
+   * No Drive file is created.
+   */
+  function previewDirective_(d) {
+    var tabName = document.getElementById('tts-tab-select').value;
+    if (!tabName || !d || !d.name) return;
+
+    setTtsStatus('Generating preview\u2026', 'loading');
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (!result || !result.ok) {
+          setTtsStatus('Preview error: ' + (result ? result.error : 'unknown'), 'error');
+          return;
+        }
+        var container = document.getElementById('tts-preview-container');
+        var player    = document.getElementById('tts-previewPlayer');
+        if (result.audioBase64 && player) {
+          var binary = atob(result.audioBase64);
+          var bytes  = new Uint8Array(binary.length);
+          for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          var blob = new Blob([bytes], { type: 'audio/mpeg' });
+          player.src = URL.createObjectURL(blob);
+          if (container) container.style.display = 'block';
+          player.play();
+        }
+        setTtsStatus('Preview ready.', 'info');
+      })
+      .withFailureHandler(function(e) {
+        setTtsStatus('Preview failed: ' + e.message, 'error');
+      })
+      .elevenLabsPreviewDirective(tabName, d.name);
+  }
+
+  function jumpToDirective_(directive) {
+    var tabName = document.getElementById('tts-tab-select').value;
+    if (!tabName || !directive || !directive.name) return;
+    setTtsStatus('Jumping to directive…', 'loading');
+    google.script.run
+      .withSuccessHandler(function(ok) {
+        if (!ok) {
+          setTtsStatus('Could not find that directive location.', 'error');
+          return;
+        }
+        google.script.host.editor.focus();
+        setTtsStatus('Directive location focused.', 'info');
+      })
+      .withFailureHandler(function(e) {
+        setTtsStatus('Error jumping to directive: ' + e.message, 'error');
+      })
+      .jumpToDirective(tabName, directive.name);
+  }
+
+  function openDirectiveEdit(d) {
+    _currentEditDirective = d;
+    _isAddingDirective = false;
+    var overlay = document.getElementById('directive-edit-overlay');
+    document.getElementById('directive-edit-title').textContent = 'Edit Directive';
+    document.getElementById('directive-delete-btn').style.display = '';
+
+    document.getElementById('edit-stability').value = d.stability != null ? d.stability : '';
+    document.getElementById('edit-similarity-boost').value = d.similarity_boost != null ? d.similarity_boost : '';
+    document.getElementById('edit-bookmark-id').value = d.bookmarkId || '';
+    document.getElementById('edit-old-name').value = d.name || '';
+
+    // Populate model dropdown from cached ElevenLabs models.
+    var modelSel = document.getElementById('edit-tts-model');
+    modelSel.innerHTML = '';
+    if (_ttsModels && _ttsModels.length) {
+      _ttsModels.forEach(function(m) {
+        var opt = document.createElement('option');
+        opt.value = m.model_id;
+        opt.textContent = m.name;
+        if (m.model_id === d.tts_model) opt.selected = true;
+        modelSel.appendChild(opt);
+      });
+    } else {
+      // Fallback: single option with current model id.
+      var opt = document.createElement('option');
+      opt.value = d.tts_model || '';
+      opt.textContent = d.tts_model || '(unknown)';
+      opt.selected = true;
+      modelSel.appendChild(opt);
+    }
+
+    // Populate voice dropdown with human-readable names.
+    populateVoiceSelect_(document.getElementById('edit-voice-select'), d.voice_id || '');
+
+    overlay.style.display = 'flex';
+  }
+
+  function openAddDirectiveOverlay() {
+    _currentEditDirective = null;
+    _isAddingDirective = true;
+
+    var overlay = document.getElementById('directive-edit-overlay');
+    document.getElementById('directive-edit-title').textContent = 'Add Directive';
+    document.getElementById('directive-delete-btn').style.display = 'none';
+    document.getElementById('edit-bookmark-id').value = '';
+    document.getElementById('edit-old-name').value = '';
+    document.getElementById('edit-stability').value = '0.6';
+    document.getElementById('edit-similarity-boost').value = '0.75';
+
+    var modelSel = document.getElementById('edit-tts-model');
+    modelSel.innerHTML = '';
+    if (_ttsModels && _ttsModels.length) {
+      _ttsModels.forEach(function(m) {
+        var opt = document.createElement('option');
+        opt.value = m.model_id;
+        opt.textContent = m.name;
+        if (m.model_id === (_ttsSavedPrefs.modelId || 'eleven_multilingual_v2')) opt.selected = true;
+        modelSel.appendChild(opt);
+      });
+    } else if (document.getElementById('tts-modelSelect').value) {
+      var mOpt = document.createElement('option');
+      mOpt.value = document.getElementById('tts-modelSelect').value;
+      mOpt.textContent = document.getElementById('tts-modelSelect').value;
+      mOpt.selected = true;
+      modelSel.appendChild(mOpt);
+    }
+
+    populateVoiceSelect_(
+      document.getElementById('edit-voice-select'),
+      _ttsSavedPrefs.voiceId || document.getElementById('tts-voiceSelect').value || ''
+    );
+
+    overlay.style.display = 'flex';
+  }
+
+  function closeDirectiveEdit() {
+    document.getElementById('directive-edit-overlay').style.display = 'none';
+    _currentEditDirective = null;
+    _isAddingDirective = false;
+  }
+
+  function deleteDirectiveFromEdit() {
+    if (!_currentEditDirective) return;
+    closeDirectiveEdit();
+    deleteDirective(_currentEditDirective);
+  }
+
+  function saveDirectiveEdit() {
+    var modelId = document.getElementById('edit-tts-model').value;
+    var voiceId = document.getElementById('edit-voice-select').value;
+    var stability = parseFloat(document.getElementById('edit-stability').value);
+    var similarityBoost = parseFloat(document.getElementById('edit-similarity-boost').value);
+    var bookmarkId = document.getElementById('edit-bookmark-id').value;
+    var oldName = document.getElementById('edit-old-name').value;
+    var tabName = document.getElementById('tts-tab-select').value;
+
+    var newPayload = {
+      tts_model: modelId,
+      voice_id: voiceId,
+      stability: isNaN(stability) ? 0 : stability,
+      similarity_boost: isNaN(similarityBoost) ? 0 : similarityBoost,
+    };
+    
+    if (_isAddingDirective) {
+      setTtsStatus('Adding directive from current cursor…', 'loading');
+      google.script.run
+        .withSuccessHandler(function() {
+          setTtsStatus('Directive added.', 'info');
+          closeDirectiveEdit();
+          loadTtsDirectives();
+        })
+        .withFailureHandler(function(e) {
+          setTtsStatus('Error adding directive: ' + e.message, 'error');
+        })
+        .addTtsDirectiveFromSelection(tabName, newPayload);
+      return;
+    }
+
+    setTtsStatus('Updating directive…', 'loading');
+    google.script.run
+      .withSuccessHandler(function() {
+        setTtsStatus('Directive updated.', 'info');
+        closeDirectiveEdit();
+        loadTtsDirectives();
+      })
+      .withFailureHandler(function(e) {
+        setTtsStatus('Error updating directive: ' + e.message, 'error');
+      })
+      .updateTtsDirective(tabName, bookmarkId, oldName, newPayload);
+  }
+
+  function deleteDirective(d) {
+    if (!confirm('Are you sure you want to delete this directive?')) return;
+    
+    var tabName = document.getElementById('tts-tab-select').value;
+    setTtsStatus('Deleting directive…', 'loading');
+    google.script.run
+      .withSuccessHandler(function() {
+        setTtsStatus('Directive deleted.', 'info');
+        loadTtsDirectives();
+      })
+      .withFailureHandler(function(e) {
+        var msg = (e && e.message) ? e.message : (e || 'Unknown error');
+        setTtsStatus('Error deleting directive: ' + msg, 'error');
+      })
+      .deleteTtsDirective(tabName, d.bookmarkId, d.name);
+  }
+
+  // ── ElevenLabs API Integration ──────────────────────────
+
+  function checkTtsApiKey() {
+    google.script.run
+      .withSuccessHandler(function(keySet) {
+        if (keySet) {
+          document.getElementById('tts-apiKey').placeholder = '**** (set)';
+          loadTtsPreferences_(function() {
+            loadTtsVoiceMappings();
+            loadTtsVoices();
+            loadTtsModels();
+            loadTtsDictionaries();
+          });
+        } else {
+          setSelectLoading_('tts-voiceSelect', 'Set ElevenLabs key first');
+          setSelectLoading_('tts-modelSelect', 'Set ElevenLabs key first');
+          setSelectLoading_('tts-dictSelect', 'Set ElevenLabs key first');
+        }
+      })
+      .elevenLabsHasApiKey();
+  }
+
+  function saveTtsApiKey() {
+    var key = document.getElementById('tts-apiKey').value.trim();
+    if (!key) { setTtsStatus('Enter API key.', 'error'); return; }
+    var warning = 'You have set the API key. Anyone with access to this document will be able to use related features, but not see your key.\n\nDo you want to continue?';
+    if (!confirm(warning)) return;
+
+    setTtsStatus('Saving key…', 'loading');
+    google.script.run
+      .withSuccessHandler(function() {
+        document.getElementById('tts-apiKey').value = '';
+        document.getElementById('tts-apiKey').placeholder = '**** (set)';
+        setTtsStatus('Key saved.', 'info');
+        loadTtsPreferences_(function() {
+          loadTtsVoiceMappings();
+          loadTtsVoices();
+          loadTtsModels();
+          loadTtsDictionaries();
+        });
+      })
+      .withFailureHandler(function(e) {
+        setTtsStatus('Error: ' + e.message, 'error');
+      })
+      .elevenLabsSaveApiKey(key);
+  }
+
+  function loadTtsPreferences_(callback) {
+    google.script.run
+      .withSuccessHandler(function(prefs) {
+        if (prefs) _ttsSavedPrefs = prefs;
+        if (callback) callback();
+      })
+      .elevenLabsGetPreferences();
+  }
+
+  function loadTtsVoiceMappings() {
+    google.script.run
+      .withSuccessHandler(function(mappings) {
+        _ttsVoiceMappings = mappings || null;
+        refreshVoiceDependentUi_();
+      })
+      .withFailureHandler(function() {
+        // Non-fatal: directive list falls back to raw voice IDs.
+      })
+      .elevenLabsEnsureVoiceMappings();
+  }
+
+  function saveTtsVoicePreference() {
+    var voiceId = document.getElementById('tts-voiceSelect').value;
+    if (!voiceId) return;
+    _ttsSavedPrefs.voiceId = voiceId;
+    google.script.run.elevenLabsSaveVoicePreference(voiceId);
+  }
+
+  function saveTtsModelPreference() {
+    var modelId = document.getElementById('tts-modelSelect').value;
+    if (!modelId) return;
+    _ttsSavedPrefs.modelId = modelId;
+    google.script.run.elevenLabsSaveModelPreference(modelId);
+  }
+
+  function loadTtsVoices() {
+    var useCase = ''; // Voice Type filter removed — see TODO in Sidebar.html
+    setSelectLoading_('tts-voiceSelect', 'Loading voices…');
+    google.script.run
+      .withSuccessHandler(function(list) {
+        _ttsVoices = list || [];
+        if (_ttsVoices.length) {
+          _ttsVoiceMappings = {};
+          _ttsVoices.forEach(function(v) {
+            _ttsVoiceMappings[v.voice_id] = v.name;
+          });
+        }
+        refreshVoiceDependentUi_();
+      })
+      .withFailureHandler(function(e) {
+        if (_ttsVoiceMappings && Object.keys(_ttsVoiceMappings).length) {
+          _ttsVoices = null;
+          refreshVoiceDependentUi_();
+          setTtsStatus('Voice list unavailable; using cached voice names.', 'info');
+          return;
+        }
+        var msg = (e && e.message) ? e.message : 'Could not load voices';
+        var selectMsg = isVoicePermissionError_(e)
+          ? 'Please give the Eleven Labs API sufficient permissions'
+          : 'Could not load voices';
+        setSelectLoading_('tts-voiceSelect', selectMsg);
+        setTtsStatus(msg, 'error');
+      })
+      .elevenLabsListVoices(useCase);
+  }
+
+  function loadTtsModels() {
+    setSelectLoading_('tts-modelSelect', 'Loading models…');
+    google.script.run
+      .withSuccessHandler(function(list) {
+        _ttsModels = list; // cache for overlay model dropdown
+        var sel = document.getElementById('tts-modelSelect');
+        sel.disabled = false;
+        sel.innerHTML = '';
+        if (!(list || []).length) {
+          var empty = document.createElement('option');
+          empty.value = '';
+          empty.textContent = '(no models)';
+          sel.appendChild(empty);
+        }
+        (list || []).forEach(function(m) {
+          var opt = document.createElement('option');
+          opt.value = m.model_id;
+          opt.textContent = m.name;
+          if (m.model_id === (_ttsSavedPrefs.modelId || 'eleven_multilingual_v2')) opt.selected = true;
+          sel.appendChild(opt);
+        });
+      })
+      .withFailureHandler(function() {
+        setSelectLoading_('tts-modelSelect', 'Could not load models');
+      })
+      .elevenLabsListModels();
+  }
+
+  function generateTtsAudio() {
+    _notifyJobStart_();
+    var voiceId = document.getElementById('tts-voiceSelect').value;
+    var modelId = document.getElementById('tts-modelSelect').value;
+    var tabName = document.getElementById('tts-tab-select').value;
+
+    if (!voiceId) { setTtsStatus('Select a voice.', 'error'); return; }
+
+    setTtsStatus('Reading tab text…', 'loading');
+    google.script.run
+      .withSuccessHandler(function(text) {
+        if (!text) { setTtsStatus('Tab is empty.', 'error'); return; }
+
+        setTtsStatus('Generating audio…', 'loading');
+        google.script.run
+          .withSuccessHandler(function(result) {
+            showTtsAudioResult(result);
+            if (result && result.ok) setTtsStatus('Audio generated.', 'info');
+          })
+          .withFailureHandler(function(e) {
+            setTtsStatus('Error: ' + e.message, 'error');
+          })
+          .elevenLabsTextToSpeech(text, voiceId, modelId);
+      })
+      .withFailureHandler(function(e) {
+        setTtsStatus('Error reading tab: ' + e.message, 'error');
+      })
+      .getTabContent(tabName);
+  }
+
+  function generateTtsFromDirectives() {
+    _notifyJobStart_();
+    var tabName     = document.getElementById('tts-tab-select').value;
+    var useStitching = document.getElementById('tts-useStitching').checked;
+
+    setTtsStatus('Generating audio from directives' + (useStitching ? ' with stitching' : '') + '…', 'loading');
+    google.script.run
+      .withSuccessHandler(function(result) {
+        showTtsAudioResult(result);
+        if (result && result.ok) {
+          var msg = 'Audio generated from ' + (result.segmentCount || '?') + ' directive segment(s).';
+          setTtsStatus(msg, 'info');
+        }
+      })
+      .withFailureHandler(function(e) {
+        setTtsStatus('Error: ' + e.message, 'error');
+      })
+      .elevenLabsTextToSpeechFromDirectives(tabName, useStitching);
+  }
+
+  function renameTtsAudioFile() {
+    if (!_ttsLastFileId) { setTtsStatus('No file to rename.', 'error'); return; }
+    var newName = (document.getElementById('tts-rename-input').value || '').trim();
+    if (!newName) { setTtsStatus('Enter a new filename.', 'error'); return; }
+
+    setTtsStatus('Renaming…', 'loading');
+    google.script.run
+      .withSuccessHandler(function(ok) {
+        if (ok) {
+          document.getElementById('tts-rename-input').value = '';
+          setTtsStatus('File renamed to "' + newName + '.mp3".', 'info');
+        } else {
+          setTtsStatus('Rename failed.', 'error');
+        }
+      })
+      .withFailureHandler(function(e) {
+        setTtsStatus('Error renaming: ' + e.message, 'error');
+      })
+      .elevenLabsRenameAudioFile(_ttsLastFileId, newName);
+  }
+
+  function loadTtsLastGeneration() {
+    google.script.run
+      .withSuccessHandler(function(meta) {
+        if (meta && meta.driveUrl) {
+          // Could show last gen meta here if desired
+        }
+      })
+      .elevenLabsGetLastGeneration();
+  }
+
+  // ── Dialog wrapper log routing ──────────────────────────
+  // When a job-starting action is triggered from the dialog wrapper, we switch
+  // the dialog to its own Logs tab so the user can see progress without the
+  // server opening/switching the sidebar.  `_notifyJobStart_()` is called at
+  // the start of every async job function; it is a no-op in sidebar mode.
+
+  function _notifyJobStart_() {
+    if (document.body.classList.contains('dialog-mode')) {
+      switchTab('logs');
+    }
+  }
+
+  // Tell the server the dialog is open so runTrackedJob_ skips showSidebar().
+  // Done once at startup — the 10-minute TTL in UserCache covers a typical session.
+  (function() {
+    if (document.body.classList.contains('dialog-mode')) {
+      google.script.run.setDialogOpen(true);
+    }
+  })();
+
 </script>

@@ -68,9 +68,9 @@ describe('TabMerger result shapes', () => {
   });
 
   it('clearDestination error result has ok:false and message', () => {
-    const err = { ok: false, message: '"MergedContent" tab not found.' };
+    const err = { ok: false, message: '"Manuscript" tab not found.' };
     expect(err.ok).toBe(false);
-    expect(err.message).toContain('MergedContent');
+    expect(err.message).toContain('Manuscript');
   });
 
   it('saveTabNames result has ok:true on success', () => {

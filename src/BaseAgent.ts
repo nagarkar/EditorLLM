@@ -2,10 +2,29 @@
 // BaseAgent.ts — Abstract base class for all EditorLLM agents
 // ============================================================
 
+/** Provided by agentHelpers.ts (same GAS bundle, before BaseAgent in filePushOrder). */
+declare function runInstructionQualityEval_(args: {
+  gemini: (systemPrompt: string, userPrompt: string, opts: { schema: object; tier: ModelTier }) => unknown;
+  logTag: string;
+  rubricMarkdown: string;
+  propKeys: { score: string; rationale: string; ts: string };
+  markdown: string;
+}): { score: number; rationale: string };
+
+declare function instructionQualityDocumentPropKeysForAgentId_(agentId: string): {
+  score: string;
+  rationale: string;
+  ts: string;
+};
+
 abstract class BaseAgent {
   // Every instance self-registers so callers can use getAllAgents() and
   // clearAllAgentCaches() without maintaining explicit agent lists elsewhere.
   private static registry_: BaseAgent[] = [];
+  private static currentLlmService_: LlmServiceName = Constants.LLM_SERVICE.GEMINI;
+  private static currentLlmClient_: LlmClient = (typeof GeminiService !== 'undefined'
+    ? GeminiService
+    : { generate: function() { throw new Error('No LLM service loaded.'); } }) as LlmClient;
 
   /**
    * Optional per-instance model overrides.
@@ -23,6 +42,7 @@ abstract class BaseAgent {
 
   constructor(modelConfig: ModelConfig = {}) {
     this.modelConfig_ = modelConfig;
+    BaseAgent.refreshLlmSelectionIfChanged();
     BaseAgent.registry_.push(this);
   }
 
@@ -38,39 +58,14 @@ abstract class BaseAgent {
     }
   }
 
+  /** Re-resolves the selected LLM provider once and keeps class-level dispatch current. */
+  static reinitializeAllAgents(): void {
+    BaseAgent.refreshLlmSelectionIfChanged(true);
+  }
+
   // --- Shared Prompts & Formats ---
 
-  protected static readonly SYSTEM_PREAMBLE = `
-# EditorLLM Context
-
-You are operating inside EditorLLM, an AI-augmented workspace for
-high-fidelity book editing. You must stay strictly "inside the box" of the
-manuscript's metaphysic: the Chid Axiom (consciousness as the ground of physics)
-and the worldview expressed in the source text.
-
-## Core Rules
-- **Recursive Instruction Loop:** You are often refining existing instructions.
-  Incorporate and improve upon any "Current Instructions" provided in the
-  context. Do not "forget" established rules or voice constraints unless they
-  explicitly contradict the newly provided manuscript context.
-- **No External Metaphors:** Never introduce ideas, metaphors, or concepts that are not already present in the MergedContent source material.
-- **Ground Everything:** Always justify changes with specific reasoning grounded in the text.
-- **Strict Schema:** Your JSON output must exactly match the provided schema.
-
-## Comment Length Constraint
-Google Drive comments have a hard limit of approximately 4 096 characters per
-entry. Each annotation comment is formatted as:
-  [AgentName] "match_text": <your reason>: <bookmark URL>
-The prefix, quoted match text, and bookmark URL together consume roughly
-200 characters, leaving **at most ~3 900 characters** for your reason text.
-
-- **Annotation reasons (W2):** Keep each \`reason\` field under **400 characters**.
-  Be specific but concise — one crisp sentence identifying the issue and the
-  suggested fix is ideal.
-- **Comment-thread replies (W3):** Keep each \`reply\` field under **3 500 characters**.
-  If a thorough answer needs more space, summarise the key point first and
-  invite the author to ask follow-up questions.
-`.trim();
+  protected static readonly SYSTEM_PREAMBLE = Constants.SYSTEM_PREAMBLE;
 
   // --- Per-instance cache ---
 
@@ -108,10 +103,29 @@ The prefix, quoted match text, and bookmark URL together consume roughly
     this.cache_ = {};
   }
 
-  // --- Gemini call wrapper (logs context + timing) ---
+  // --- LLM call wrapper (logs context + timing) ---
+
+  static refreshLlmSelectionIfChanged(force = false): void {
+    if (typeof LLMFactory !== 'undefined' && LLMFactory.create) {
+      const selectedService = LLMFactory.getSelectedService();
+      if (force || selectedService !== BaseAgent.currentLlmService_) {
+        BaseAgent.currentLlmService_ = selectedService;
+        BaseAgent.currentLlmClient_ = LLMFactory.create(selectedService);
+      }
+      return;
+    }
+    BaseAgent.currentLlmService_ = Constants.LLM_SERVICE.GEMINI;
+    BaseAgent.currentLlmClient_ = (typeof GeminiService !== 'undefined'
+      ? GeminiService
+      : { generate: function() { throw new Error('No LLM service loaded.'); } }) as LlmClient;
+  }
+
+  reinitialize(): void {
+    BaseAgent.refreshLlmSelectionIfChanged(true);
+  }
 
   /**
-   * Unified Gemini call with optional JSON-schema enforcement.
+   * Unified LLM call with optional JSON-schema enforcement.
    *
    * - Pass `schema` → response is parsed as JSON and returned as `any`.
    * - Omit `schema`  → response is returned as a plain `string`
@@ -120,7 +134,7 @@ The prefix, quoted match text, and bookmark URL together consume roughly
    * Both code paths share identical logging and timing so traces are
    * consistent regardless of the response mode.
    */
-  protected callGemini_(
+  protected callLlm_(
     systemPrompt: string,
     userPrompt: string,
     opts: { schema?: object; tier?: ModelTier } = {}
@@ -129,18 +143,30 @@ The prefix, quoted match text, and bookmark URL together consume roughly
     const name = this.constructor.name;
     const modelOverride = this.modelConfig_[tier as keyof ModelConfig];
     const mode = schema ? 'json' : 'text';
-    Tracer.info(`[${name}] Gemini ${mode} call  tier=${tier}${modelOverride ? ` model=${modelOverride}` : ''}`);
+    BaseAgent.refreshLlmSelectionIfChanged();
+    Tracer.info(
+      `[${name}] LLM ${mode} call  service=${BaseAgent.currentLlmService_} tier=${tier}` +
+      `${modelOverride ? ` model=${modelOverride}` : ''}`
+    );
     Tracer.info(`[${name}]   user: "${userPrompt.slice(0, 200).replace(/\n/g, ' ')}…"`);
     const t0 = Date.now();
     try {
-      const result = GeminiService.generate(systemPrompt, userPrompt, tier, { schema, modelOverride });
+      const result = BaseAgent.currentLlmClient_.generate(systemPrompt, userPrompt, tier, { schema, modelOverride });
       const suffix = typeof result === 'string' ? ` (${result.length} chars)` : '';
-      Tracer.info(`[${name}] Gemini ${mode} done  ${Date.now() - t0}ms${suffix}`);
+      Tracer.info(`[${name}] LLM ${mode} done  ${Date.now() - t0}ms${suffix}`);
       return result;
     } catch (e: any) {
-      Tracer.error(`[${name}] Gemini ${mode} FAILED ${Date.now() - t0}ms — ${e.message}`);
+      Tracer.error(`[${name}] LLM ${mode} FAILED ${Date.now() - t0}ms — ${e.message}`);
       throw e;
     }
+  }
+
+  protected callGemini_(
+    systemPrompt: string,
+    userPrompt: string,
+    opts: { schema?: object; tier?: ModelTier } = {}
+  ): any {
+    return this.callLlm_(systemPrompt, userPrompt, opts);
   }
 
   // --- Comment thread logging helper ---
@@ -163,13 +189,7 @@ The prefix, quoted match text, and bookmark URL together consume roughly
    * and review_tab themselves before calling CollaborationService.processUpdate.
    */
   protected instructionUpdateSchema_(): object {
-    return {
-      type: 'object',
-      properties: {
-        proposed_full_text: { type: 'string' },
-      },
-      required: ['proposed_full_text'],
-    };
+    return instructionUpdateSchema();
   }
 
   /**
@@ -178,23 +198,7 @@ The prefix, quoted match text, and bookmark URL together consume roughly
    * themselves before calling CollaborationService.processUpdate.
    */
   protected annotationSchema_(): object {
-    return {
-      type: 'object',
-      properties: {
-        operations: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              match_text: { type: 'string' },
-              reason: { type: 'string' },
-            },
-            required: ['match_text', 'reason'],
-          },
-        },
-      },
-      required: ['operations'],
-    };
+    return annotationOperationsSchema();
   }
 
   /**
@@ -287,88 +291,45 @@ The prefix, quoted match text, and bookmark URL together consume roughly
    * cleared tab never does.
    */
   protected assertStyleProfileValid_(content: string): void {
-    if (!content.trim() || content.trim().length < 200) {
-      throw new Error(
-        '[EditorLLM] StyleProfile is empty or incomplete (< 200 chars). ' +
-        'Run "Architect → Generate Instructions" before this workflow.'
-      );
-    }
+    assertStyleProfileValid(content);
   }
 
-  // ── §4.1 LLM-as-judge quality scorer ───────────────────────────────────────
+  // ── §4.1 LLM-as-judge quality scorer (shared persistence in agentHelpers) ───
 
   /**
-   * JSON schema for the fast-tier StyleProfile quality evaluation call.
-   * score: 0–5 integer. rationale: one sentence explaining the score.
+   * Fast-tier judge on freshly generated instruction markdown.
+   * Callers normally use `evaluateInstructions()` instead of invoking this directly.
    */
-  private evalScoreSchema_(): object {
-    return {
-      type: 'object',
-      properties: {
-        score:     { type: 'integer' },
-        rationale: { type: 'string' },
-      },
-      required: ['score', 'rationale'],
-    };
+  protected persistInstructionQualityScore_(
+    proposedMarkdown: string,
+    rubricMarkdown: string,
+    propKeys: { score: string; rationale: string; ts: string }
+  ): { score: number; rationale: string } {
+    return runInstructionQualityEval_({
+      gemini: (s, u, o) => this.callGemini_(s, u, o),
+      logTag: `[${this.constructor.name}]`,
+      rubricMarkdown,
+      propKeys,
+      markdown: proposedMarkdown,
+    });
   }
 
   /**
-   * LLM-as-judge quality evaluation for ArchitectAgent output.
-   *
-   * Calls a fast-tier Gemini instance with a 0–5 rubric after the StyleProfile
-   * is written. The result is persisted to DocumentProperties so the sidebar
-   * can surface the score without an extra Gemini call.
-   *
-   * Score bands:
-   *   5 — all 5 canonical sections present, ≥ 2 bullets each, 500+ chars
-   *   4 — 5 sections, some thin (< 2 bullets)
-   *   3 — 4 sections, usable — downstream agents can run
-   *   2 — 3 sections, incomplete
-   *   1 — 1–2 sections, barely structured
-   *   0 — empty, error, or unable to evaluate
-   *
-   * Never throws — a failed eval logs a warning and returns score 0 so the
-   * caller can still decide whether to proceed.
+   * Stable machine id for this agent (matches `AgentDefinition.id`). Used only
+   * for persistence keys, not display.
    */
-  protected evaluateStyleProfile_(styleProfile: string): { score: number; rationale: string } {
-    const EVAL_SYSTEM = `You are a style-guide quality evaluator. Respond ONLY with the JSON schema provided.`;
-    const EVAL_USER = `Rate the following StyleProfile on a scale of 0–5.
+  protected abstract getAgentId(): string;
 
-Rubric:
-  5 = All 5 required sections (Voice, Sentence Rhythm, Vocabulary Register,
-      Structural Patterns, Thematic Motifs) present with ≥ 2 detailed bullets each.
-  4 = All 5 sections present, some have fewer than 2 bullets.
-  3 = At least 4 sections present; downstream agents can use it productively.
-  2 = 3 sections present; noticeably incomplete.
-  1 = 1–2 sections; barely structured.
-  0 = Empty, incoherent, or clearly not a StyleProfile.
+  /** Markdown rubric for the fast-tier instruction-quality judge after W1. */
+  protected abstract getInstructionQualityRubric(): string;
 
-Required sections: Voice, Sentence Rhythm, Vocabulary Register, Structural Patterns, Thematic Motifs.
-Return {"score": <integer 0-5>, "rationale": "<one sentence>"}
-
-StyleProfile to evaluate:
----
-${styleProfile.slice(0, 4000)}
----`;
-
-    try {
-      const result = this.callGemini_(EVAL_SYSTEM, EVAL_USER, { schema: this.evalScoreSchema_(), tier: Constants.MODEL.FAST }) as {
-        score: number;
-        rationale: string;
-      };
-      const score     = Math.max(0, Math.min(5, Math.round(result.score ?? 0)));
-      const rationale = (result.rationale ?? '').slice(0, 300);
-      Tracer.info(`[${this.constructor.name}] StyleProfile eval score=${score} — ${rationale}`);
-      PropertiesService.getDocumentProperties().setProperties({
-        STYLE_PROFILE_SCORE:     String(score),
-        STYLE_PROFILE_RATIONALE: rationale,
-        STYLE_PROFILE_EVAL_TS:   new Date().toISOString(),
-      });
-      return { score, rationale };
-    } catch (e: any) {
-      Tracer.warn(`[${this.constructor.name}] StyleProfile eval failed — ${e.message}`);
-      return { score: 0, rationale: 'Evaluation failed: ' + e.message };
-    }
+  /** LLM-as-judge for this agent's instruction tab after W1 content is produced. */
+  evaluateInstructions(proposedMarkdown: string): void {
+    this.persistInstructionQualityScore_(
+      proposedMarkdown,
+      this.getInstructionQualityRubric(),
+      instructionQualityDocumentPropKeysForAgentId_(this.getAgentId())
+    );
   }
 
   /**
@@ -388,29 +349,7 @@ ${styleProfile.slice(0, 4000)}
     passage: string,
     agentName: string
   ): Operation[] {
-    const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-    const normalizedPassage = normalize(passage);
-    const filtered: Operation[] = [];
-
-    for (const op of operations) {
-      if (!op.match_text?.trim()) {
-        Tracer.warn(`[${agentName}] validateAndFilterOperations_: dropping op — empty match_text`);
-        continue;
-      }
-      if (!op.reason?.trim()) {
-        Tracer.warn(`[${agentName}] validateAndFilterOperations_: dropping op — empty reason (match="${op.match_text.slice(0, 60)}")`);
-        continue;
-      }
-      if (!normalizedPassage.includes(normalize(op.match_text))) {
-        Tracer.warn(
-          `[${agentName}] validateAndFilterOperations_: dropping op — match_text not in passage: ` +
-          `"${op.match_text.slice(0, 60)}"`
-        );
-        continue;
-      }
-      filtered.push(op);
-    }
-
+    const filtered = validateOps(operations, passage) as Operation[];
     Tracer.info(
       `[${agentName}] validateAndFilterOperations_: ` +
       `${filtered.length} valid / ${operations.length} total`
@@ -426,14 +365,14 @@ ${styleProfile.slice(0, 4000)}
     return threads.map(t => {
       const conv = t.conversation
         .map(m => `**[${m.role}] ${m.authorName}:** ${m.content}`)
-        .join('\\n');
+        .join('\n');
       return (
-        `### Thread: ${t.threadId}\\n` +
-        `**Selected Text:** ${t.selectedText}\\n\\n` +
-        `**Conversation:**\\n${conv}\\n\\n` +
+        `### Thread: ${t.threadId}\n` +
+        `**Selected Text:** ${t.selectedText}\n\n` +
+        `**Conversation:**\n${conv}\n\n` +
         `**Request:** ${t.agentRequest}`
       );
-    }).join('\\n\\n');
+    }).join('\n\n');
   }
 
   /**
@@ -444,10 +383,22 @@ ${styleProfile.slice(0, 4000)}
     sections: Record<string, string | undefined | null>,
     instructions: string
   ): string {
-    const formattedParts = Object.entries(sections)
-      .map(([title, content]) => `## ${title}\\n\\n${content || '(not provided)'}\\n`);
+    return buildStandardPrompt(sections, instructions);
+  }
 
-    return [...formattedParts, `\\n## Instructions\\n\\n${instructions || '(not provided)'}`].join('\\n').trim();
+  /**
+   * Reads the scratch tab written by processInstructionUpdate_ on the previous
+   * W1 run. Returns the content, or a sentinel when the tab is empty or absent
+   * (first run, no prior generation).
+   *
+   * Call this in generateInstructions() and pass the result to
+   * generateInstructionPrompt() as `lastGenerated` so the LLM can compare the
+   * current tab with the last-generated version and detect user edits.
+   */
+  protected readLastGeneratedInstructions_(instructionTabName: string): string {
+    const scratchTab = `${instructionTabName} Scratch`;
+    const content = this.getTabContent_(scratchTab);
+    return content?.trim() ? content : '(none — first run)';
   }
 
   // --- Prompt Builder Overrides ---
@@ -574,6 +525,11 @@ ${styleProfile.slice(0, 4000)}
     return allReplies;
   }
 
+  /**
+   * W1 hook: subclasses continue after this. Instruction prompts should pass the
+   * current instruction tab into the model and steer it to merge/refine author
+   * edits — see `Constants.SYSTEM_PREAMBLE` and `.cursor/rules/experimental-dev.mdc`.
+   */
   protected generateInstructions(): void {
     Tracer.info(`[${this.constructor.name}] generateInstructions: starting — ensureStandardTabs`);
     DocOps.ensureStandardTabs();

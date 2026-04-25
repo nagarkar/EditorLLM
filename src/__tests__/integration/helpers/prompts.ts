@@ -50,19 +50,12 @@ ${opts.styleProfile}
 ---
 
 ## Instructions\n\nAnalyse the writing style above and produce a comprehensive StyleProfile.
-Return a JSON object with:
-- proposed_full_text: your full StyleProfile document — MUST be valid
-  GitHub-Flavored Markdown with the following structure:
-    ## Voice & Tone
-    ## Sentence Rhythm
-    ## Vocabulary Register
-    ## Structural Patterns
-    ## Thematic Motifs
-  Each section MUST start with a ## heading, use - bullets, and **bold** for
-  key terms. Do NOT use plain-text section titles or fenced code blocks.
-- operations: one per major style dimension updated (voice, rhythm, vocabulary,
-  structure, motifs). Each match_text must be a verbatim 3–4-word phrase from
-  proposed_full_text.
+Return the complete StyleProfile as plain GitHub-Flavored Markdown, starting directly
+with the first ## heading. Do NOT wrap the response in JSON or any other format.
+Required sections: ## Voice & Tone, ## Sentence Rhythm, ## Vocabulary Register,
+## Structural Patterns, ## Thematic Motifs. Each section MUST start with a ## heading,
+use - bullets, and **bold** for key terms. Do NOT use plain-text section titles or
+fenced code blocks.
 `.trim();
 }
 
@@ -113,16 +106,11 @@ ${opts.existingEarTune.slice(0, 2000)}
 2. Provides specific rules for consonant flow, syllabic stress, and sentence-length
    variation suitable for this manuscript.
 
-Return a JSON object with:
-- proposed_full_text: the complete new EarTune instructions — MUST be valid
-  GitHub-Flavored Markdown. Required sections (## H2 headings):
-    ## Overview
-    ## Consonant Flow Rules
-    ## Syllabic Stress Rules
-    ## Sentence Length Variation
-  Use - bullet points for rules, **bold** for rule names. No plain-text headings.
-- operations: one per section being changed or added, each with a verbatim
-  match_text from proposed_full_text and a reason.
+Return the complete EarTune instructions as plain GitHub-Flavored Markdown, starting
+directly with the first ## heading. Do NOT wrap the response in JSON or any other format.
+Required sections (## H2 headings): ## Overview, ## Consonant Flow Rules,
+## Syllabic Stress Rules, ## Sentence Length Variation.
+Use - bullet points for rules, **bold** for rule names. No plain-text headings.
 `.trim();
 }
 
@@ -149,10 +137,18 @@ ${opts.passage.slice(0, 8000)}
 ---
 
 ## Instructions\n\nIdentify every passage with a rhythmic, phonetic, or cadence problem.
+Also scout for "Pronunciation Traps" in the passage:
+- Scan for proper nouns (character/place names), technical jargon, or uncommon words (e.g., "Chid", "Axiom", "Eigenstate").
+- For any annotation involving a pronunciation trap, append to the end of that operation's \`reason\` a markdown section headed \`## Phonetic Lexicon Suggestions\`.
+- Under that heading, include one entry per trap in this format:
+  - Word: [Exact Spelling]
+  - Phonetic: [IPA or simple phonetic, e.g., CHID AK-see-um]
+  - Context: [Short phrase using the word]
+
 Return a JSON object with:
 - operations: one per problem found. Each must have:
     - match_text: verbatim 3–4-word phrase from the passage above
-    - reason: description of the issue and suggested improvement
+    - reason: description of the issue and suggested improvement; when relevant, end with the \`## Phonetic Lexicon Suggestions\` section described above
 `.trim();
 }
 
@@ -205,28 +201,22 @@ CURRENT TECHNICAL AUDIT INSTRUCTIONS (if any):
 ${opts.existingAudit.slice(0, 2000)}
 ---
 
-MANUSCRIPT SAMPLE (for axiom extraction):
+MANUSCRIPT SAMPLE (for principle extraction):
 ---
-${opts.manuscript.slice(0, 6000)}
+${opts.manuscript.slice(0, 20000)}
 ---
 
 ## Instructions\n\nGenerate a comprehensive TechnicalAudit system prompt that:
-1. Lists all Chid Axioms and physical principles as stated in the manuscript.
-2. Defines LaTeX caption requirements for this document.
-3. Specifies the unit system and physical constants in use.
+1. Lists all core axioms and foundational principles as stated in the manuscript.
+2. Defines technical notation and formatting requirements for this document.
+3. Specifies the terminology and reference systems in use.
 4. Provides specific audit checklist items derived from the manuscript.
 
-Return a JSON object with:
-- proposed_full_text: the complete new TechnicalAudit instructions — MUST be
-  valid GitHub-Flavored Markdown. Required sections (## H2 headings):
-    ## Chid Axioms
-    ## Physical Principles
-    ## LaTeX Requirements
-    ## Unit System & Constants
-    ## Audit Checklist
-  Use - bullet points, **bold** for axiom names and constants. No plain headings.
-- operations: one per major section being added or revised, each with a verbatim
-  match_text from proposed_full_text and a reason.
+Return the complete TechnicalAudit instructions as plain GitHub-Flavored Markdown, starting
+directly with the first ## heading. Do NOT wrap the response in JSON or any other format.
+Required sections (## H2 headings): ## Core Axioms, ## Foundational Principles,
+## Technical Notation, ## Terminology & Reference Systems, ## Audit Checklist.
+Use - bullet points, **bold** for axiom names and key terms. No plain headings.
 `.trim();
 }
 
@@ -252,14 +242,14 @@ PASSAGE TO AUDIT (from tab: "${opts.tabName}"):
 ${opts.passage.slice(0, 8000)}
 ---
 
-## Instructions\n\nPerform a full technical audit. Check every claim against the Chid Axiom,
-all equations for valid LaTeX captions, and all physical constants for
-correct SI values and units.
+## Instructions\n\nPerform a full technical audit. Check every factual claim against the
+manuscript's established framework and core axioms, all technical notations
+for correctness, and verify terminology is consistent with established definitions.
 
 Return a JSON object with:
 - operations: one per issue found. Each must have:
     - match_text: verbatim 3–4-word phrase from the passage above
-    - reason: specific axiom, constant, or caption rule violated, plus suggested correction
+    - reason: specific principle, definition, or notation violated, plus suggested correction
 `.trim();
 }
 

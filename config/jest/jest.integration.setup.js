@@ -35,50 +35,115 @@ if (fs.existsSync(envFile)) {
   }
 }
 
-// ── Auto-fetch Google OAuth token via gcloud ──────────────────────────────────
-// GOOGLE_TOKEN is ALWAYS fetched fresh from gcloud at test startup.
-// We intentionally ignore any GOOGLE_TOKEN value from .env.integration because
-// tokens expire after ~1 hour and a stale cached value causes silent 403s.
+// ── Auto-fetch Google OAuth token ────────────────────────────────────────────
+// GOOGLE_TOKEN is ALWAYS fetched fresh at test startup — never read from
+// .env.integration because tokens expire after ~1 hour.
 //
-// If gcloud is not installed or not authenticated, we abort with instructions.
+// Strategy (tried in order):
+//   1. gcloud auth application-default print-access-token
+//      Searched on $PATH first, then the known macOS download location.
+//   2. Direct refresh-token exchange via ~/.config/gcloud/application_default_credentials.json
+//      Works when gcloud is absent or not on PATH but credentials already exist.
+//
+// If neither strategy succeeds the suite aborts with actionable instructions.
 {
-  let gcloudError = null;
-  let token = '';
+  const { execSync } = require('child_process');
+  const os   = require('os');
+  const path = require('path');
+  const https = require('https');
 
-  try {
-    const { execSync } = require('child_process');
-    // application-default credentials support explicit scopes.
-    // gcloud auth login --enable-gdrive-access only adds Drive scope, not Docs.
-    token = execSync('gcloud auth application-default print-access-token', {
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-  } catch (e) {
-    gcloudError = e;
+  // ── Strategy 1: gcloud binary ─────────────────────────────────────────────
+  // Candidate locations: $PATH, then the default macOS SDK download directory.
+  const GCLOUD_EXTRA_PATHS = [
+    path.join(os.homedir(), 'Downloads', 'google-cloud-sdk', 'bin'),
+    path.join(os.homedir(), 'google-cloud-sdk', 'bin'),
+    '/usr/local/bin',
+    '/opt/homebrew/bin',
+  ];
+
+  function tryGcloud() {
+    const extraPath = GCLOUD_EXTRA_PATHS.join(':');
+    const env = { ...process.env, PATH: `${process.env.PATH}:${extraPath}` };
+    try {
+      return execSync('gcloud auth application-default print-access-token', {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env,
+      }).trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  // ── Strategy 2: direct refresh-token exchange ──────────────────────────────
+  // Reads ~/.config/gcloud/application_default_credentials.json and calls
+  // https://oauth2.googleapis.com/token with grant_type=refresh_token.
+  function tryRefreshToken() {
+    const credFile = path.join(os.homedir(), '.config', 'gcloud', 'application_default_credentials.json');
+    if (!fs.existsSync(credFile)) return '';
+    let creds;
+    try { creds = JSON.parse(fs.readFileSync(credFile, 'utf8')); } catch (_) { return ''; }
+    if (creds.type !== 'authorized_user' || !creds.refresh_token) return '';
+
+    const body = new URLSearchParams({
+      client_id:     creds.client_id,
+      client_secret: creds.client_secret,
+      refresh_token: creds.refresh_token,
+      grant_type:    'refresh_token',
+    }).toString();
+
+    // Synchronous HTTPS POST via a child process (Node https module is async-only).
+    try {
+      const result = execSync(
+        `node -e "
+          const https = require('https');
+          const body = ${JSON.stringify(body)};
+          const req = https.request(
+            { hostname:'oauth2.googleapis.com', path:'/token', method:'POST',
+              headers:{'Content-Type':'application/x-www-form-urlencoded','Content-Length':Buffer.byteLength(body)} },
+            res => { let d=''; res.on('data',c=>d+=c); res.on('end',()=>process.stdout.write(d)); }
+          );
+          req.on('error', e => process.stderr.write(e.message));
+          req.write(body); req.end();
+        "`,
+        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+      );
+      const parsed = JSON.parse(result);
+      return parsed.access_token || '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  // ── Resolve token ──────────────────────────────────────────────────────────
+  let token = tryGcloud();
+  let source = 'gcloud';
+  if (!token) {
+    token  = tryRefreshToken();
+    source = 'refresh_token';
   }
 
   if (token) {
     process.env.GOOGLE_TOKEN = token;
-    console.log(`[integration setup] GOOGLE_TOKEN: fresh gcloud token (prefix: ${token.slice(0, 12)}...)`);
+    console.log(`[integration setup] GOOGLE_TOKEN: fresh token via ${source} (prefix: ${token.slice(0, 12)}...)`);
   } else {
-    const reason = gcloudError
-      ? `gcloud error: ${gcloudError.message ?? gcloudError}`
-      : 'gcloud returned an empty token';
     throw new Error(
-      `\n\nCannot run integration tests: ${reason}\n\n` +
-      `A Google OAuth token with Drive + Docs scopes is required.\n\n` +
-      `Fix:\n` +
-      `  1. Install gcloud: https://cloud.google.com/sdk/docs/install\n` +
-      `  2. Authenticate with all required scopes (must include userinfo.email for E2E):\n` +
-      `       gcloud auth application-default login \\\n` +
-      `         --client-id-file="$HOME/.config/gcloud/editorllm-oauth-client.json" \\\n` +
-      `         --scopes="https://www.googleapis.com/auth/cloud-platform,\\\n` +
-      `                   https://www.googleapis.com/auth/drive,\\\n` +
-      `                   https://www.googleapis.com/auth/documents,\\\n` +
-      `                   https://www.googleapis.com/auth/script.external_request,\\\n` +
-      `                   https://www.googleapis.com/auth/script.scriptapp,\\\n` +
-      `                   https://www.googleapis.com/auth/userinfo.email"\n` +
-      `  3. Re-run the tests.\n`
+      `\n\nCannot run integration tests: could not obtain a Google OAuth token.\n\n` +
+      `Tried:\n` +
+      `  1. gcloud auth application-default print-access-token\n` +
+      `     (searched PATH and ${GCLOUD_EXTRA_PATHS.join(', ')})\n` +
+      `  2. Direct refresh-token exchange from\n` +
+      `     ~/.config/gcloud/application_default_credentials.json\n\n` +
+      `Fix — one of:\n` +
+      `  A. Add gcloud to PATH:  export PATH="$PATH:$HOME/Downloads/google-cloud-sdk/bin"\n` +
+      `  B. Re-authenticate:     gcloud auth application-default login \\\n` +
+      `       --client-id-file="$HOME/.config/gcloud/editorllm-oauth-client.json" \\\n` +
+      `       --scopes="https://www.googleapis.com/auth/cloud-platform,\\\n` +
+      `                 https://www.googleapis.com/auth/drive,\\\n` +
+      `                 https://www.googleapis.com/auth/documents,\\\n` +
+      `                 https://www.googleapis.com/auth/script.external_request,\\\n` +
+      `                 https://www.googleapis.com/auth/script.scriptapp,\\\n` +
+      `                 https://www.googleapis.com/auth/userinfo.email"\n`
     );
   }
 }

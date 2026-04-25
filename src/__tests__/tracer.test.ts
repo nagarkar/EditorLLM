@@ -5,8 +5,6 @@
 // against the CacheService in-memory mock from jest.setup.js.
 // ============================================================
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 // Load the real Tracer implementation (replaces the mock global)
 const fs = require('fs');
 const path = require('path');
@@ -31,8 +29,7 @@ function loadRealTracer(): void {
     /^const Tracer\b/m,
     'Tracer'
   );
-  // eslint-disable-next-line no-eval
-  const fn = new Function(patchedSource);
+  const fn = new Function(patchedSource); // new Function used intentionally — same pattern as ElevenLabsService.test.ts
   fn();
 }
 

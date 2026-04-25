@@ -34,13 +34,9 @@ const CollaborationService = (() => {
    */
   function buildTabMap_(): Map<string, { docTab: GoogleAppsScript.Document.DocumentTab; title: string }> {
     const map = new Map<string, { docTab: GoogleAppsScript.Document.DocumentTab; title: string }>();
-    const walk = (tabs: GoogleAppsScript.Document.Tab[]): void => {
-      for (const tab of tabs) {
-        map.set(tab.getId(), { docTab: tab.asDocumentTab(), title: tab.getTitle() });
-        walk(tab.getChildTabs());
-      }
-    };
-    walk(DocumentApp.getActiveDocument().getTabs());
+    DocOps.walkTabs(tab => {
+      map.set(tab.getId(), { docTab: tab.asDocumentTab(), title: tab.getTitle() });
+    });
     return map;
   }
 
@@ -586,6 +582,63 @@ const CollaborationService = (() => {
     return true;
   }
 
+  /**
+   * Final cleanup pass after annotation + directive clears: removes every
+   * named range and bookmark on the tab. Handles stale artefacts from format
+   * changes (e.g. undecodable directive names, renamed prefixes) that earlier
+   * passes skip. For each named range, highlight formatting is cleared first
+   * (same as deleteAnnotation_), then the range is removed.
+   */
+  function removeOrphanedEntitiesOnTab_(tabName: string): void {
+    if (!DocOps.isManagedTab(tabName)) {
+      return;
+    }
+    const docTab = DocOps.getTabByName(tabName);
+    if (!docTab) {
+      Tracer.warn(
+        `[CollaborationService] removeOrphanedEntitiesOnTab_: tab "${tabName}" not found — skipping`
+      );
+      return;
+    }
+
+    const namedRangesSnapshot = docTab.getNamedRanges().slice();
+    let namedRangesRemoved = 0;
+    let highlightRunsCleared = 0;
+    for (const nr of namedRangesSnapshot) {
+      try {
+        highlightRunsCleared += clearNamedRangeHighlights_(nr);
+        nr.remove();
+        namedRangesRemoved++;
+      } catch (e) {
+        Tracer.warn(
+          `[CollaborationService] removeOrphanedEntitiesOnTab_: failed to remove named range ` +
+            `"${nr.getName()}" — ${e}`
+        );
+      }
+    }
+
+    const bookmarksSnapshot = docTab.getBookmarks().slice();
+    let bookmarksRemoved = 0;
+    for (const bm of bookmarksSnapshot) {
+      try {
+        bm.remove();
+        bookmarksRemoved++;
+      } catch (e) {
+        Tracer.warn(
+          `[CollaborationService] removeOrphanedEntitiesOnTab_: failed to remove bookmark ` +
+            `"${bm.getId()}" — ${e}`
+        );
+      }
+    }
+
+    Tracer.info(
+      `[CollaborationService] removeOrphanedEntitiesOnTab_: tab "${tabName}" — ` +
+        `named ranges removed: ${namedRangesRemoved}, ` +
+        `named-range highlight runs cleared: ${highlightRunsCleared}, ` +
+        `bookmarks removed: ${bookmarksRemoved}`
+    );
+  }
+
   // --- Per-operation annotation ---
 
   /**
@@ -618,13 +671,13 @@ const CollaborationService = (() => {
    */
   function annotateOperation_(
     docTab: GoogleAppsScript.Document.DocumentTab,
+    body: GoogleAppsScript.Document.Body,
     op: Operation,
     tabId: string,
     agentPrefix: string,
     docId: string,
     highlightColor: string
   ): void {
-    const body    = docTab.getBody();
     const rangeEl = findTextOrFallback_(body, op.match_text);
     if (!rangeEl) {
       Tracer.warn(`CollaborationService: no text found in tab for op: "${op.match_text}"`);
@@ -715,6 +768,14 @@ const CollaborationService = (() => {
     MarkdownService.markdownToTab(update.proposed_full_text, update.review_tab, Constants.TAB_NAMES.AGENTIC_INSTRUCTIONS);
   }
 
+  function processTabGeneration_(update: RootUpdate, parentTab: string): void {
+    const tabs = update.generated_tabs ?? [];
+    for (const generated of tabs) {
+      if (!generated.tab_name) continue;
+      MarkdownService.markdownToTab(generated.markdown || '', generated.tab_name, parentTab);
+    }
+  }
+
   function processContentAnnotation_(update: RootUpdate): void {
     const targetDocTab = DocOps.getTabByName(update.target_tab!);
     if (!targetDocTab) {
@@ -736,12 +797,14 @@ const CollaborationService = (() => {
     // clearTabHighlights_ is invoked automatically inside clearAgentAnnotations_
     // as a fallback when old-style annotations without named ranges are detected.
 
+    const body = targetDocTab.getBody();
+
     // Reverse so the first operation's comment appears at the top of the comments panel
     // (Drive shows the last-added comment first)
     const ops = [...(update.operations ?? [])].reverse();
     const commentSummary: string[] = [];
     for (const op of ops) {
-      annotateOperation_(targetDocTab, op, targetTabId, agentPrefix, docId, highlightColor);
+      annotateOperation_(targetDocTab, body, op, targetTabId, agentPrefix, docId, highlightColor);
       commentSummary.push(`"${op.match_text}" → ${op.reason}`);
     }
     Tracer.info(
@@ -751,14 +814,66 @@ const CollaborationService = (() => {
     );
   }
 
+  function createBookmarkDirectives_(update: RootUpdate): void {
+    const targetDocTab = DocOps.getTabByName(update.target_tab!);
+    if (!targetDocTab) {
+      throw new Error(`bookmark_directives: target tab "${update.target_tab}" not found`);
+    }
+
+    const agentPrefix = update.agent_name;
+    if (!agentPrefix) {
+      throw new Error('bookmark_directives: agent_name is required for directive encoding');
+    }
+
+    const ops: DirectiveCreate[] = update.directives ?? [];
+    const body = targetDocTab.getBody();
+    let count = 0;
+    for (const op of ops) {
+      const rangeEl = findTextOrFallback_(body, op.match_text);
+      if (!rangeEl) {
+        Tracer.warn(`[CollaborationService] createBookmarkDirectives_: match_text "${op.match_text}" not found in tab "${update.target_tab}"`);
+        continue;
+      }
+
+      try {
+        const range = targetDocTab.newRange()
+          .addElement(rangeEl.getElement().asText(), rangeEl.getStartOffset(), rangeEl.getEndOffsetInclusive())
+          .build();
+        DirectivePersistence.createDirectiveAtRange(
+          targetDocTab,
+          agentPrefix,
+          op.type,
+          op.payload,
+          range
+        );
+      } catch (e) {
+        Tracer.error(
+          `[CollaborationService] createBookmarkDirectives_: failed to create directive for "${op.match_text}" — ${e}`
+        );
+        continue;
+      }
+      count++;
+    }
+
+    Tracer.info(`[CollaborationService] createBookmarkDirectives_: added ${count} directive(s) on tab "${update.target_tab}"`);
+  }
+
   // --- Public entry point ---
 
   /**
    * Routes a RootUpdate payload to the correct workflow handler.
+   *
+   * @param opts.tabGenerationParent  Required for tab_generation: the parent tab that
+   *   generated tabs are written under. This is agent-owned context (not from Gemini)
+   *   and therefore lives outside RootUpdate.
    */
-  function processUpdate(update: RootUpdate): void {
+  function processUpdate(update: RootUpdate, opts?: { tabGenerationParent?: string }): void {
     if (update.workflow_type === 'instruction_update') {
       processInstructionUpdate_(update);
+    } else if (update.workflow_type === 'tab_generation') {
+      processTabGeneration_(update, opts?.tabGenerationParent ?? Constants.TAB_NAMES.PUBLISHER_ROOT);
+    } else if (update.workflow_type === 'bookmark_directives') {
+      createBookmarkDirectives_(update);
     } else {
       processContentAnnotation_(update);
     }
@@ -772,5 +887,7 @@ const CollaborationService = (() => {
     // clearAllAnnotations (Code.ts). It is also called internally as a fallback
     // for old-style annotations. Returns true if the tab was found, false otherwise.
     clearTabHighlights: clearTabHighlights_,
+    /** After clearing annotations and directives on a tab — strips any remaining named ranges and bookmarks. */
+    removeOrphanedEntitiesOnTab: removeOrphanedEntitiesOnTab_,
   };
 })();

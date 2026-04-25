@@ -1,0 +1,375 @@
+<!-- ============================================================
+     MultiSelectTabs.html — Standalone multi-select autocomplete
+     component for picking tab names (or any string list).
+
+     Usage (include once per page):
+       <?!= include('MultiSelectTabs') ?>
+
+     Then create instances from JS:
+       var ms = MultiSelectTabs.create({
+         container:   document.getElementById('some-div'),
+         placeholder: 'Add tab…',
+         onchange:    function(values) { console.log(values); }
+       });
+       ms.setOptions(['Chapter 1', 'Chapter 2', 'Appendix A']);
+       ms.setValues(['Chapter 1']);          // pre-select
+       var arr = ms.getValues();             // read selection
+     ============================================================ -->
+<style>
+  /* ── MultiSelectTabs component styles ───────────────────── */
+  .mst-root {
+    position: relative;
+    background: var(--input-bg, #1E1E1E);
+    border: 1px solid var(--border, #3A3A3A);
+    border-radius: 6px;
+    padding: 4px 6px;
+    cursor: text;
+    min-height: 34px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+    transition: border-color 0.15s;
+  }
+  .mst-root:focus-within {
+    border-color: var(--accent, #8AB4F8);
+  }
+  .mst-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: var(--chip-bg, #1A2040);
+    color: var(--chip-color, #8AB4F8);
+    border: 1px solid var(--chip-border, #2A3860);
+    border-radius: 12px;
+    padding: 2px 8px 2px 10px;
+    font-size: 11px;
+    white-space: nowrap;
+    max-width: 180px;
+    overflow: hidden;
+  }
+  .mst-chip-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mst-chip-remove {
+    background: none;
+    border: none;
+    color: var(--chip-color, #8AB4F8);
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 0 0 0 2px;
+    opacity: 0.7;
+    flex-shrink: 0;
+  }
+  .mst-chip-remove:hover { opacity: 1; }
+  .mst-input {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text, #E8EAED);
+    font-size: 12px;
+    min-width: 80px;
+    flex: 1;
+    padding: 3px 2px;
+  }
+  .mst-input::placeholder { color: var(--placeholder, #666); }
+  .mst-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: var(--dropdown-bg, #252525);
+    border: 1px solid var(--border, #3A3A3A);
+    border-radius: 6px;
+    max-height: 180px;
+    overflow-y: auto;
+    z-index: 9999;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  }
+  .mst-option {
+    padding: 7px 12px;
+    font-size: 12px;
+    color: var(--text, #E8EAED);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .mst-option:hover, .mst-option.mst-active {
+    background: var(--hover-bg, #2A3860);
+  }
+  .mst-option.mst-selected {
+    color: var(--chip-color, #8AB4F8);
+    font-weight: 600;
+  }
+  .mst-option-check {
+    font-size: 11px;
+    opacity: 0;
+    flex-shrink: 0;
+  }
+  .mst-option.mst-selected .mst-option-check { opacity: 1; }
+  .mst-empty {
+    padding: 8px 12px;
+    font-size: 11px;
+    color: var(--placeholder, #666);
+    font-style: italic;
+  }
+  .mst-hint {
+    padding: 6px 12px;
+    font-size: 10px;
+    color: var(--placeholder, #666);
+    border-top: 1px solid var(--border, #3A3A3A);
+  }
+</style>
+
+<script>
+/* global MultiSelectTabs */
+var MultiSelectTabs = (function() {
+  'use strict';
+
+  /**
+   * Create a new MultiSelectTabs instance.
+   *
+   * @param {object} opts
+   * @param {HTMLElement} opts.container  — element to render into
+   * @param {string}  [opts.placeholder] — input placeholder text
+   * @param {function} [opts.onchange]   — called with string[] whenever selection changes
+   */
+  function create(opts) {
+    var container   = opts.container;
+    var placeholder = opts.placeholder || 'Add tab…';
+    var onchange    = opts.onchange   || function() {};
+
+    var options  = [];   // all available option strings
+    var selected = [];   // currently selected strings (ordered)
+    var activeIdx = -1;  // keyboard-highlighted dropdown index
+    var open = false;
+
+    // ── DOM ───────────────────────────────────────────────────
+    var root = document.createElement('div');
+    root.className = 'mst-root';
+
+    var input = document.createElement('input');
+    input.className = 'mst-input';
+    input.type = 'text';
+    input.placeholder = placeholder;
+    input.setAttribute('autocomplete', 'off');
+
+    var dropdown = document.createElement('div');
+    dropdown.className = 'mst-dropdown';
+    dropdown.style.display = 'none';
+
+    root.appendChild(input);
+    container.appendChild(root);
+    // Append dropdown to body so it isn't clipped by overflow:hidden parents
+    document.body.appendChild(dropdown);
+
+    // ── Positioning ───────────────────────────────────────────
+    function positionDropdown() {
+      var rect = root.getBoundingClientRect();
+      dropdown.style.position = 'fixed';
+      dropdown.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
+      dropdown.style.left = (rect.left   + window.scrollX)     + 'px';
+      dropdown.style.width = rect.width  + 'px';
+    }
+
+    // ── Chip rendering ────────────────────────────────────────
+    function renderChips() {
+      // Remove old chips
+      root.querySelectorAll('.mst-chip').forEach(function(c) { c.remove(); });
+
+      selected.forEach(function(val) {
+        var chip = document.createElement('span');
+        chip.className = 'mst-chip';
+        chip.title = val;
+
+        var label = document.createElement('span');
+        label.className = 'mst-chip-label';
+        label.textContent = val;
+
+        var btn = document.createElement('button');
+        btn.className = 'mst-chip-remove';
+        btn.type = 'button';
+        btn.textContent = '\u00d7'; // ×
+        btn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          removeValue(val);
+        });
+
+        chip.appendChild(label);
+        chip.appendChild(btn);
+        root.insertBefore(chip, input);
+      });
+    }
+
+    // ── Dropdown rendering ────────────────────────────────────
+    function getFilteredOptions() {
+      var q = input.value.trim().toLowerCase();
+      return options.filter(function(o) {
+        return !q || o.toLowerCase().includes(q);
+      });
+    }
+
+    function renderDropdown() {
+      dropdown.innerHTML = '';
+      var filtered = getFilteredOptions();
+      var q = input.value.trim();
+
+      if (!filtered.length && !q) {
+        var empty = document.createElement('div');
+        empty.className = 'mst-empty';
+        empty.textContent = 'No options available';
+        dropdown.appendChild(empty);
+      } else {
+        // Show filtered options
+        filtered.forEach(function(o, i) {
+          var opt = document.createElement('div');
+          opt.className = 'mst-option' + (selected.indexOf(o) >= 0 ? ' mst-selected' : '');
+          if (i === activeIdx) opt.classList.add('mst-active');
+          opt.dataset.value = o;
+
+          var check = document.createElement('span');
+          check.className = 'mst-option-check';
+          check.textContent = '\u2713'; // ✓
+
+          var text = document.createElement('span');
+          text.textContent = o;
+
+          opt.appendChild(check);
+          opt.appendChild(text);
+
+          opt.addEventListener('mousedown', function(e) {
+            e.preventDefault(); // don't lose input focus
+            toggleValue(o);
+          });
+          dropdown.appendChild(opt);
+        });
+
+        // "Add '<query>'" option when typed value not in list
+        if (q && options.indexOf(q) < 0) {
+          var hint = document.createElement('div');
+          hint.className = 'mst-hint';
+          hint.textContent = 'Press Enter to add \u201c' + q + '\u201d';
+          dropdown.appendChild(hint);
+        }
+      }
+
+      activeIdx = -1;
+    }
+
+    function openDropdown() {
+      positionDropdown();
+      renderDropdown();
+      dropdown.style.display = 'block';
+      open = true;
+    }
+
+    function closeDropdown() {
+      dropdown.style.display = 'none';
+      open = false;
+      activeIdx = -1;
+    }
+
+    // ── Value management ──────────────────────────────────────
+    function addValue(val) {
+      val = val.trim();
+      if (!val || selected.indexOf(val) >= 0) return;
+      selected.push(val);
+      renderChips();
+      renderDropdown();
+      onchange(selected.slice());
+    }
+
+    function removeValue(val) {
+      var idx = selected.indexOf(val);
+      if (idx >= 0) selected.splice(idx, 1);
+      renderChips();
+      renderDropdown();
+      onchange(selected.slice());
+    }
+
+    function toggleValue(val) {
+      if (selected.indexOf(val) >= 0) {
+        removeValue(val);
+      } else {
+        addValue(val);
+      }
+      input.value = '';
+      renderDropdown();
+    }
+
+    // ── Keyboard navigation ───────────────────────────────────
+    input.addEventListener('keydown', function(e) {
+      var filtered = getFilteredOptions();
+      var maxIdx   = filtered.length - 1;
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (!open) { openDropdown(); return; }
+        activeIdx = Math.min(activeIdx + 1, maxIdx);
+        renderDropdown();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        activeIdx = Math.max(activeIdx - 1, 0);
+        renderDropdown();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (open && activeIdx >= 0 && filtered[activeIdx]) {
+          toggleValue(filtered[activeIdx]);
+        } else if (input.value.trim()) {
+          addValue(input.value.trim());
+          input.value = '';
+          renderDropdown();
+        }
+      } else if (e.key === 'Backspace' && !input.value && selected.length) {
+        removeValue(selected[selected.length - 1]);
+      } else if (e.key === 'Escape') {
+        closeDropdown();
+      }
+    });
+
+    input.addEventListener('input', function() {
+      activeIdx = -1;
+      if (!open) openDropdown(); else renderDropdown();
+    });
+
+    input.addEventListener('focus', function() { openDropdown(); });
+
+    root.addEventListener('click', function() { input.focus(); });
+
+    // Close on outside click
+    document.addEventListener('mousedown', function(e) {
+      if (!root.contains(e.target) && !dropdown.contains(e.target)) {
+        closeDropdown();
+      }
+    });
+
+    // Reposition on scroll/resize (defensive)
+    window.addEventListener('scroll', function() { if (open) positionDropdown(); }, true);
+
+    // ── Public API ────────────────────────────────────────────
+    return {
+      /** Replace the available options list. Preserves any selected values not in the list. */
+      setOptions: function(arr) {
+        options = arr ? arr.slice() : [];
+        renderDropdown();
+      },
+      /** Replace the current selection (array of strings). */
+      setValues: function(arr) {
+        selected = arr ? arr.slice() : [];
+        renderChips();
+      },
+      /** Return a copy of the current selection as a string array. */
+      getValues: function() {
+        return selected.slice();
+      },
+      /** Focus the input. */
+      focus: function() { input.focus(); },
+    };
+  }
+
+  return { create: create };
+})();
+</script>

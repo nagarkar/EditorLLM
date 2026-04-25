@@ -1,0 +1,7 @@
+EditorLLM brings a suite of specialized AI agents directly into Google Docs, turning your document into a collaborative editing workspace that refines your writing as you go.
+
+Six agents cover the full editing cycle. The Architect agent reads your manuscript and generates a persistent StyleProfile that all other agents use as a shared creative brief, so every suggestion stays consistent with your established voice and intent. EarTune listens for rhythm and flow, annotating passages where sentence length, repetition, or cadence interrupt the reader. The Audit agent checks for technical accuracy, internal consistency, and factual coherence across the full document. Tether flags passages that drift from your thesis or established argument. The TTS agent lets you hear your writing read aloud through ElevenLabs voices — hearing the text reveals what the eye skips. A General Purpose assistant handles open-ended revision requests posted as @AI comments directly in the document.
+
+Getting started requires only a Gemini API key, entered once in the Settings panel — EditorLLM uses your own account for all AI calls.
+
+Your document content is processed only while an agent is actively running and is never stored outside your own Google account or API provider's infrastructure.

@@ -122,12 +122,20 @@ global.ScriptApp = {
   getOAuthToken: jest.fn().mockReturnValue('mock-token'),
 };
 
+const mockHtmlOutput = {
+  setWidth:       jest.fn().mockReturnThis(),
+  setHeight:      jest.fn().mockReturnThis(),
+  setTitle:       jest.fn().mockReturnThis(),
+  setSandboxMode: jest.fn().mockReturnThis(),
+  getContent:     jest.fn().mockReturnValue('<html><body></body></html>'),
+};
+const mockHtmlTemplate = {
+  evaluate: jest.fn().mockReturnValue(mockHtmlOutput),
+};
+
 global.HtmlService = {
-  createHtmlOutputFromFile: jest.fn().mockReturnValue({
-    setWidth: jest.fn().mockReturnThis(),
-    setHeight: jest.fn().mockReturnThis(),
-    setSandboxMode: jest.fn().mockReturnThis(),
-  }),
+  createHtmlOutputFromFile: jest.fn().mockReturnValue(mockHtmlOutput),
+  createTemplateFromFile:   jest.fn().mockReturnValue(mockHtmlTemplate),
   SandboxMode: { IFRAME: 'IFRAME' },
 };
 
@@ -143,6 +151,13 @@ global.Drive = {
   },
   Replies: {
     create: jest.fn().mockReturnValue({ id: 'mock-reply-id' }),
+  },
+  // Used by elevenLabsTextToSpeech to save TTS audio and share it.
+  Files: {
+    create: jest.fn().mockReturnValue({ id: 'mock-tts-file-id' }),
+  },
+  Permissions: {
+    create: jest.fn().mockReturnValue({}),
   },
 };
 
@@ -203,10 +218,13 @@ function createMockCache() {
 }
 
 const mockUserCache = createMockCache();
+const mockDocumentCache = createMockCache();
 global.CacheService = {
   getUserCache: jest.fn().mockReturnValue(mockUserCache),
+  getDocumentCache: jest.fn().mockReturnValue(mockDocumentCache),
   getScriptCache: jest.fn().mockReturnValue(createMockCache()),
   _mockUserCache: mockUserCache,  // exposed for test reset
+  _mockDocumentCache: mockDocumentCache,
   _createMockCache: createMockCache,
 };
 
@@ -224,12 +242,16 @@ global.Tracer = {
 };
 
 global.Utilities = {
-  sleep: jest.fn(),
+  sleep:         jest.fn(),
+  base64Encode:  jest.fn().mockReturnValue('bW9ja2F1ZGlv'),
+  base64Decode:  jest.fn().mockReturnValue([0, 1, 2, 3]),
+  newBlob:       jest.fn().mockReturnValue({ getBytes: jest.fn().mockReturnValue([]) }),
+  getUuid:       jest.fn().mockReturnValue('00000000-0000-0000-0000-000000000000'),
 };
 
 // ── DocOps stub ───────────────────────────────────────────────────────────────
-// CollaborationService calls DocOps.getTabByName() inside clearTabHighlights_
-// (color-sweep fallback) and DocOps.getTabIdByName() / DocOps.tabExists() in
+// CollaborationService calls DocOps.getTabByName() inside removeOrphanedEntitiesOnTab_
+// and clearTabHighlights_ (color-sweep fallback), plus DocOps.getTabIdByName() / tabExists() in
 // other paths. Return safe null/false defaults so the fallback is a no-op in
 // tests that don't set up real tabs.
 global.DocOps = {
@@ -237,6 +259,12 @@ global.DocOps = {
   getTabIdByName: jest.fn().mockReturnValue(null),
   tabExists:      jest.fn().mockReturnValue(false),
   ensureStandardTabs: jest.fn(),
+  walkTabs:       jest.fn(),
+  /** Raw user allowlist — null means "all non-blocked tabs eligible". */
+  getUserAllowedManagedTabs: jest.fn().mockReturnValue(null),
+  /** Centralised managed-tab predicate (never-processed subtree + allowlist check). */
+  isManagedTab: jest.fn().mockReturnValue(true),
+  getNeverProcessedSubtreeTabTitles: jest.fn().mockReturnValue(new Set()),
 };
 
 // Expose mockDocumentTab on global so vm-based collaboration tests can pass it
@@ -263,18 +291,48 @@ global.Constants = {
     deepseek: 'gemini-2.0-flash-thinking-exp-01-21',
   },
   TAB_NAMES: {
-    MERGED_CONTENT:               'MergedContent',
+    MANUSCRIPT:                   'Manuscript',
     AGENTIC_INSTRUCTIONS:         'Agentic Instructions',
     AGENTIC_SCRATCH:              'Agentic Scratch',
     STYLE_PROFILE:                'StyleProfile',
     EAR_TUNE:                     'EarTune Instructions',
+    TTS_INSTRUCTIONS:             'TTS Instructions',
     TECHNICAL_AUDIT:              'Audit Instructions',
-    TETHER_INSTRUCTIONS:          'TetherInstructions',
+    TETHER_INSTRUCTIONS:          'Tether Instructions',
     GENERAL_PURPOSE_INSTRUCTIONS: 'General Purpose Instructions',
   },
+  NEVER_PROCESSED_TABS: [
+    'MergedContent',
+    'Agentic Instructions',
+    'Agentic Scratch',
+  ],
   HIGHLIGHT_COLOR:      '#FFD966',
   AGENT_COMMENT_PREFIX: '[EditorLLM] ',
   COMMENT_ANCHOR_TAB:   '__comment_anchor_tab__',
+};
+
+// ── parsePlsRules global ──────────────────────────────────────────────────────
+// ElevenLabsService calls parsePlsRules() from the GAS flat scope.  In tests
+// that load ElevenLabsService via new Function() (vm-context pattern), the real
+// function must be on `global` before the service is loaded.
+// ElevenLabsService.test.ts sets this in its own beforeEach using the direct
+// import; other test suites get this no-op stub so the global is always defined.
+global.parsePlsRules = jest.fn().mockReturnValue([]);
+
+// ── ElevenLabsService stub ────────────────────────────────────────────────────
+// Provides safe defaults so vm-context tests that spread { ...global } into a
+// sandbox (e.g. collaboration.test.ts) don't fail on an undefined global when
+// Code.js references ElevenLabsService.
+global.ElevenLabsService = {
+  saveApiKey:   jest.fn(),
+  hasApiKey:    jest.fn().mockReturnValue(false),
+  saveModelId:  jest.fn(),
+  getModelId:   jest.fn().mockReturnValue('eleven_multilingual_v2'),
+  listVoices:   jest.fn().mockReturnValue([]),
+  listModels:   jest.fn().mockReturnValue([]),
+  textToSpeech: jest.fn().mockReturnValue('bW9ja2F1ZGlv'),
+  prefetchPronunciationDictionaries:  jest.fn(),
+  getCachedPronunciationDictionaries: jest.fn().mockReturnValue(null),
 };
 
 // ── MarkdownService pure-function stubs ────────────────────────────────────

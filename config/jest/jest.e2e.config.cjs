@@ -29,14 +29,16 @@ module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
-  // Matches e2e.1-e2e.8 split files, excluding e2e.6 (no-key) which runs
-  // serially via jest.e2e-serial.config.cjs because it modifies global GAS
-  // ScriptProperties (GEMINI_API_KEY) and must not overlap with Gemini calls.
+  // Matches e2e.2-e2e.5 parallel tests. Excluded from this config:
+  //   e2e.6 — modifies global GAS ScriptProperties (GEMINI_API_KEY); must not
+  //            overlap with any Gemini-calling test.
+  //   e2e.7 — heavy tab-creation + EarTune annotation; concurrent GAS Docs API
+  //            calls from e2e.3/e2e.5 (commentProcessorRun) can exhaust the
+  //            echo-URL window, causing a sign-in redirect. Runs serially.
   // The legacy e2e.test.ts is excluded here too — it still works standalone
   // but is superseded by these numbered files.
   testMatch: [
     '**/__tests__/integration/e2e.[12345].*.test.ts',
-    '**/__tests__/integration/e2e.[78].*.test.ts',
   ],
   testPathIgnorePatterns: ['/node_modules/'],
   moduleFileExtensions: ['ts', 'js'],

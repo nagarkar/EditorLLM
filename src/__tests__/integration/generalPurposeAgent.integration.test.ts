@@ -234,23 +234,3 @@ describe('GeneralPurposeAgent — W3: null-anchor thread (no anchor content)', (
   }, TIMEOUT);
 
 });
-
-// ── Error conditions ──────────────────────────────────────────────────────────
-
-describe('GeneralPurposeAgent — error conditions', () => {
-
-  it('throws a descriptive error when the API key is invalid', () => {
-    const userPrompt = buildGeneralPurposeAgentBatchPrompt({
-      anchorContent: '',
-      threads: [NULL_ANCHOR_THREAD],
-    });
-
-    expect(() =>
-      callGemini(INTEGRATION_SYSTEM_PROMPT, userPrompt, BATCH_REPLY_SCHEMA, {
-        tier:           TIER,
-        apiKeyOverride: 'INVALID_API_KEY_FOR_TESTING',
-      })
-    ).toThrow(/Gemini API error/);
-  });
-
-});

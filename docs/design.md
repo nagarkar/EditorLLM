@@ -248,7 +248,7 @@ User clicks "Generate" on Structural Architect card
          ├── BaseAgent.clearAllAgentCaches()
          │
          ├── architectAgent.generateInstructions()
-         │     ├── reads MergedContent tab
+         │     ├── reads Manuscript tab
          │     ├── builds prompt asking for StyleProfile
          │     ├── callGemini_() → RootUpdate (instruction_update)
          │     └── CollaborationService.processUpdate()
@@ -265,7 +265,7 @@ User clicks "Generate" on Structural Architect card
 
 | Tab Name | Parent | Purpose |
 |---|---|---|
-| `MergedContent` | (root) | Unified manuscript text, merged from chapter tabs |
+| `Manuscript` | (root) | Unified manuscript text, merged from chapter tabs |
 | `Agentic Instructions` | (root) | Parent tab for all agent configuration |
 | `StyleProfile` | Agentic Instructions | Generated style guide constraining all agents |
 | `EarTune` | Agentic Instructions | Ear-Tune system prompt for the Audio EarTune |

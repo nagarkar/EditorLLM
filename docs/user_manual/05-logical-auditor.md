@@ -30,7 +30,7 @@ The Auditor will:
 
 Click **Generate** to regenerate the TechnicalAudit system prompt:
 
-1. The Auditor reads the current **StyleProfile**, your **existing** audit instructions, and a sample of the **MergedContent**.
+1. The Auditor reads the current **StyleProfile**, your **existing** audit instructions, and a sample of the **Manuscript**.
 2. It produces comprehensive audit rules: Chid Axioms, LaTeX caption requirements, unit systems, and a checklist.
 3. The result is written directly to the **TechnicalAudit** tab, with the previous version backed up to **TechnicalAudit Scratch**.
 
@@ -69,7 +69,7 @@ The Auditor will:
 |---|---|---|---|
 | **Generate (W1)** | StyleProfile | Markdown | Axiom framework definitions |
 | **Generate (W1)** | TechnicalAudit | Markdown | Existing rules to be refined |
-| **Generate (W1)** | MergedContent | Plain Text | Manuscript sample (first 6,000 chars) for axiom extraction |
+| **Generate (W1)** | Manuscript | Plain Text | Manuscript sample (first 6,000 chars) for axiom extraction |
 | **Audit (W2)** | StyleProfile | Plain Text | Document's axiom framework |
 | **Audit (W2)** | TechnicalAudit | Plain Text | Specific audit rules and checklists |
 | **Audit (W2)** | Active Tab | Plain Text | The passage to audit |

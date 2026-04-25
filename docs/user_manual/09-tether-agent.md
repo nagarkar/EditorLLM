@@ -25,7 +25,7 @@ The Tether Agent will:
 
 Click **Generate** to regenerate the Tether Instructions system prompt:
 
-1. The Tether Agent reads the current **StyleProfile**, your **existing** tether instructions, and a sample of the **MergedContent**.
+1. The Tether Agent reads the current **StyleProfile**, your **existing** tether instructions, and a sample of the **Manuscript**.
 2. It identifies key historical figures and texts cited in the manuscript.
 3. It produces comprehensive instructions for source validation and alignment checklists.
 4. The result is written directly to the **TetherInstructions** tab, with the previous version backed up to **TetherInstructions Scratch**.
@@ -54,7 +54,7 @@ The Tether Agent will perform a targeted validation and post a reply.
 | Tab | Format | Why |
 |---|---|---|
 | StyleProfile | Markdown | Voice and conceptual framework |
-| MergedContent | Plain Text | Manuscript sample (first 6,000 chars) for fact-checking context |
+| Manuscript | Plain Text | Manuscript sample (first 6,000 chars) for fact-checking context |
 | TetherInstructions | Markdown | Existing rules to be refined |
 
 ### During Tab Validation (Verify button)

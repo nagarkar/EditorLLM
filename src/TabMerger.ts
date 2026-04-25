@@ -1,5 +1,5 @@
 // ============================================================
-// TabMerger.ts — Merges named tabs into MergedContent.
+// TabMerger.ts — Merges named tabs into Manuscript.
 // Not an agent — a standalone utility class (IIFE module).
 // Ported and adapted from the Youtube project's TabProcessor.
 // ============================================================
@@ -72,7 +72,7 @@ const TabMerger = (() => {
   // --- Public API ---
 
   /**
-   * Merges a single named source tab into the MergedContent destination tab.
+   * Merges a single named source tab into the Manuscript destination tab.
    * Called once per tab by the sidebar's sequential merge loop.
    */
   function mergeOneTab(tabName: string): { ok: boolean; name: string; message?: string } {
@@ -80,9 +80,9 @@ const TabMerger = (() => {
       return { ok: false, name: String(tabName), message: 'Invalid tab name.' };
     }
     try {
-      const destDocTab = DocOps.getTabByName(Constants.TAB_NAMES.MERGED_CONTENT);
+      const destDocTab = DocOps.getTabByName(Constants.TAB_NAMES.MANUSCRIPT);
       if (!destDocTab) {
-        return { ok: false, name: tabName, message: `"${Constants.TAB_NAMES.MERGED_CONTENT}" tab not found.` };
+        return { ok: false, name: tabName, message: `"${Constants.TAB_NAMES.MANUSCRIPT}" tab not found.` };
       }
       const srcDocTab = DocOps.getTabByName(tabName);
       if (!srcDocTab) {
@@ -96,19 +96,19 @@ const TabMerger = (() => {
   }
 
   /**
-   * Clears the MergedContent tab before starting a fresh merge run.
+   * Clears the Manuscript tab before starting a fresh merge run.
    */
   function clearDestination(): { ok: boolean; message?: string } {
-    const destDocTab = DocOps.getTabByName(Constants.TAB_NAMES.MERGED_CONTENT);
+    const destDocTab = DocOps.getTabByName(Constants.TAB_NAMES.MANUSCRIPT);
     if (!destDocTab) {
-      return { ok: false, message: `"${Constants.TAB_NAMES.MERGED_CONTENT}" tab not found.` };
+      return { ok: false, message: `"${Constants.TAB_NAMES.MANUSCRIPT}" tab not found.` };
     }
     destDocTab.getBody().clear();
     return { ok: true };
   }
 
   /**
-   * Merges an array of tab names into MergedContent in one single execution context.
+   * Merges an array of tab names into Manuscript in one single execution context.
    * This prevents DocumentApp from crashing the UI due to multiple rapid-fire syncs.
    */
   function mergeAllTabs(tabNames: string[]): { ok: boolean; successes: number; errors: string[] } {

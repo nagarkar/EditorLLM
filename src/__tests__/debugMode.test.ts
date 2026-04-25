@@ -5,8 +5,6 @@
 // the setup helper below which runs dist/Code.js inside the Jest vm context
 // and assigns all Code.js functions to the global object.
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 // Load Code.js globals into this Jest sandbox's global scope.
 require('../../config/jest/jest.code.setup.js');
 

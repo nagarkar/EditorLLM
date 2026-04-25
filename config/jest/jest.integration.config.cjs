@@ -10,6 +10,8 @@
 
 module.exports = {
   rootDir: '../../',
+  globalSetup: '<rootDir>/config/jest/jest.integration.global-setup.cjs',
+  globalTeardown: '<rootDir>/config/jest/jest.integration.global-teardown.cjs',
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
@@ -41,6 +43,9 @@ module.exports = {
   // xmlhttprequest keeps an internal libuv handle open after synchronous XHR
   // completes. forceExit cleans up after all tests finish rather than hanging.
   forceExit: true,
+  // Serialize integration test files to avoid parallel Gemini API calls
+  // exhausting per-minute quota (429 Resource Exhausted).
+  maxWorkers: 1,
   // Write a human-readable summary to .last_integration_test_results.txt after every run
   // so the AI assistant can read failures directly without copy-paste.
   reporters: [

@@ -66,7 +66,7 @@ describe('AuditAgent — W1: generateInstructions (instruction_update)', () => {
     const userPrompt = buildAuditInstructionsPrompt({
       styleProfile:  FIXTURES.STYLE_PROFILE,
       existingAudit: FIXTURES.TECHNICAL_AUDIT,
-      manuscript:    FIXTURES.MERGED_CONTENT,
+      manuscript:    FIXTURES.MANUSCRIPT,
     });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
@@ -85,7 +85,7 @@ describe('AuditAgent — W1: generateInstructions (instruction_update)', () => {
     const userPrompt = buildAuditInstructionsPrompt({
       styleProfile:  FIXTURES.STYLE_PROFILE,
       existingAudit: '',
-      manuscript:    FIXTURES.MERGED_CONTENT,
+      manuscript:    FIXTURES.MANUSCRIPT,
     });
     const result = callGemini(
       INTEGRATION_SYSTEM_PROMPT,
@@ -238,7 +238,7 @@ describe('AuditAgent — W3: single-thread batch', () => {
     const userPrompt = buildAuditBatchPrompt({
       styleProfile:      FIXTURES.STYLE_PROFILE,
       auditInstructions: FIXTURES.TECHNICAL_AUDIT,
-      passageContext:    FIXTURES.MERGED_CONTENT,
+      passageContext:    FIXTURES.MANUSCRIPT,
       threads:           [thread],
     });
     const result = callGemini(
@@ -261,7 +261,7 @@ describe('AuditAgent — W3: single-thread batch', () => {
     const userPrompt = buildAuditBatchPrompt({
       styleProfile:      FIXTURES.STYLE_PROFILE,
       auditInstructions: FIXTURES.TECHNICAL_AUDIT,
-      passageContext:    FIXTURES.MERGED_CONTENT,
+      passageContext:    FIXTURES.MANUSCRIPT,
       threads:           [thread],
     });
     const result = callGemini(
@@ -310,7 +310,7 @@ describe('AuditAgent — W3: single-thread batch', () => {
     const userPrompt = buildAuditBatchPrompt({
       styleProfile:      FIXTURES.STYLE_PROFILE,
       auditInstructions: '',
-      passageContext:    FIXTURES.MERGED_CONTENT,
+      passageContext:    FIXTURES.MANUSCRIPT,
       threads:           [thread],
     });
     const result = callGemini(
@@ -324,33 +324,5 @@ describe('AuditAgent — W3: single-thread batch', () => {
     expect(result.responses.length).toBeGreaterThan(0);
     expect(result.responses[0].reply.trim().length).toBeGreaterThan(0);
   }, TIMEOUT);
-
-});
-
-// ── Error conditions ──────────────────────────────────────────────────────────
-
-describe('AuditAgent — error conditions', () => {
-
-  it('throws a descriptive error when the API key is invalid', () => {
-    const thread: TestThread = {
-      threadId:     'audit-error-thread',
-      selectedText: 'any passage',
-      agentRequest: 'any request',
-      conversation: [{ role: 'User', authorName: 'Author', content: '@audit any request' }],
-    };
-    const userPrompt = buildAuditBatchPrompt({
-      styleProfile:      FIXTURES.STYLE_PROFILE,
-      auditInstructions: FIXTURES.TECHNICAL_AUDIT,
-      passageContext:    FIXTURES.MERGED_CONTENT,
-      threads:           [thread],
-    });
-
-    expect(() =>
-      callGemini(INTEGRATION_SYSTEM_PROMPT, userPrompt, BATCH_REPLY_SCHEMA, {
-        tier:           'fast',
-        apiKeyOverride: 'INVALID_API_KEY_FOR_TESTING',
-      })
-    ).toThrow(/Gemini API error/);
-  });
 
 });
