@@ -1,5 +1,5 @@
 // ============================================================
-// PublisherAgent.ts — Publishing metadata, packaging tabs, and structure audit
+// PublisherAgent.ts — Publishing metadata and packaging tabs
 // ============================================================
 
 class PublisherAgent extends BaseAgent {
@@ -79,15 +79,15 @@ ${PUBLISHER_SYSTEM_PROMPT_BODY}
       `Generate content only for these requested tabs: ${opts.requestedTabs.join(', ')}.`,
       'Do not return any extra tab names.',
       'The markdown for each tab should be ready to write directly into that tab.',
-      'For Title: draft a clean title-page tab suitable for front matter.',
       'For Copyright: include placeholders for **ISBN** and **Year**.',
       'For About The Author: use this template structure and fill it as best you can from available context:',
       aboutAuthorTemplate,
       'For Sales: provide 3 distinct sales blurbs aimed at the demographic implied by the StyleProfile.',
       'For Hooks: provide 3 verbatim excerpt candidates from Manuscript. Each option must include the excerpt text, estimated duration, approximate word count, and a short rationale. Hooks must avoid spoilers and explicit language.',
       'For Cover: provide 3 Adobe Express-ready prompt concepts for cover image generation.',
+      'For Opening Audio Credits: write a short narrator script (2–4 sentences) to be recorded as a separate MP3 and submitted to ACX as the opening credits file. Standard form: "[TITLE], written by [AUTHOR], narrated by [NARRATOR PLACEHOLDER]. Copyright [YEAR] [AUTHOR/PUBLISHER]. All rights reserved." Adapt the tone to match the book\'s mood from StyleProfile.',
+      'For Closing Audio Credits: write a short narrator script (2–4 sentences) for the closing credits file. Standard form: "You have been listening to [TITLE], written by [AUTHOR], narrated by [NARRATOR PLACEHOLDER]. If you enjoyed this title, please leave a review." Adapt the closing sentiment to the book\'s genre and tone.',
       'Preserve useful existing tab elements when they still fit the current manuscript context, but fully refresh requested tabs when the source material calls for it.',
-      'Do not generate Table of Contents in this workflow; it is handled programmatically.',
     ].join('\n');
 
     return this.buildStandardPrompt({
@@ -96,14 +96,6 @@ ${PUBLISHER_SYSTEM_PROMPT_BODY}
       'Manuscript': opts.mergedContent,
       'Publishing Tab State': tabStateLines,
     }, instructions);
-  }
-
-  generateStructuralAuditPrompt(opts: { styleProfile: string; publisherInstructions: string; passage: string }): string {
-    return this.buildStandardPrompt({
-      'Style Profile': opts.styleProfile,
-      'Publisher Instructions': opts.publisherInstructions,
-      [W2_PASSAGE_SECTION_TITLE]: opts.passage,
-    }, PUBLISHER_W2_INSTRUCTIONS);
   }
 
   generateInstructions(): void {
@@ -185,30 +177,5 @@ ${PUBLISHER_SYSTEM_PROMPT_BODY}
       missingTabs: validated.missing,
       unexpectedTabs: validated.unexpected,
     };
-  }
-
-  annotateManuscriptStructure(): void {
-    const passage = this.getTabContent_(Constants.TAB_NAMES.MANUSCRIPT);
-    if (!passage.trim()) {
-      throw new Error('Manuscript is empty. Nothing to audit.');
-    }
-
-    const styleProfile = this.getTabContent_(Constants.TAB_NAMES.STYLE_PROFILE);
-    this.assertStyleProfileValid_(styleProfile);
-    const publisherInstructions = this.getTabContent_(Constants.TAB_NAMES.PUBLISHER_INSTRUCTIONS) || this.SYSTEM_PROMPT;
-
-    const raw = this.callGemini_(
-      this.SYSTEM_PROMPT,
-      this.generateStructuralAuditPrompt({ styleProfile, publisherInstructions, passage }),
-      { schema: this.annotationSchema_(), tier: Constants.MODEL.THINKING }
-    ) as { operations: Operation[] };
-
-    const validOps = this.validateAndFilterOperations_(raw.operations ?? [], passage, this.constructor.name);
-    CollaborationService.processUpdate({
-      workflow_type: 'content_annotation',
-      target_tab: Constants.TAB_NAMES.MANUSCRIPT,
-      operations: validOps,
-      agent_name: '[Publisher]',
-    });
   }
 }

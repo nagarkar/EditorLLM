@@ -1,7 +1,7 @@
 Generate an updated Publisher Instructions system prompt that:
 1. Summarizes current best practices relevant to EditorLLM's publishing responsibilities for KDP ebook packaging and ACX/Audible submission prep.
-2. Defines how to generate the publishing tabs: Title, Copyright, About The Author, Sales, Hooks, and Cover.
-3. Defines how to perform the structural audit on Manuscript for enhanced typesetting readiness.
+2. Defines how to generate the publishing tabs: Copyright, About The Author, Sales, Hooks, Cover, Opening Audio Credits, and Closing Audio Credits.
+3. Defines how to keep publisher packaging artifacts internally consistent across ebook and audio deliverables.
 4. Preserves useful guidance from the current Publisher Instructions when still compatible with the latest manuscript context.
 
 Return the complete Publisher Instructions as plain GitHub-Flavored Markdown, starting directly with the first ## heading. Do NOT wrap the response in JSON or any other format.

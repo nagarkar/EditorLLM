@@ -13,6 +13,7 @@
     --accent:         #8AB4F8;
     --accent-hover:   #ADC8FF;
     --accent-muted:   #1A3461;
+    --surface-hover:  #333355;
 
     /* status palette — all ≥ 7:1 contrast on their bg */
     --info-bg:    #1B3B2A;
@@ -21,6 +22,16 @@
     --error-fg:   #EF9A9A;
     --warn-bg:    #3B3020;
     --warn-fg:    #FFD54F;
+
+    /* z-index layer constants — full stacking order at a glance
+       layer1    floating toast strip
+       layer2    content overlays (sweep-overlay, modal forms)
+       layer3    busy spinner (must cover all content)
+       layer3-1  dialog header (must stay above spinner) */
+    --z-layer1:      50;
+    --z-layer2:     100;
+    --z-layer3:    1000;
+    --z-layer3-1:  1001;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -119,7 +130,14 @@
     color: var(--accent);
     border: 1px solid var(--border);
   }
-  .btn-secondary:hover:not(:disabled) { background: #333355; }
+  /* Active tab button — accent fill matches btn-primary */
+  .btn-secondary.tab-active {
+    background: var(--accent);
+    color: #121212;
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  .btn-secondary:hover:not(:disabled) { background: var(--surface-hover); }
 
   /* Action — blue tint, light-blue text (~7:1) */
   .btn-action {
@@ -130,8 +148,8 @@
 
   /* Green — dark green bg, muted green text (~8:1) */
   .btn-green {
-    background: #1B3B2A;
-    color: #81C784;
+    background: var(--info-bg);
+    color: var(--info-fg);
   }
   .btn-green:hover:not(:disabled) { background: #234D36; }
 
@@ -361,6 +379,27 @@
     text-align: right;
     font-variant-numeric: tabular-nums;
   }
+  .tts-directive-row--break {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #181818;
+    cursor: default;
+  }
+  .tts-directive-row--break:hover {
+    background: #1a1a1a;
+  }
+  .tts-directive-cell--break-span {
+    flex: 1;
+    font-size: 11px;
+    font-style: italic;
+    color: var(--text-secondary);
+    text-align: center;
+    letter-spacing: 0.3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
   #status { margin-top: 10px; }
 
@@ -386,7 +425,7 @@
     left: 10px;
     right: 10px;
     bottom: 10px;
-    z-index: 50;
+    z-index: var(--z-layer1);
     pointer-events: none;
     display: flex;
     flex-direction: column;
@@ -506,7 +545,7 @@
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.65);
-    z-index: 100;
+    z-index: var(--z-layer2);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -758,6 +797,29 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .spinner.hidden { display: none; }
 
+  /* ── Busy overlay spinner ─────────────────────────────── */
+  /* Covers the entire iframe viewport during any runServer call.
+     Shown/hidden by showSpinner() / hideSpinner() in 01-helpers.ts.
+     position:fixed is relative to the iframe — correct for both
+     the sidebar and the dialog-wrapper iframe contexts. */
+  #spinner-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(18, 18, 18, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: var(--z-layer3);
+  }
+  .spinner-overlay-ring {
+    width: 36px;
+    height: 36px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.65s linear infinite;
+  }
+
   /* ── Log Toolbar ──────────────────────────────────────── */
   .log-toolbar {
     display: flex;
@@ -784,7 +846,7 @@
     transition: background 0.15s;
     flex-shrink: 0;
   }
-  .icon-btn:hover { background: #333355; }
+  .icon-btn:hover { background: var(--surface-hover); }
   .icon-btn.active { background: var(--accent); color: #121212; }
   .icon-btn:focus-visible {
     outline: 2px solid var(--accent);
@@ -838,7 +900,101 @@
     min-height: 22px;
   }
   /* error #EF9A9A on #3B1B1B → ~7.9:1 ✓ */
-  .log-footer.error   { color: #EF9A9A; background: #3B1B1B; }
+  .log-footer.error   { color: var(--error-fg); background: var(--error-bg); }
   /* success #81C784 on #1B3B2A → ~8:1 ✓ */
-  .log-footer.success { color: #81C784; background: #1B3B2A; }
+  .log-footer.success { color: var(--info-fg);  background: var(--info-bg); }
+
+  /* ── Utility ─────────────────────────────────────────── */
+  .is-hidden { display: none !important; }
+
+  /* Small variant — tab-nav and compact action buttons */
+  .btn-sm { font-size: 11px; padding: 4px 8px; }
+
+  /* Ghost — transparent bg with border; used for secondary destructive / subtle actions */
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+  }
+  .btn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text-primary); }
+
+  /* ── TTS directive row icon buttons ──────────────────── */
+  .tts-icon-btn {
+    flex-shrink: 0;
+    width: 22px; height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .tts-icon-btn--accent { background: none;                   color: var(--accent); }
+  .tts-icon-btn--muted  { background: none;                   color: var(--text-secondary); }
+  .tts-icon-btn--play   { background: var(--accent-muted);    color: var(--accent); }
+
+  /* ── Layout utilities ────────────────────────────────────
+     Pure flexbox primitives that absorb the inline-style
+     repetition across panels and overlays.  Any element that
+     was previously written as
+        style="display:flex; align-items:center; gap:Npx;"
+     or
+        style="display:flex; gap:Npx; justify-content:flex-end;"
+     should use one of these instead so dark-mode / future
+     theming changes can stay in CSS rather than touching
+     every site.  Standard gap scale: 4 / 6 / 8 / 10 / 16 px. */
+  .row              { display: flex; align-items: center; }
+  .row--top         { align-items: flex-start; }
+  .row--baseline    { align-items: baseline; }
+  .row--bottom      { align-items: flex-end; }
+  .row--between     { justify-content: space-between; }
+  .row--end         { justify-content: flex-end; }
+  .row--wrap        { flex-wrap: wrap; }
+  .row--gap-xs      { gap: 4px; }
+  .row--gap-sm      { gap: 6px; }
+  .row--gap-md      { gap: 8px; }
+  .row--gap-lg      { gap: 10px; }
+  .row--gap-xl      { gap: 16px; }
+  .row--mb-sm       { margin-bottom: 6px; }
+  .row--mb-md       { margin-bottom: 10px; }
+
+  .col              { display: flex; flex-direction: column; }
+  .col--fluid       { flex: 1; min-width: 0; }     /* the most repeated 2-line pattern */
+  .col--shrink      { flex-shrink: 0; }
+
+  /* Standard footer for overlay panels:
+       <div class="overlay-actions">
+         <button class="btn-secondary btn-sm">Cancel</button>
+         <button class="btn-primary   btn-sm">Save</button>
+       </div>                                                                        */
+  .overlay-actions  { display: flex; gap: 6px; margin-top: 12px; justify-content: flex-end; }
+
+  /* Header strip used at the top of every TTS / Publisher / etc. panel section
+     — title on the left, action buttons on the right.                             */
+  .panel-header-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+
+  /* ── Publisher audio file list rows ──────────────────── */
+  .publisher-audio-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 4px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+  }
+  .publisher-audio-row:last-child { border-bottom: none; }
+  .publisher-audio-row--selected  { background: rgba(138, 180, 248, 0.12); }
+  .publisher-audio-num {
+    width: 20px;
+    text-align: right;
+    color: var(--text-secondary);
+  }
+  .publisher-audio-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+  }
 </style>

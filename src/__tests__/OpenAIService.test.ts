@@ -1,15 +1,4 @@
-const fs = require('fs');
-const path = require('path');
-
-function loadCompiledGlobal(varName: string, fileName: string): void {
-  const src = fs.readFileSync(
-    path.join(__dirname, '..', '..', 'dist', fileName),
-    'utf8'
-  );
-  const patched = src.replace(new RegExp('^const ' + varName + '\\b', 'm'), varName);
-  const fn = new Function(patched);
-  fn();
-}
+import { loadCompiledGlobal, mockUrlFetch } from './helpers/gasVmContext';
 
 function loadOpenAiService(): void {
   loadCompiledGlobal('Constants', 'Constants.js');
@@ -44,20 +33,16 @@ function resetProps(
   return { userGet, userSet, scriptGet };
 }
 
-function mockFetchResponse(body: object, code = 200) {
-  const fetch = jest.fn().mockReturnValue({
-    getResponseCode: jest.fn().mockReturnValue(code),
-    getContentText: jest.fn().mockReturnValue(JSON.stringify(body)),
-  });
-  (global as any).UrlFetchApp = { fetch };
-  return fetch;
-}
-
 describe('OpenAIService', () => {
   beforeEach(() => {
     resetProps(null);
     (global as any).Tracer = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
     (global as any).Utilities = { sleep: jest.fn() };
+    if ((global as any).CacheService && (global as any).CacheService._createMockCache) {
+      const freshCache = (global as any).CacheService._createMockCache();
+      (global as any).CacheService.getUserCache.mockReturnValue(freshCache);
+      (global as any).CacheService._mockUserCache = freshCache;
+    }
     loadOpenAiService();
   });
 
@@ -101,9 +86,11 @@ describe('OpenAIService', () => {
   describe('generate', () => {
     it('sends developer and user messages for plain text calls', () => {
       resetProps('sk-openai', 'gpt-fast-x', 'gpt-think-y');
-      const fetch = mockFetchResponse({
-        choices: [{ message: { content: 'Plain response' } }],
-        usage: { total_tokens: 42 },
+      const fetch = mockUrlFetch({
+        body: {
+          choices: [{ message: { content: 'Plain response' } }],
+          usage: { total_tokens: 42 },
+        },
       });
       loadOpenAiService();
 
@@ -129,9 +116,11 @@ describe('OpenAIService', () => {
 
     it('parses structured output when a schema is provided', () => {
       resetProps('sk-openai', 'gpt-fast-x', 'gpt-think-y');
-      mockFetchResponse({
-        choices: [{ message: { content: '{"score":4}' } }],
-        usage: { total_tokens: 15 },
+      const fetch = mockUrlFetch({
+        body: {
+          choices: [{ message: { content: '{"score":4}' } }],
+          usage: { total_tokens: 15 },
+        },
       });
       loadOpenAiService();
 
@@ -143,6 +132,155 @@ describe('OpenAIService', () => {
       );
 
       expect(result).toEqual({ score: 4 });
+      const [, opts] = fetch.mock.calls[0];
+      const payload = JSON.parse(opts.payload);
+      expect(payload.response_format).toEqual({
+        type: 'json_schema',
+        json_schema: {
+          name: 'editorllm_output',
+          strict: true,
+          schema: {
+            type: 'object',
+            properties: {
+              score: { type: 'number' },
+            },
+            required: ['score'],
+            additionalProperties: false,
+          },
+        },
+      });
+    });
+
+    it('adds additionalProperties false to nested object schemas', () => {
+      resetProps('sk-openai', 'gpt-fast-x', 'gpt-think-y');
+      const fetch = mockUrlFetch({
+        body: {
+          choices: [{ message: { content: '{"items":[{"name":"Hook"}]}' } }],
+          usage: { total_tokens: 15 },
+        },
+      });
+      loadOpenAiService();
+
+      const result = (global as any).OpenAIService.generate(
+        'System prompt',
+        'User prompt',
+        'thinking',
+        {
+          schema: {
+            type: 'object',
+            properties: {
+              items: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string' },
+                  },
+                  required: ['name'],
+                },
+              },
+            },
+            required: ['items'],
+          },
+        }
+      );
+
+      expect(result).toEqual({ items: [{ name: 'Hook' }] });
+      const [, opts] = fetch.mock.calls[0];
+      const payload = JSON.parse(opts.payload);
+      expect(payload.response_format.json_schema.schema).toEqual({
+        type: 'object',
+        properties: {
+          items: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+              },
+              required: ['name'],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ['items'],
+        additionalProperties: false,
+      });
+    });
+
+    it('marks all object properties as required in strict mode', () => {
+      resetProps('sk-openai', 'gpt-fast-x', 'gpt-think-y');
+      const fetch = mockUrlFetch({
+        body: {
+          choices: [{ message: { content: '{"title":"Doc","subtitle":null}' } }],
+          usage: { total_tokens: 15 },
+        },
+      });
+      loadOpenAiService();
+
+      const result = (global as any).OpenAIService.generate(
+        'System prompt',
+        'User prompt',
+        'thinking',
+        {
+          schema: {
+            type: 'object',
+            properties: {
+              title: { type: 'string' },
+              subtitle: { type: ['string', 'null'] },
+            },
+          },
+        }
+      );
+
+      expect(result).toEqual({ title: 'Doc', subtitle: null });
+      const [, opts] = fetch.mock.calls[0];
+      const payload = JSON.parse(opts.payload);
+      expect(payload.response_format.json_schema.schema).toEqual({
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          subtitle: { type: ['string', 'null'] },
+        },
+        required: ['title', 'subtitle'],
+        additionalProperties: false,
+      });
+    });
+  });
+
+  describe('listAvailableModels', () => {
+    it('returns sorted model ids from the OpenAI models endpoint', () => {
+      resetProps('sk-openai');
+      const fetch = mockUrlFetch({
+        body: {
+          data: [
+            { id: 'gpt-5.4-mini' },
+            { id: 'gpt-5.4' },
+            { id: 'o3' },
+          ],
+        },
+      });
+      loadOpenAiService();
+
+      const models = (global as any).OpenAIService.listAvailableModels(true);
+
+      expect(models).toEqual(['gpt-5.4', 'gpt-5.4-mini', 'o3']);
+      const [url, opts] = fetch.mock.calls[0];
+      expect(url).toBe('https://api.openai.com/v1/models');
+      expect(opts.method).toBe('get');
+      expect(opts.headers.Authorization).toBe('Bearer sk-openai');
+    });
+
+    it('uses cache on repeated non-force calls', () => {
+      resetProps('sk-openai');
+      const fetch = mockUrlFetch({
+        body: { data: [{ id: 'gpt-5.4' }] },
+      });
+      loadOpenAiService();
+
+      expect((global as any).OpenAIService.listAvailableModels(false)).toEqual(['gpt-5.4']);
+      expect((global as any).OpenAIService.listAvailableModels(false)).toEqual(['gpt-5.4']);
+      expect(fetch).toHaveBeenCalledTimes(1);
     });
   });
 });

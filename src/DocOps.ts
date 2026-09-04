@@ -108,13 +108,14 @@ const DocOps = (() => {
    * fast path only and fall back to a fresh fetchTabRegistry_() when the reply
    * is absent. The tab is always created successfully by the time we fall back.
    */
-  function createTabViaApi_(title: string, parentTabId?: string): string {
+  function createTabViaApi_(title: string, parentTabId?: string, index?: number): string {
     const docId = getDoc_().getId();
     Tracer.info(`[DocOps] createTabViaApi_: creating "${title}"${parentTabId ? ` under parent ${parentTabId}` : ' (root)'}`);
     const t0 = Date.now();
 
-    const tabProperties: { title: string; parentTabId?: string } = { title };
+    const tabProperties: { title: string; parentTabId?: string; index?: number } = { title };
     if (parentTabId) tabProperties.parentTabId = parentTabId;
+    if (typeof index === 'number') tabProperties.index = index;
 
     const request = {
       addDocumentTab: { tabProperties },
@@ -190,13 +191,13 @@ const DocOps = (() => {
       [`${Constants.TAB_NAMES.TETHER_INSTRUCTIONS} Scratch`, Constants.TAB_NAMES.AGENTIC_SCRATCH],
       [`${Constants.TAB_NAMES.GENERAL_PURPOSE_INSTRUCTIONS} Scratch`, Constants.TAB_NAMES.AGENTIC_SCRATCH],
       [`${Constants.TAB_NAMES.PUBLISHER_INSTRUCTIONS} Scratch`, Constants.TAB_NAMES.AGENTIC_SCRATCH],
-      [Constants.TAB_NAMES.PUBLISHER_TITLE, Constants.TAB_NAMES.PUBLISHER_ROOT],
       [Constants.TAB_NAMES.PUBLISHER_COPYRIGHT, Constants.TAB_NAMES.PUBLISHER_ROOT],
-      [Constants.TAB_NAMES.PUBLISHER_TOC, Constants.TAB_NAMES.PUBLISHER_ROOT],
       [Constants.TAB_NAMES.PUBLISHER_ABOUT_AUTHOR, Constants.TAB_NAMES.PUBLISHER_ROOT],
       [Constants.TAB_NAMES.PUBLISHER_SALES, Constants.TAB_NAMES.PUBLISHER_ROOT],
       [Constants.TAB_NAMES.PUBLISHER_HOOKS, Constants.TAB_NAMES.PUBLISHER_ROOT],
       [Constants.TAB_NAMES.PUBLISHER_COVER, Constants.TAB_NAMES.PUBLISHER_ROOT],
+      [Constants.TAB_NAMES.PUBLISHER_OPENING_CREDITS, Constants.TAB_NAMES.PUBLISHER_ROOT],
+      [Constants.TAB_NAMES.PUBLISHER_CLOSING_CREDITS, Constants.TAB_NAMES.PUBLISHER_ROOT],
     ];
 
     // Filter to only missing tabs
@@ -281,7 +282,8 @@ const DocOps = (() => {
    */
   function getOrCreateTab(
     name: string,
-    parentTabName?: string
+    parentTabName?: string,
+    opts?: { index?: number }
   ): GoogleAppsScript.Document.DocumentTab {
     // Fast path: DocumentApp cache (frozen at script start)
     const existing = getTabByName(name);
@@ -340,7 +342,8 @@ const DocOps = (() => {
       }
     }
 
-    const newTabId = createTabViaApi_(name, parentTabId);
+    const targetIndex = parentTabId ? undefined : opts?.index;
+    const newTabId = createTabViaApi_(name, parentTabId, targetIndex);
 
     // Document.getTab(id) targets a specific ID and may succeed even when
     // getTabs() (which uses the start-of-execution snapshot) would not.
@@ -362,6 +365,17 @@ const DocOps = (() => {
       `Tab "${name}" was created (id: ${newTabId}) but could not be accessed via DocumentApp. ` +
       `Ensure the Docs advanced service is enabled and re-authorize the add-on if prompted.`
     );
+  }
+
+  /**
+   * Returns an existing root-level tab by name, or creates it at the requested
+   * root index. Used for tabs that must stay visually prominent in the UI.
+   */
+  function getOrCreateRootTabAtIndex(
+    name: string,
+    index: number
+  ): GoogleAppsScript.Document.DocumentTab {
+    return getOrCreateTab(name, undefined, { index });
   }
 
   // ── Public: createScratchTab ───────────────────────────────────────────────
@@ -508,6 +522,7 @@ const DocOps = (() => {
     getTabByName,
     getTabIdByName,
     getOrCreateTab,
+    getOrCreateRootTabAtIndex,
     createScratchTab,
     overwriteTabContent,
     getTabContent,

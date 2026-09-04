@@ -5,12 +5,8 @@
 
 const DirectivePersistence = (() => {
 
-  function getDocumentProperties_(): GoogleAppsScript.Properties.Properties {
-    return PropertiesService.getDocumentProperties();
-  }
-
   function getStoredDirectiveRecord_(directiveId: string): StoredDirectiveRecord | null {
-    const raw = getDocumentProperties_().getProperty(makeDirectivePropertyKey_(directiveId));
+    const raw = DocPropsCache.read(makeDirectivePropertyKey_(directiveId));
     if (!raw) return null;
     try {
       const parsed = JSON.parse(raw) as StoredDirectiveRecord;
@@ -22,14 +18,11 @@ const DirectivePersistence = (() => {
   }
 
   function saveStoredDirectiveRecord_(directiveId: string, record: StoredDirectiveRecord): void {
-    getDocumentProperties_().setProperty(
-      makeDirectivePropertyKey_(directiveId),
-      JSON.stringify(record)
-    );
+    DocPropsCache.write(makeDirectivePropertyKey_(directiveId), JSON.stringify(record));
   }
 
   function deleteStoredDirectiveRecord_(directiveId: string): void {
-    getDocumentProperties_().deleteProperty(makeDirectivePropertyKey_(directiveId));
+    DocPropsCache.remove(makeDirectivePropertyKey_(directiveId));
   }
 
   function readDirectiveMatchText_(nr: GoogleAppsScript.Document.NamedRange): string {
@@ -228,9 +221,12 @@ const DirectivePersistence = (() => {
       }
     });
 
-    if (bm) bm.remove();
-    deleteStoredDirectiveRecord_(dec.directiveId);
+    // Remove named range first — it is the primary handle.  DocProps second.
+    // Bookmark last and best-effort: its loss is recoverable, but a ghost
+    // named range means the directive keeps appearing in the table forever.
     nr.remove();
+    deleteStoredDirectiveRecord_(dec.directiveId);
+    if (bm) try { bm.remove(); } catch (_) { /* best-effort */ }
     return true;
   }
 
@@ -263,6 +259,27 @@ const DirectivePersistence = (() => {
       }
 
       const rangeOffsets = getAbsoluteOffsetsForNamedRange_(nr, textOffsets);
+
+      // Lazy orphan cleanup: if the range cannot be located, check whether
+      // the underlying text was deleted (getRange() null or elements empty).
+      // If so, remove the ghost NR + DocProps + bookmark now rather than
+      // letting it accumulate and appear in the directive table.
+      if (!rangeOffsets) {
+        const liveRange = nr.getRange();
+        const isOrphaned = !liveRange || liveRange.getRangeElements().length === 0;
+        if (isOrphaned) {
+          Tracer.warn(`listDirectivesOnTab: orphaned directive ${dec.directiveId} — cleaning up`);
+          nr.remove();
+          deleteStoredDirectiveRecord_(dec.directiveId);
+          const bm = bookmarkMap.get(dec.bookmarkId);
+          if (bm) try { bm.remove(); } catch (_) { /* best-effort */ }
+          continue;
+        }
+        // Range exists but outside the body text index (e.g. table cell, header).
+        // Keep the directive; it will have _insertPos: -1 and be filtered from
+        // audio generation by locateDirectivePositions_.
+      }
+
       const bookmark = bookmarkMap.get(dec.bookmarkId) || null;
       let insertPos = rangeOffsets ? rangeOffsets.start : -1;
       if (bookmark) {

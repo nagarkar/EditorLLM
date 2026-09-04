@@ -163,95 +163,122 @@ const GeminiService = (() => {
   }
 
   /**
-   * Returns true for error codes/messages that are worth retrying:
-   *   429 — rate limited (quota exceeded or too many requests)
-   *   503 — service unavailable / overloaded
+   * Returns true when the HTTP code or error message indicates a transient
+   * condition worth retrying, AND the error is NOT a hard quota exhaustion
+   * (which retrying cannot help — fail fast in that case).
+   *
+   *   429 / 503                 → retryable
+   *   message contains:
+   *     "quota" / "rate" / "overloaded" → retryable
+   *   message contains:
+   *     "RESOURCE_EXHAUSTED" with "daily" or "PerDay" → NOT retryable (hard cap)
    */
-  function isRetryableError_(httpCode: number, msg: string): boolean {
+  function isGeminiRetryable_(httpCode: number, msg: string): boolean {
+    if (/RESOURCE_EXHAUSTED.*(daily|PerDay)/i.test(msg)) return false; // hard quota
     if (httpCode === 429 || httpCode === 503) return true;
     if (msg.includes('quota') || msg.includes('rate') || msg.includes('overloaded')) return true;
     return false;
   }
 
   /**
-   * Calls the Gemini generateContent endpoint.
-   * Retries up to MAX_RETRIES times with exponential back-off when the API
-   * returns a rate-limit (429) or overload (503) error, which can occur when
-   * two consecutive thinking-tier calls are made in rapid succession.
-   */
-  /**
    * Calls the Gemini generateContent endpoint with retry / back-off.
    *
-   * When `parseJson` is true the text part is parsed with `JSON.parse` and the
-   * resulting object is returned; when false the raw text string is returned.
-   * Both code paths were previously separate functions (callApi_ / callTextApi_)
-   * with identical retry logic.
+   * Backoff is delegated to `HttpRetry.fetchWithRetry`, which:
+   *   - sleeps `baseMs * 2^attempt` between attempts (exponential)
+   *   - honours any `Retry-After` response header in preference to the
+   *     computed delay (capped at HttpRetry.RETRY_AFTER_MAX_MS)
+   *   - logs a uniform `[GeminiService] retryable HTTP …` Tracer.warn line
+   *
+   * Base delay is sized to the request payload bytes via
+   * `HttpRetry.computeBaseMs` — bigger payloads warrant longer waits because
+   * they consume more of Gemini's per-minute token quota and a 429 means
+   * the per-minute window must roll over before the next call succeeds.
+   *
+   * When `parseJson` is true the text part is parsed with `JSON.parse` and
+   * the resulting object is returned; when false the raw text string is
+   * returned.
    */
+
   function callApi_(apiKey: string, model: string, payload: object, parseJson: boolean): any {
-    const MAX_RETRIES = 2;
-    // Back-off delays in ms: first retry after 15 s, second after 30 s.
-    const RETRY_DELAYS = [15000, 30000];
+    const url        = `${API_BASE}/${model}:generateContent`;
+    const payloadStr = JSON.stringify(payload);
+    const fetchOpts  = buildFetchOptions_(apiKey, {
+      method:       'post',
+      contentType:  'application/json',
+      payload:      payloadStr,
+    });
+    const baseMs = httpComputeBaseMs(payloadStr.length);
+    Tracer.info(
+      `[GeminiService] callApi_ model=${model} payload=${payloadStr.length}B retry-base=${baseMs}ms`
+    );
 
-    // API key travels in the x-goog-api-key header — NOT in the URL.
-    const url = `${API_BASE}/${model}:generateContent`;
+    const response = httpFetchWithRetry(url, fetchOpts, {
+      maxRetries:  3,
+      baseMs,
+      label:       'GeminiService',
+      shouldRetry: (resp, _attempt) => {
+        const code = resp.getResponseCode();
+        // Cheap path — if the body parses to an `error` block, peek for retryability.
+        let msg = '';
+        try {
+          const parsed = JSON.parse(resp.getContentText());
+          if (parsed && parsed.error) msg = String(parsed.error.message ?? '');
+        } catch (_) { /* unparseable body → fall through to status-only check */ }
+        return isGeminiRetryable_(code, msg);
+      },
+    });
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      const response = UrlFetchApp.fetch(url, buildFetchOptions_(apiKey, {
-        method: 'post',
-        contentType: 'application/json',
-        payload: JSON.stringify(payload),
-      }));
+    const raw = response.getContentText();
+    const result = JSON.parse(raw);
 
-      const httpCode = response.getResponseCode();
-      const raw = response.getContentText();
-      const result = JSON.parse(raw);
+    if (result.error) {
+      const msg: string = result.error.message ?? '';
 
-      if (result.error) {
-        const msg: string = result.error.message ?? '';
-
-        if (attempt < MAX_RETRIES && isRetryableError_(httpCode, msg)) {
-          const delay = RETRY_DELAYS[attempt];
-          Tracer.warn(
-            `[GeminiService] callApi_: HTTP ${httpCode} — "${msg}" — ` +
-            `retrying in ${delay / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES})`
-          );
-          Utilities.sleep(delay);
-          continue;
+      // Enrich model-not-found errors with the live list of available models
+      if (msg.includes('is not found') || msg.includes('not supported for generateContent')) {
+        let modelList = '';
+        try {
+          const available = listGenerateContentModels();
+          modelList = '\n\nAvailable models that support generateContent:\n  ' +
+            available.join('\n  ');
+        } catch (_) {
+          modelList = '\n\n(Could not fetch available models — check your API key.)';
         }
-
-        // Enrich model-not-found errors with the live list of available models
-        if (msg.includes('is not found') || msg.includes('not supported for generateContent')) {
-          let modelList = '';
-          try {
-            const available = listGenerateContentModels();
-            modelList = '\n\nAvailable models that support generateContent:\n  ' +
-              available.join('\n  ');
-          } catch (_) {
-            modelList = '\n\n(Could not fetch available models — check your API key.)';
-          }
-          throw new Error(
-            `Model "${model}" is not available or has been deprecated.${modelList}` +
-            `\n\nUpdate your model configuration in the ${Constants.EXTENSION_NAME} sidebar → Setup → Configure Models.`
-          );
-        }
-        throw new Error(`Gemini API error: ${msg}`);
+        throw new Error(
+          `Model "${model}" is not available or has been deprecated.${modelList}` +
+          `\n\nUpdate your model configuration in the ${Constants.EXTENSION_NAME} sidebar → Setup → Configure Models.`
+        );
       }
-
-      // Skip thought parts; find the first text part that is not a thinking trace
-      const parts: any[] = result.candidates?.[0]?.content?.parts ?? [];
-      const textPart = parts.find((p: any) => !p.thought && p.text);
-      if (!textPart) {
-        throw new Error('Gemini returned no usable content. Full response: ' + raw);
-      }
-
-      const est = estimateGeminiTokens_(result, raw, payload);
-      Tracer.info(`GEMINI MODEL USED: ${model} | ~${est} tokens (est.)`);
-
-      return parseJson ? JSON.parse(textPart.text) : (textPart.text as string);
+      throw new Error(`Gemini API error: ${msg}`);
     }
 
-    // Should never reach here — the loop always returns or throws.
-    throw new Error('[GeminiService] callApi_: exhausted retries without resolving');
+    // Skip thought parts; find the first text part that is not a thinking trace
+    const parts: any[] = result.candidates?.[0]?.content?.parts ?? [];
+    const textPart = parts.find((p: any) => !p.thought && p.text);
+    if (!textPart) {
+      throw new Error('Gemini returned no usable content. Full response: ' + raw);
+    }
+
+    const est = estimateGeminiTokens_(result, raw, payload);
+    const finishReason: string = result.candidates?.[0]?.finishReason ?? 'unknown';
+    Tracer.info(`GEMINI MODEL USED: ${model} | ~${est} tokens (est.) | finishReason=${finishReason}`);
+    if (finishReason === 'MAX_TOKENS') {
+      Tracer.warn(`[GeminiService] response truncated — output token limit reached (MAX_TOKENS)`);
+    }
+
+    if (!parseJson) return textPart.text as string;
+
+    try {
+      return JSON.parse(textPart.text);
+    } catch (parseErr) {
+      if (finishReason === 'MAX_TOKENS') {
+        throw new Error(
+          `[GeminiService] JSON response truncated — model hit output token limit (finishReason=MAX_TOKENS). ` +
+          `Reduce the passage size or switch to a model with a higher output token limit.`
+        );
+      }
+      throw parseErr;
+    }
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -275,6 +302,80 @@ const GeminiService = (() => {
     const model   = opts.modelOverride || resolveModel_(tier);
     const payload = buildPayload_(systemPrompt, userPrompt, tier, model, opts.schema);
     return callApi_(apiKey, model, payload, /* parseJson */ !!opts.schema);
+  }
+
+  // ── Public: image generation (Nano Banana Pro) ─────────────────────────────
+
+  /**
+   * Calls a Gemini image-capable model (Nano Banana Pro family) and returns
+   * the first generated image as a Blob.
+   *
+   * Either `prompt` or `sourceBlob` (or both) must be supplied.  The request
+   * shape mirrors the working Apps Script reference: the source image is sent
+   * as `inline_data` (snake_case — REST tolerates both casings on input).
+   * Returned blobs honour the model's reported MIME type, defaulting to PNG.
+   */
+  function generateImage(
+    prompt: string,
+    sourceBlob: GoogleAppsScript.Base.Blob | null,
+    opts: { modelOverride?: string; aspectRatio?: string; imageSize?: string } = {}
+  ): GoogleAppsScript.Base.Blob {
+    const apiKey = getApiKey_();
+    const model = opts.modelOverride
+      || PropertiesService.getUserProperties().getProperty('GEMINI_IMAGE_MODEL')
+      || PropertiesService.getScriptProperties().getProperty('GEMINI_IMAGE_MODEL')
+      || 'gemini-3-pro-image-preview';
+    const aspectRatio = opts.aspectRatio || '1:1';
+    const imageSize = opts.imageSize || '1K';
+
+    const parts: any[] = [];
+    if (prompt && prompt.trim()) parts.push({ text: prompt });
+    if (sourceBlob) {
+      parts.push({
+        inline_data: {
+          mime_type: sourceBlob.getContentType() || 'image/png',
+          data: Utilities.base64Encode(sourceBlob.getBytes()),
+        },
+      });
+    }
+    if (!parts.length) {
+      throw new Error('generateImage: must supply at least a prompt or a source image.');
+    }
+
+    const payload: any = {
+      contents: [{ role: 'user', parts }],
+      generationConfig: {
+        responseModalities: ['TEXT', 'IMAGE'],
+        imageConfig: { aspectRatio, imageSize },
+      },
+    };
+
+    const url = `${API_BASE}/${model}:generateContent`;
+    const response = UrlFetchApp.fetch(url, buildFetchOptions_(apiKey, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(payload),
+    }));
+
+    const httpCode = response.getResponseCode();
+    const raw = response.getContentText();
+    if (httpCode !== 200) {
+      throw new Error(`Gemini image API HTTP ${httpCode}: ${raw.substring(0, 500)}`);
+    }
+    const data = JSON.parse(raw);
+    if (data.error) {
+      throw new Error(`Gemini image API error: ${data.error.message || raw.substring(0, 500)}`);
+    }
+
+    const respParts: any[] = data?.candidates?.[0]?.content?.parts ?? [];
+    for (const p of respParts) {
+      const inline = p?.inlineData || p?.inline_data;
+      if (inline?.data) {
+        const mime = inline.mimeType || inline.mime_type || 'image/png';
+        return Utilities.newBlob(Utilities.base64Decode(inline.data), mime);
+      }
+    }
+    throw new Error('Gemini image API returned no image: ' + raw.substring(0, 300));
   }
 
   // ── Public: model management ───────────────────────────────────────────────
@@ -375,9 +476,11 @@ const GeminiService = (() => {
 
   return {
     generate,
+    generateImage,
     saveApiKey,
     hasApiKey,
     hasUserApiKey,
+    listAvailableModels: listGenerateContentModels,
     listGenerateContentModels,
     saveModelConfig,
     getModelConfig,

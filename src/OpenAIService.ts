@@ -5,6 +5,8 @@
 const OpenAIService = (() => {
   const API_BASE = 'https://api.openai.com/v1';
   const PROP_KEY_API = 'OPENAI_API_KEY';
+  const MODELS_CACHE_KEY_ = 'openai_available_models_v1';
+  const MODELS_CACHE_TTL_ = 3600; // 1 hour
 
   let cachedApiKey_: string | null | undefined = undefined;
   let cachedModels_: Partial<Record<ModelTier, string>> = {};
@@ -80,6 +82,38 @@ const OpenAIService = (() => {
     };
   }
 
+  function listAvailableModels(force = false): string[] {
+    const apiKey = resolveApiKey_();
+    if (!apiKey) throw new Error('API key not set. Cannot list models.');
+
+    if (!force) {
+      try {
+        const cached = CacheService.getUserCache().get(MODELS_CACHE_KEY_);
+        if (cached) return JSON.parse(cached) as string[];
+      } catch (_) { /* treat as cache miss */ }
+    }
+
+    const response = UrlFetchApp.fetch(
+      `${API_BASE}/models`,
+      buildFetchOptions_(apiKey, { method: 'get' })
+    );
+    const result = JSON.parse(response.getContentText());
+    if (result.error) {
+      throw new Error(`ListModels error: ${result.error.message}`);
+    }
+
+    const models = ((result.data ?? []) as any[])
+      .map((item: any) => String(item?.id || '').trim())
+      .filter((id: string) => !!id)
+      .sort((a: string, b: string) => a.localeCompare(b));
+
+    try {
+      CacheService.getUserCache().put(MODELS_CACHE_KEY_, JSON.stringify(models), MODELS_CACHE_TTL_);
+    } catch (_) { /* non-fatal */ }
+
+    return models;
+  }
+
   function buildPayload_(
     systemPrompt: string,
     userPrompt: string,
@@ -99,11 +133,46 @@ const OpenAIService = (() => {
         json_schema: {
           name: 'editorllm_output',
           strict: true,
-          schema,
+          schema: normalizeSchemaForStructuredOutputs_(schema),
         },
       };
     }
     return payload;
+  }
+
+  /**
+   * OpenAI structured outputs require every object schema to declare
+   * `additionalProperties: false`. Normalise the caller-provided schema here
+   * so existing Gemini-oriented schema helpers remain usable.
+   */
+  function normalizeSchemaForStructuredOutputs_(schema: any): any {
+    if (Array.isArray(schema)) {
+      return schema.map(normalizeSchemaForStructuredOutputs_);
+    }
+    if (!schema || typeof schema !== 'object') {
+      return schema;
+    }
+
+    const normalized: any = {};
+    for (const [key, value] of Object.entries(schema)) {
+      if (key === 'properties' && value && typeof value === 'object' && !Array.isArray(value)) {
+        const normalizedProps: any = {};
+        for (const [propName, propSchema] of Object.entries(value)) {
+          normalizedProps[propName] = normalizeSchemaForStructuredOutputs_(propSchema);
+        }
+        normalized.properties = normalizedProps;
+        continue;
+      }
+      normalized[key] = normalizeSchemaForStructuredOutputs_(value);
+    }
+
+    if (normalized.type === 'object') {
+      normalized.additionalProperties = false;
+      if (normalized.properties && typeof normalized.properties === 'object' && !Array.isArray(normalized.properties)) {
+        normalized.required = Object.keys(normalized.properties);
+      }
+    }
+    return normalized;
   }
 
   function estimateTokens_(result: any, raw: string, payload: object): number {
@@ -130,50 +199,55 @@ const OpenAIService = (() => {
   }
 
   function callApi_(apiKey: string, model: string, payload: object, parseJson: boolean): any {
-    const MAX_RETRIES = 2;
-    const RETRY_DELAYS = [15000, 30000];
-    const url = `${API_BASE}/chat/completions`;
+    const url        = `${API_BASE}/chat/completions`;
+    const payloadStr = JSON.stringify(payload);
+    const fetchOpts  = buildFetchOptions_(apiKey, {
+      method:       'post',
+      contentType:  'application/json',
+      payload:      payloadStr,
+    });
+    const baseMs = httpComputeBaseMs(payloadStr.length);
+    Tracer.info(
+      `[OpenAIService] callApi_ model=${model} payload=${payloadStr.length}B retry-base=${baseMs}ms`
+    );
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      const response = UrlFetchApp.fetch(url, buildFetchOptions_(apiKey, {
-        method: 'post',
-        contentType: 'application/json',
-        payload: JSON.stringify(payload),
-      }));
+    const response = httpFetchWithRetry(url, fetchOpts, {
+      maxRetries:  3,
+      baseMs,
+      label:       'OpenAIService',
+      shouldRetry: (resp, _attempt) => {
+        const code = resp.getResponseCode();
+        let msg = '';
+        try {
+          const parsed = JSON.parse(resp.getContentText());
+          if (parsed && parsed.error) msg = String(parsed.error.message ?? '');
+        } catch (_) { /* unparseable body → fall through to status-only check */ }
+        // Hard-quota short-circuit (insufficient_quota = paid plan exhausted; do not retry)
+        if (/insufficient_quota/i.test(msg)) return false;
+        return isRetryableError_(code, msg);
+      },
+    });
 
-      const httpCode = response.getResponseCode();
-      const raw = response.getContentText();
-      const result = JSON.parse(raw);
+    const raw = response.getContentText();
+    const result = JSON.parse(raw);
 
-      if (result.error) {
-        const msg = String(result.error.message ?? '');
-        if (attempt < MAX_RETRIES && isRetryableError_(httpCode, msg)) {
-          const delay = RETRY_DELAYS[attempt];
-          Tracer.warn(
-            `[OpenAIService] callApi_: HTTP ${httpCode} — "${msg}" — retrying in ${delay / 1000}s ` +
-            `(attempt ${attempt + 1}/${MAX_RETRIES})`
-          );
-          Utilities.sleep(delay);
-          continue;
-        }
-        throw new Error(`OpenAI API error: ${msg}`);
-      }
-
-      const message = result?.choices?.[0]?.message;
-      if (message?.refusal) {
-        throw new Error(`OpenAI API refusal: ${message.refusal}`);
-      }
-
-      const text = extractText_(message);
-      if (!text) {
-        throw new Error('OpenAI returned no usable content. Full response: ' + raw);
-      }
-
-      Tracer.info(`OPENAI MODEL USED: ${model} | ~${estimateTokens_(result, raw, payload)} tokens (est.)`);
-      return parseJson ? JSON.parse(text) : text;
+    if (result.error) {
+      const msg = String(result.error.message ?? '');
+      throw new Error(`OpenAI API error: ${msg}`);
     }
 
-    throw new Error('[OpenAIService] callApi_: exhausted retries without resolving');
+    const message = result?.choices?.[0]?.message;
+    if (message?.refusal) {
+      throw new Error(`OpenAI API refusal: ${message.refusal}`);
+    }
+
+    const text = extractText_(message);
+    if (!text) {
+      throw new Error('OpenAI returned no usable content. Full response: ' + raw);
+    }
+
+    Tracer.info(`OPENAI MODEL USED: ${model} | ~${estimateTokens_(result, raw, payload)} tokens (est.)`);
+    return parseJson ? JSON.parse(text) : text;
   }
 
   function generate(
@@ -219,6 +293,7 @@ const OpenAIService = (() => {
 
   return {
     generate,
+    listAvailableModels,
     saveModelConfig,
     getModelConfig,
     saveApiKey,
@@ -226,4 +301,3 @@ const OpenAIService = (() => {
     hasUserApiKey,
   };
 })();
-

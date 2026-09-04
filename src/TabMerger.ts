@@ -99,19 +99,20 @@ const TabMerger = (() => {
    * Clears the Manuscript tab before starting a fresh merge run.
    */
   function clearDestination(): { ok: boolean; message?: string } {
-    const destDocTab = DocOps.getTabByName(Constants.TAB_NAMES.MANUSCRIPT);
-    if (!destDocTab) {
-      return { ok: false, message: `"${Constants.TAB_NAMES.MANUSCRIPT}" tab not found.` };
+    try {
+      const destDocTab = DocOps.getOrCreateRootTabAtIndex(Constants.TAB_NAMES.MANUSCRIPT, 0);
+      destDocTab.getBody().clear();
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, message: sanitizePlatformError_(e.message || String(e)) };
     }
-    destDocTab.getBody().clear();
-    return { ok: true };
   }
 
   /**
-   * Merges an array of tab names into Manuscript in one single execution context.
-   * This prevents DocumentApp from crashing the UI due to multiple rapid-fire syncs.
+   * Creates or overwrites the Manuscript tab with content from the given tabs in order.
+   * Runs in one single execution context to prevent DocumentApp rapid-fire sync crashes.
    */
-  function mergeAllTabs(tabNames: string[]): { ok: boolean; successes: number; errors: string[] } {
+  function createOrOverwriteManuscript(tabNames: string[]): { ok: boolean; successes: number; errors: string[] } {
     if (!Array.isArray(tabNames) || tabNames.length === 0) {
       return { ok: false, successes: 0, errors: ['No tabs provided.'] };
     }
@@ -144,8 +145,10 @@ const TabMerger = (() => {
    * The fallback can be removed once all documents have been migrated.
    */
   function getSavedTabNames(): string[] {
+    // DocPropsCache.read is cache-first; on miss it falls through to DocumentProperties.
+    // The getUserProperties fallback is kept for documents not yet migrated to DocProps storage.
     const raw =
-      PropertiesService.getDocumentProperties().getProperty(TABS_PROPERTY_KEY) ||
+      DocPropsCache.read(TABS_PROPERTY_KEY) ||
       PropertiesService.getUserProperties().getProperty(TABS_PROPERTY_KEY) ||
       '';
     return createStringArray(raw);
@@ -155,12 +158,9 @@ const TabMerger = (() => {
    * Persists a comma-separated list of tab names to document properties.
    */
   function saveTabNames(csv: string): { ok: boolean } {
-    PropertiesService.getDocumentProperties().setProperty(
-      TABS_PROPERTY_KEY,
-      (csv || '').trim()
-    );
+    DocPropsCache.write(TABS_PROPERTY_KEY, (csv || '').trim());
     return { ok: true };
   }
 
-  return { mergeOneTab, clearDestination, mergeAllTabs, getSavedTabNames, saveTabNames };
+  return { mergeOneTab, clearDestination, createOrOverwriteManuscript, getSavedTabNames, saveTabNames };
 })();

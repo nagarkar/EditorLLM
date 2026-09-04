@@ -123,7 +123,12 @@ ${EARTUNE_SYSTEM_PROMPT_BODY}
       { schema: this.annotationSchema_(), tier: Constants.MODEL.FAST }
     ) as { operations: Operation[] };
 
-    const validOps = this.validateAndFilterOperations_(geminiResult.operations, passage, agentName);
+    const groundedOps = this.validateAndFilterOperations_(geminiResult.operations, passage, agentName);
+    const validOps = validateEarTuneOps(groundedOps, passage) as Operation[];
+    Tracer.info(
+      `[${agentName}] annotateTab: ${validOps.length} EarTune ops kept after rewrite validation ` +
+      `(${groundedOps.length} grounded ops before EarTune-specific filtering)`
+    );
     const update: RootUpdate = {
       workflow_type: 'content_annotation',
       target_tab: tabName,

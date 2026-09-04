@@ -1,4 +1,20 @@
-import { extractMarkdownFromJsonWrapper, deduplicateTtsOps, stitchingIdsForVoice, recordRequestId } from '../agentHelpers';
+import {
+  extractMarkdownFromJsonWrapper,
+  deduplicateTtsOps,
+  buildEllipsisBreakDirectives,
+  firstLineForMatchText,
+  applyTtsOperationDefaults,
+  TTS_DEFAULT_STABILITY,
+  TTS_DEFAULT_SIMILARITY_BOOST,
+  H1_BREAK_MS,
+  H2_BREAK_MS,
+  H3_PLUS_BREAK_MS,
+  getHeadingDurationMsForLevel,
+  computeHeadingBreakBoundaries,
+  stitchingIdsForVoice,
+  recordRequestId,
+  validateEarTuneOps,
+} from '../agentHelpers';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -155,6 +171,290 @@ describe('deduplicateTtsOps', () => {
     expect(original).toEqual(inputCopy);
   });
 
+});
+
+// ── buildEllipsisBreakDirectives ─────────────────────────────────────────────
+
+describe('buildEllipsisBreakDirectives', () => {
+
+  it('always returns both ASCII "..." and Unicode "…" break directives unconditionally', () => {
+    const result = buildEllipsisBreakDirectives();
+    expect(result).toHaveLength(2);
+    expect(result.map(d => d.match_text).sort()).toEqual(['...', '…']);
+    for (const d of result) {
+      expect(d.type).toBe('break');
+      expect(d.payload).toEqual({ timeMs: 1000 });
+      expect(d.apply_to).toBe('every_occurrence');
+    }
+  });
+
+  it('does not depend on any passage input — passage scanning is delegated to CollaborationService', () => {
+    // Calling with no argument is valid; the function takes no parameters.
+    expect(buildEllipsisBreakDirectives()).toEqual(buildEllipsisBreakDirectives());
+  });
+
+});
+
+// ── firstLineForMatchText ────────────────────────────────────────────────────
+
+describe('firstLineForMatchText', () => {
+
+  it('returns single-line input unchanged', () => {
+    expect(firstLineForMatchText('Hello world')).toBe('Hello world');
+  });
+
+  it('returns the first non-empty line of multi-line input, trimmed', () => {
+    const input = 'Seven More Sermons To The Dead\n…\nEpilogue\n…';
+    expect(firstLineForMatchText(input)).toBe('Seven More Sermons To The Dead');
+  });
+
+  it('skips leading empty lines', () => {
+    expect(firstLineForMatchText('\n\n   \nFirst real line\nsecond')).toBe('First real line');
+  });
+
+  it('handles \\r\\n line endings', () => {
+    expect(firstLineForMatchText('Line one\r\nLine two')).toBe('Line one');
+  });
+
+  it('handles bare \\r line endings', () => {
+    expect(firstLineForMatchText('Line one\rLine two')).toBe('Line one');
+  });
+
+  it('returns empty string for empty input', () => {
+    expect(firstLineForMatchText('')).toBe('');
+  });
+
+  it('returns trimmed input when only whitespace and no line breaks', () => {
+    expect(firstLineForMatchText('   trimmed   ')).toBe('trimmed');
+  });
+
+  it('preserves internal whitespace within the line (findText regex tolerates spaces)', () => {
+    expect(firstLineForMatchText('Hello   double   spaces')).toBe('Hello   double   spaces');
+  });
+
+});
+
+// ── applyTtsOperationDefaults ────────────────────────────────────────────────
+
+describe('applyTtsOperationDefaults', () => {
+
+  function ttsOp(overrides: Partial<{ stability: number; similarity_boost: number }> = {}) {
+    return {
+      match_text: 'Hello',
+      tts_model: 'eleven_multilingual_v2',
+      voice_id: 'voice_x',
+      stability: 0.6,
+      similarity_boost: 0.75,
+      ...overrides,
+    };
+  }
+
+  it('passes through ops with valid non-zero values unchanged (returns same reference)', () => {
+    const op = ttsOp();
+    const result = applyTtsOperationDefaults(op);
+    expect(result.op).toBe(op);
+    expect(result.appliedStability).toBe(false);
+    expect(result.appliedSimilarityBoost).toBe(false);
+  });
+
+  it('replaces stability=0 with the project default', () => {
+    const result = applyTtsOperationDefaults(ttsOp({ stability: 0 }));
+    expect(result.op.stability).toBe(TTS_DEFAULT_STABILITY);
+    expect(result.appliedStability).toBe(true);
+    expect(result.appliedSimilarityBoost).toBe(false);
+  });
+
+  it('replaces similarity_boost=0 with the project default', () => {
+    const result = applyTtsOperationDefaults(ttsOp({ similarity_boost: 0 }));
+    expect(result.op.similarity_boost).toBe(TTS_DEFAULT_SIMILARITY_BOOST);
+    expect(result.appliedSimilarityBoost).toBe(true);
+    expect(result.appliedStability).toBe(false);
+  });
+
+  it('replaces both when both are 0', () => {
+    const result = applyTtsOperationDefaults(ttsOp({ stability: 0, similarity_boost: 0 }));
+    expect(result.op.stability).toBe(TTS_DEFAULT_STABILITY);
+    expect(result.op.similarity_boost).toBe(TTS_DEFAULT_SIMILARITY_BOOST);
+    expect(result.appliedStability).toBe(true);
+    expect(result.appliedSimilarityBoost).toBe(true);
+  });
+
+  it('replaces undefined / null / NaN values with defaults', () => {
+    const r1 = applyTtsOperationDefaults(ttsOp({ stability: undefined as any, similarity_boost: null as any }));
+    expect(r1.op.stability).toBe(TTS_DEFAULT_STABILITY);
+    expect(r1.op.similarity_boost).toBe(TTS_DEFAULT_SIMILARITY_BOOST);
+
+    const r2 = applyTtsOperationDefaults(ttsOp({ stability: NaN }));
+    expect(r2.op.stability).toBe(TTS_DEFAULT_STABILITY);
+  });
+
+  it('preserves small but non-zero positive values (does not treat them as "gave up")', () => {
+    const result = applyTtsOperationDefaults(ttsOp({ stability: 0.05, similarity_boost: 0.001 }));
+    expect(result.op.stability).toBe(0.05);
+    expect(result.op.similarity_boost).toBe(0.001);
+    expect(result.appliedStability).toBe(false);
+    expect(result.appliedSimilarityBoost).toBe(false);
+  });
+
+  it('does not mutate the input op when applying defaults', () => {
+    const op = ttsOp({ stability: 0, similarity_boost: 0 });
+    const snapshot = { ...op };
+    applyTtsOperationDefaults(op);
+    expect(op).toEqual(snapshot);
+  });
+
+});
+
+// ── getHeadingDurationMsForLevel ─────────────────────────────────────────────
+
+describe('getHeadingDurationMsForLevel', () => {
+
+  it('maps H1 to 3250ms', () => {
+    expect(getHeadingDurationMsForLevel(1)).toBe(3250);
+    expect(H1_BREAK_MS).toBe(3250);
+  });
+
+  it('maps H2 to 2250ms', () => {
+    expect(getHeadingDurationMsForLevel(2)).toBe(2250);
+    expect(H2_BREAK_MS).toBe(2250);
+  });
+
+  it('maps H3 through H6 to 1250ms', () => {
+    expect(getHeadingDurationMsForLevel(3)).toBe(1250);
+    expect(getHeadingDurationMsForLevel(4)).toBe(1250);
+    expect(getHeadingDurationMsForLevel(5)).toBe(1250);
+    expect(getHeadingDurationMsForLevel(6)).toBe(1250);
+    expect(H3_PLUS_BREAK_MS).toBe(1250);
+  });
+
+  it('returns 0 for invalid levels (0, negative, >6)', () => {
+    expect(getHeadingDurationMsForLevel(0)).toBe(0);
+    expect(getHeadingDurationMsForLevel(-1)).toBe(0);
+    expect(getHeadingDurationMsForLevel(7)).toBe(0);
+    expect(getHeadingDurationMsForLevel(99)).toBe(0);
+  });
+
+});
+
+// ── computeHeadingBreakBoundaries ────────────────────────────────────────────
+
+describe('computeHeadingBreakBoundaries', () => {
+
+  it('returns no boundaries when there are no headings', () => {
+    expect(computeHeadingBreakBoundaries([null, null, null])).toEqual([]);
+  });
+
+  it('returns no boundaries for an empty paragraph list', () => {
+    expect(computeHeadingBreakBoundaries([])).toEqual([]);
+  });
+
+  it('emits a single before-break for an H1 at the start of the tab', () => {
+    // [H1, body] — boundary 0 (before H1) and boundary 1 (after H1, before body)
+    expect(computeHeadingBreakBoundaries([1, null])).toEqual([
+      { atParagraphIndex: 0, durationMs: 3250 },
+      { atParagraphIndex: 1, durationMs: 3250 },
+    ]);
+  });
+
+  it('emits before+after breaks for an H2 surrounded by body paragraphs', () => {
+    // [body, H2, body]
+    expect(computeHeadingBreakBoundaries([null, 2, null])).toEqual([
+      { atParagraphIndex: 1, durationMs: 2250 }, // before H2
+      { atParagraphIndex: 2, durationMs: 2250 }, // after H2
+    ]);
+  });
+
+  it('emits ONE break between two adjacent headings using the SMALLER duration', () => {
+    // [H1, H2, body] — boundary between H1 and H2 takes min(3250, 2250) = 2250
+    expect(computeHeadingBreakBoundaries([1, 2, null])).toEqual([
+      { atParagraphIndex: 0, durationMs: 3250 }, // before H1
+      { atParagraphIndex: 1, durationMs: 2250 }, // between H1 and H2 (min)
+      { atParagraphIndex: 2, durationMs: 2250 }, // after H2 → body
+    ]);
+  });
+
+  it('cascades the min-duration rule across three adjacent headings', () => {
+    // [H1, H2, H3, body]
+    expect(computeHeadingBreakBoundaries([1, 2, 3, null])).toEqual([
+      { atParagraphIndex: 0, durationMs: 3250 }, // before H1
+      { atParagraphIndex: 1, durationMs: 2250 }, // between H1, H2 → min(3250, 2250)
+      { atParagraphIndex: 2, durationMs: 1250 }, // between H2, H3 → min(2250, 1250)
+      { atParagraphIndex: 3, durationMs: 1250 }, // after H3 → body
+    ]);
+  });
+
+  it('does not emit a boundary after the last paragraph (would be a trailing break)', () => {
+    // [body, body, H1] — H1 is the final paragraph; no after-break.
+    expect(computeHeadingBreakBoundaries([null, null, 1])).toEqual([
+      { atParagraphIndex: 2, durationMs: 3250 }, // before H1
+    ]);
+  });
+
+  it('handles non-adjacent headings independently', () => {
+    // [H1, body, body, H2, body]
+    expect(computeHeadingBreakBoundaries([1, null, null, 2, null])).toEqual([
+      { atParagraphIndex: 0, durationMs: 3250 }, // before H1
+      { atParagraphIndex: 1, durationMs: 3250 }, // after H1 → body
+      { atParagraphIndex: 3, durationMs: 2250 }, // before H2
+      { atParagraphIndex: 4, durationMs: 2250 }, // after H2 → body
+    ]);
+  });
+
+  it('uses each heading\'s own duration when adjacent same-level (min of equals)', () => {
+    // [H1, H1] — second H1 at end (no after-break)
+    expect(computeHeadingBreakBoundaries([1, 1])).toEqual([
+      { atParagraphIndex: 0, durationMs: 3250 },
+      { atParagraphIndex: 1, durationMs: 3250 },
+    ]);
+  });
+
+});
+
+describe('validateEarTuneOps', () => {
+
+  const passage =
+    'No virtue bindeth him forever, nor doth any moral rule constrain him unto eternity-neither for love of heaven, nor for fear of hell.';
+
+  it('keeps an op with a distinct Suggested rewrite', () => {
+    const ops = [{
+      match_text: 'moral rule constrain',
+      reason: 'Cadence is overburdened at the turn. Suggested rewrite: "nor doth any moral law constrain him for eternity, neither for love of heaven nor fear of hell."',
+    }];
+
+    expect(validateEarTuneOps(ops, passage)).toEqual(ops);
+  });
+
+  it('drops an op when Suggested rewrite is missing', () => {
+    const ops = [{
+      match_text: 'moral rule constrain',
+      reason: 'Cadence is overburdened at the turn.',
+    }];
+
+    expect(validateEarTuneOps(ops, passage)).toEqual([]);
+  });
+
+  it('drops an op when Suggested rewrite repeats passage text verbatim', () => {
+    const ops = [{
+      match_text: 'moral rule constrain',
+      reason: 'Cadence improvement. Suggested rewrite: "nor doth any moral rule constrain him unto eternity-neither for love of heaven, nor for fear of hell."',
+    }];
+
+    expect(validateEarTuneOps(ops, passage)).toEqual([]);
+  });
+
+  it('ignores phonetic lexicon appendix when extracting Suggested rewrite', () => {
+    const ops = [{
+      match_text: 'moral rule constrain',
+      reason:
+        'Cadence is dense. Suggested rewrite: "nor doth any moral law constrain him for eternity."\\n' +
+        '## Phonetic Lexicon Suggestions\\n' +
+        '- Word: Chid\\n' +
+        '- Phonetic: CHID\\n' +
+        '- Context: Chid Axiom',
+    }];
+
+    expect(validateEarTuneOps(ops, passage)).toEqual(ops);
+  });
 });
 
 // ── stitchingIdsForVoice + recordRequestId ───────────────────────────────────

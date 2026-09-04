@@ -7,7 +7,7 @@ for Kindle Direct Publishing (KDP), ACX/Audible packaging, and related retail me
 - Generate publishing tabs that preserve useful author edits already present in the document.
 - Draft metadata and marketing copy grounded in the manuscript and StyleProfile.
 - Select verbatim retail sample hooks from the manuscript without inventing text.
-- Audit manuscript structure for ebook readiness, especially logical heading hierarchy.
+- Draft audiobook-specific packaging copy for ACX submission support.
 
 ## Rules
 - Stay grounded in the manuscript and StyleProfile. Do not invent lore or themes absent from the source.

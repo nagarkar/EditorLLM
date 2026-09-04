@@ -87,7 +87,6 @@ function onOpen(e?: any): void {
       .addItem('Generate Instructions', 'publisherGenerateInstructions')
       .addItem('Generate All Publishing Tabs', 'publisherGenerateAllTabs')
       .addItem('Generate Missing Publishing Tabs', 'publisherGenerateMissingTabs')
-      .addItem('Generate Table of Contents', 'publisherGenerateTableOfContents')
       .addItem('Run Structural Audit', 'publisherRunStructuralAudit')
       .addItem('Build EPUB Package', 'publisherBuildEpubPackage')
       .addItem('Build ACX Package', 'publisherBuildAcxPackageFromAllAudio'))
@@ -97,6 +96,7 @@ function onOpen(e?: any): void {
     .addSeparator()
     .addItem('Clear All Annotations', 'clearAllAnnotations')
     .addItem('Clear Active Tab Annotations', 'clearActiveTabAnnotations')
+    .addItem('Force Clear Active Tab (override safety)', 'forceClearActiveTabAnnotations')
     .addSeparator()
     .addItem('Refresh All Instructions', 'refreshAllInstructionsMenu')
     .addItem('Create Manuscript', 'runMergeTabsMenu')
@@ -122,16 +122,118 @@ function authorizeAddon_(): void {
   );
 }
 
+/**
+ * Checks that the script is fully authorized (all manifest scopes granted,
+ * including drive.file).  If not, shows an HTML modal dialog with a clickable
+ * re-authorization link — ui.alert() cannot render hyperlinks.
+ *
+ * This is an editor extension (container-bound script), not a Workspace Add-on,
+ * so drive.file automatically covers the active document once the user completes
+ * the OAuth consent flow for the current manifest.  No per-file consent call is
+ * needed.
+ *
+ * Returns true if fully authorized; false after prompting the user (caller should
+ * abort so the user can authorize and retry).
+ */
+function checkDriveFileScope_(): boolean {
+  const authInfo = ScriptApp.getAuthorizationInfo(ScriptApp.AuthMode.FULL);
+  if (authInfo.getAuthorizationStatus() === ScriptApp.AuthorizationStatus.NOT_REQUIRED) {
+    return true;
+  }
+
+  // Authorization is required — the token is missing one or more manifest scopes
+  // (most likely drive.file, which was added to the manifest after the user last
+  // authorized).  Show a modal with a clickable link so the user can re-authorize.
+  const authUrl = authInfo.getAuthorizationUrl();
+  const html = HtmlService
+    .createHtmlOutput(
+      '<div style="font-family:sans-serif; padding:16px 20px;">' +
+      '<p style="margin:0 0 10px; font-size:13px; line-height:1.5;">' +
+      'EditorLLM needs an additional permission to read and post comments on this document ' +
+      '(<code>drive.file</code> scope).</p>' +
+      '<p style="margin:0 0 16px; font-size:13px; line-height:1.5;">' +
+      'Click the link below, complete the authorization, then retry the operation.</p>' +
+      '<p style="margin:0;"><a href="' + authUrl + '" target="_blank" ' +
+      'style="font-size:13px; font-weight:600; color:#1a73e8;">' +
+      'Authorize EditorLLM &rarr;</a></p>' +
+      '</div>'
+    )
+    .setWidth(420)
+    .setHeight(200);
+  DocumentApp.getUi().showModalDialog(html, 'EditorLLM — Authorization Required');
+  return false;
+}
+
+/**
+ * Ensures the script is fully authorized before running any Drive comment
+ * operation.  Returns false after prompting the user so callers can abort
+ * cleanly instead of surfacing a raw Drive.Comments "File not found" error.
+ */
+function ensureDriveFileScopeOrAbort_(operationLabel: string): boolean {
+  if (checkDriveFileScope_()) return true;
+  Tracer.warn(
+    `[${operationLabel}] authorization incomplete — aborted pending user re-authorization`
+  );
+  return false;
+}
+
 // --------------- Html includes (Sidebar template) ---------------
 
 function include(filename: string): string {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 
+const STARTUP_CACHE_TTL_SECS_ = 10;
+
+function startupCache_(): GoogleAppsScript.Cache.Cache {
+  return CacheService.getUserCache();
+}
+
+function startupCacheKey_(suffix: string): string {
+  return `editorllm:${DocumentApp.getActiveDocument().getId()}:${suffix}`;
+}
+
+function getCachedJson_<T>(suffix: string): T | null {
+  try {
+    const raw = startupCache_().get(startupCacheKey_(suffix));
+    return raw ? JSON.parse(raw) as T : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function putCachedJson_(suffix: string, value: unknown, ttlSecs = STARTUP_CACHE_TTL_SECS_): void {
+  try {
+    startupCache_().put(startupCacheKey_(suffix), JSON.stringify(value), ttlSecs);
+  } catch (_) {
+    // Cache failures are non-fatal; treat them as a miss next time.
+  }
+}
+
+function removeStartupCache_(suffixes: string[]): void {
+  try {
+    const cache = startupCache_();
+    for (const suffix of suffixes) {
+      cache.remove(startupCacheKey_(suffix));
+    }
+  } catch (_) {
+    // Best-effort only.
+  }
+}
+
+function invalidateTabMetadataStartupCache_(): void {
+  removeStartupCache_(['tabNames']);
+}
+
+function invalidatePublisherWorkflowStartupCache_(): void {
+  removeStartupCache_(['publisherWorkflowState']);
+}
+
 // --------------- Sidebar ---------------
 
 /** Menu item: opens EditorLLM as a modeless floating dialog without requiring the sidebar first. */
 function openEditorLLMDialog(): void {
+  if (!checkDriveFileScope_()) return;
   openAsDialog('Sidebar', Constants.EXTENSION_NAME);
 }
 
@@ -225,8 +327,8 @@ function openAiHasUserApiKey(): boolean {
 }
 
 // Model configuration
-function listAvailableModels(force?: boolean): string[] {
-  return GeminiService.listGenerateContentModels(force ?? false);
+function listAvailableModels(service?: LlmServiceName, force?: boolean): string[] {
+  return LLMFactory.listAvailableModelsForService(force ?? false, service);
 }
 
 function getModelConfig(): {
@@ -281,6 +383,7 @@ function saveDebugMode(enabled: boolean): void {
 // Setup
 function setupStandardTabs(): void {
   DocOps.ensureStandardTabs();
+  invalidateTabMetadataStartupCache_();
 }
 
 /**
@@ -299,12 +402,11 @@ function readInstructionScoreProps_(keys: { score: string; rationale: string; ts
   rationale: string;
   ts: string;
 } {
-  const props = PropertiesService.getDocumentProperties().getProperties();
-  const raw = props[keys.score];
+  const raw = DocPropsCache.read(keys.score);
   return {
-    score:     raw !== undefined ? parseInt(String(raw), 10) : null,
-    rationale: props[keys.rationale] ?? '',
-    ts:        props[keys.ts] ?? '',
+    score:     raw !== null ? parseInt(raw, 10) : null,
+    rationale: DocPropsCache.read(keys.rationale) ?? '',
+    ts:        DocPropsCache.read(keys.ts) ?? '',
   };
 }
 
@@ -453,6 +555,7 @@ function earTuneAnnotateTab(tabName?: string): void {
   BaseAgent.clearAllAgentCaches();
   const target = tabName || getActiveTabName();
   runTrackedJob_(`EarTune → "${target || 'active tab'}"`, () => {
+    if (!ensureDriveFileScopeOrAbort_('earTuneAnnotateTab')) return;
     getEarTuneAgent().annotateTab(target as string);
   }, true);
 }
@@ -469,6 +572,7 @@ function auditorAnnotateTab(tabName?: string): void {
   BaseAgent.clearAllAgentCaches();
   const target = tabName || getActiveTabName();
   runTrackedJob_(`Audit → "${target || 'active tab'}"`, () => {
+    if (!ensureDriveFileScopeOrAbort_('auditorAnnotateTab')) return;
     getAuditAgent().annotateTab(target as string);
   }, true);
 }
@@ -485,6 +589,7 @@ function tetherAnnotateTab(tabName?: string): void {
   BaseAgent.clearAllAgentCaches();
   const target = tabName || getActiveTabName();
   runTrackedJob_(`Tether → "${target || 'active tab'}"`, () => {
+    if (!ensureDriveFileScopeOrAbort_('tetherAnnotateTab')) return;
     getTetherAgent().annotateTab(target as string);
   }, true);
 }
@@ -499,7 +604,13 @@ function ttsGenerateInstructions(): void {
 function ttsAnnotateTab(tabName?: string): void {
   BaseAgent.clearAllAgentCaches();
   const target = tabName || getActiveTabName();
+  Tracer.info(
+    `[ttsAnnotateTab] received tabName=${JSON.stringify(tabName)}, ` +
+    `getActiveTabName=${JSON.stringify(tabName ? '(not consulted)' : getActiveTabName())}, ` +
+    `target=${JSON.stringify(target)}`
+  );
   runTrackedJob_(`TTS → "${target || 'active tab'}"`, () => {
+    if (!ensureDriveFileScopeOrAbort_('ttsAnnotateTab')) return;
     getTtsAgent().annotateTab(target as string);
   }, true);
 }
@@ -508,6 +619,7 @@ function publisherGenerateInstructions(): void {
   runTrackedJob_('Publisher → Generate Instructions', () => {
     BaseAgent.clearAllAgentCaches();
     getPublisherAgent().generateInstructions();
+    invalidatePublisherWorkflowStartupCache_();
   });
 }
 
@@ -526,6 +638,8 @@ function publisherGenerateAllTabs(): {
   runTrackedJob_('Publisher → Generate All Publishing Tabs', () => {
     BaseAgent.clearAllAgentCaches();
     result = getPublisherAgent().generatePublishingTabs('all');
+    invalidateTabMetadataStartupCache_();
+    invalidatePublisherWorkflowStartupCache_();
   }, true);
   return result;
 }
@@ -545,25 +659,183 @@ function publisherGenerateMissingTabs(): {
   runTrackedJob_('Publisher → Generate Missing Publishing Tabs', () => {
     BaseAgent.clearAllAgentCaches();
     result = getPublisherAgent().generatePublishingTabs('missing');
+    invalidateTabMetadataStartupCache_();
+    invalidatePublisherWorkflowStartupCache_();
   }, true);
   return result;
 }
 
-function publisherRunStructuralAudit(): void {
+function buildStructuralAuditAudioTargets_(): string[] {
+  const specialTabs = [
+    Constants.TAB_NAMES.PUBLISHER_OPENING_CREDITS,
+    Constants.TAB_NAMES.PUBLISHER_CLOSING_CREDITS,
+  ];
+  return Array.from(new Set(getManuscriptTabNames().concat(specialTabs)));
+}
+
+function publisherRunStructuralAudit(): {
+  versionLabel: string;
+  hasExplicitActiveVersion: boolean;
+  versionFolderName: string;
+  summary: {
+    epubOk: boolean;
+    audioOk: boolean;
+  };
+  commonChecks: Array<{ label: string; ok: boolean; detail: string }>;
+  epub: {
+    folderExists: boolean;
+    folderUrl: string | null;
+    checks: Array<{ label: string; ok: boolean; detail: string }>;
+  };
+  audio: {
+    folderExists: boolean;
+    folderUrl: string | null;
+    checks: Array<{ label: string; ok: boolean; detail: string }>;
+    actualFiles: string[];
+  };
+} {
+  let result = {
+    versionLabel: '0',
+    hasExplicitActiveVersion: false,
+    versionFolderName: '',
+    summary: {
+      epubOk: false,
+      audioOk: false,
+    },
+    commonChecks: [] as Array<{ label: string; ok: boolean; detail: string }>,
+    epub: {
+      folderExists: false,
+      folderUrl: null as string | null,
+      checks: [] as Array<{ label: string; ok: boolean; detail: string }>,
+    },
+    audio: {
+      folderExists: false,
+      folderUrl: null as string | null,
+      checks: [] as Array<{ label: string; ok: boolean; detail: string }>,
+      actualFiles: [] as string[],
+    },
+  };
   runTrackedJob_('Publisher → Structural Audit', () => {
     BaseAgent.clearAllAgentCaches();
-    getPublisherAgent().annotateManuscriptStructure();
+
+    const docId = DocumentApp.getActiveDocument().getId();
+    const versionState = getStructuralAuditVersionLabel_();
+    const versionFolderName = buildVersionFolderName(docId, versionState.label);
+
+    const rootFolderId = findDriveFolderByName_(Constants.DRIVE_FOLDERS.ROOT);
+    const booksFolderId = rootFolderId ? findDriveFolderChild_(rootFolderId, Constants.DRIVE_FOLDERS.BOOKS) : null;
+    const projectFolderId = booksFolderId ? findDriveFolderChild_(booksFolderId, docId) : null;
+    const versionFolderId = projectFolderId ? findDriveFolderChild_(projectFolderId, versionFolderName) : null;
+    const epubFolderId = versionFolderId ? findDriveFolderChild_(versionFolderId, Constants.DRIVE_FOLDERS.EPUB) : null;
+    const audioFolderId = versionFolderId ? findDriveFolderChild_(versionFolderId, Constants.DRIVE_FOLDERS.AUDIO) : null;
+
+    const epubAssets = epubFolderId
+      ? checkEpubAssets_(epubFolderId)
+      : { contentDocx: false, coverPng: false, styleCss: false };
+    const audioFiles = audioFolderId
+      ? listDriveFilesInFolder_(audioFolderId, ` and mimeType='audio/mpeg' and name contains '.mp3'`, 'files(id,name)').map(file => file.name)
+      : [];
+    const audioTargets = buildStructuralAuditAudioTargets_();
+    const audioChecks = audioTargets.map(target => {
+      const matchedName = findMatchingAudioFileName_(audioFiles, target);
+      const targetExists = DocOps.tabExists(target);
+      return {
+        label: target,
+        ok: !!matchedName,
+        detail: matchedName
+          ? `Found ${matchedName}.`
+          : (targetExists ? 'No matching MP3 found in the version Audio folder.' : 'Tab is missing and no matching MP3 was found.'),
+      };
+    });
+
+    const epubChecks = [
+      {
+        label: 'content.docx',
+        ok: epubAssets.contentDocx,
+        detail: epubAssets.contentDocx ? 'Present in the version EPUB folder.' : 'Missing from the version EPUB folder.',
+      },
+      {
+        label: 'cover.png',
+        ok: epubAssets.coverPng,
+        detail: epubAssets.coverPng ? 'Present in the version EPUB folder.' : 'Missing from the version EPUB folder.',
+      },
+      {
+        label: 'style_inkfluence.css',
+        ok: epubAssets.styleCss,
+        detail: epubAssets.styleCss ? 'Present in the version EPUB folder.' : 'Missing from the version EPUB folder.',
+      },
+    ];
+
+    result = {
+      versionLabel: versionState.label,
+      hasExplicitActiveVersion: versionState.explicit,
+      versionFolderName,
+      summary: {
+        epubOk: epubChecks.every(check => check.ok),
+        audioOk: audioChecks.every(check => check.ok),
+      },
+      commonChecks: [
+        {
+          label: versionState.explicit ? `Active Version: V${versionState.label}` : `Active Version: default V${versionState.label}`,
+          ok: versionState.explicit,
+          detail: versionState.explicit
+            ? 'Document property PUBLISHER_ACTIVE_VERSION is set.'
+            : 'No explicit active version is set; audit used the default V0 target.',
+        },
+        {
+          label: `Version Folder: ${versionFolderName}`,
+          ok: !!versionFolderId,
+          detail: versionFolderId
+            ? 'Found the versioned doc folder in EditorLLM/Books.'
+            : 'Versioned doc folder is missing under EditorLLM/Books.',
+        },
+      ],
+      epub: {
+        folderExists: !!epubFolderId,
+        folderUrl: epubFolderId ? `https://drive.google.com/drive/folders/${epubFolderId}` : null,
+        checks: epubChecks,
+      },
+      audio: {
+        folderExists: !!audioFolderId,
+        folderUrl: audioFolderId ? `https://drive.google.com/drive/folders/${audioFolderId}` : null,
+        checks: audioChecks,
+        actualFiles: audioFiles,
+      },
+    };
+    // Persist a compact summary so the sidebar status panel can show the
+    // last audit result on the next load without re-running the full scan.
+    try {
+      const auditSummary = {
+        ts: new Date().toISOString(),
+        versionLabel: result.versionLabel,
+        hasExplicitActiveVersion: result.hasExplicitActiveVersion,
+        epubOk: result.summary.epubOk,
+        audioOk: result.summary.audioOk,
+        // cap audio checks to avoid hitting the 9 KB DocProps value limit
+        epubChecks: result.epub.checks,
+        audioChecks: result.audio.checks.slice(0, 20),
+        commonChecks: result.commonChecks,
+      };
+      DocPropsCache.write(PUBLISHER_STRUCT_AUDIT_PROP_KEY_, JSON.stringify(auditSummary));
+    } catch (_) {}
+    invalidatePublisherWorkflowStartupCache_();
   }, true);
+  return result;
 }
 
 // Comment Processor
 function commentProcessorRun(): { replied: number; skipped: number; byAgent: Record<string, number> } {
   let result: { replied: number; skipped: number; byAgent: Record<string, number> } = { replied: 0, skipped: 0, byAgent: {} };
   runTrackedJob_('Process @AI Comments', () => {
+    if (!ensureDriveFileScopeOrAbort_('commentProcessorRun')) return;
     BaseAgent.clearAllAgentCaches();
-    // Ensure all agents are instantiated before getAllAgents() — lazy singletons
+    // Ensure all built-in agents are instantiated before getAllAgents() — lazy singletons
     // won't self-register until their getter is called at least once.
     getArchitectAgent(); getEarTuneAgent(); getAuditAgent(); getTetherAgent(); getTtsAgent(); getGeneralPurposeAgent(); getPublisherAgent();
+    // Instantiate custom agents that have W3 enabled so they self-register in BaseAgent.registry_.
+    for (const def of CustomAgentService.listAll()) {
+      if (def.workflows.w3) new CustomAgent(def);
+    }
     CommentProcessor.init(BaseAgent.getAllAgents());
     result = CommentProcessor.processAll();
     Tracer.info(`[commentProcessorRun] replied=${result.replied}, skipped=${result.skipped}`);
@@ -573,6 +845,7 @@ function commentProcessorRun(): { replied: number; skipped: number; byAgent: Rec
 
 function clearAllAnnotations(): void {
   runTrackedJob_('Clear All Annotations', () => {
+    if (!ensureDriveFileScopeOrAbort_('clearAllAnnotations')) return;
     BaseAgent.clearAllAgentCaches();
     const tabs = getTabNames();
     const prefixes = [
@@ -617,6 +890,7 @@ function clearActiveTabAnnotations(): void {
     if (!DocOps.isManagedTab(tabName)) {
       return;
     }
+    if (!ensureDriveFileScopeOrAbort_('clearActiveTabAnnotations')) return;
     const tabId  = DocOps.getTabIdByName(tabName);
     const docTab = DocOps.getTabByName(tabName);
     if (!tabId || !docTab) {
@@ -632,16 +906,76 @@ function clearActiveTabAnnotations(): void {
   });
 }
 
-function clearDirectivesOnTab(tabName: string, agentFilter?: string): void {
+function clearDirectivesOnTab(tabName: string, agentFilter?: string, opts?: { force?: boolean }): void {
   if (!DocOps.getTabByName(tabName)) {
     Tracer.warn(`[clearDirectivesOnTab] tab "${tabName}" not found`);
     return;
   }
-  if (!DocOps.isManagedTab(tabName)) {
+  if (!opts?.force && !DocOps.isManagedTab(tabName)) {
     return;
+  }
+  if (opts?.force && !DocOps.isManagedTab(tabName)) {
+    Tracer.warn(`[clearDirectivesOnTab] OVERRIDE — clearing tab "${tabName}" despite isManagedTab=false`);
   }
   const removed = DirectivePersistence.clearDirectivesOnTab(tabName, agentFilter);
   Tracer.info(`[clearDirectivesOnTab] removed ${removed} directive(s) from "${tabName}"`);
+}
+
+// ── Force-clear (override safety) ──────────────────────────────────────────
+// Escape hatch for cleaning up annotations or directives that were written
+// onto a tab that fails the isManagedTab check — typically stranded artefacts
+// from before write-side guards were in place, or content placed on a tab
+// the user has since moved into the never-processed subtree.
+//
+// All force paths emit Tracer.warn entries with the literal "OVERRIDE" so the
+// audit trail is searchable in `clasp logs`.
+
+function forceClearActiveTabAnnotations(): void {
+  runTrackedJob_('Force Clear Active Tab', () => {
+    const tabName = getActiveTabName();
+    if (!tabName) {
+      Tracer.warn('[forceClearActiveTabAnnotations] no active tab detected');
+      return;
+    }
+
+    const ui = DocumentApp.getUi();
+    const resp = ui.alert(
+      'Force Clear (override safety)',
+      `Clear ALL agent annotations and directives on "${tabName}"?\n\n` +
+      'This bypasses the managed-tab safety check. Use only when stranded ' +
+      'artefacts need cleanup on a non-managed tab.',
+      ui.ButtonSet.OK_CANCEL
+    );
+    if (resp !== ui.Button.OK) {
+      Tracer.info(`[forceClearActiveTabAnnotations] cancelled by user (tab="${tabName}")`);
+      return;
+    }
+
+    if (!ensureDriveFileScopeOrAbort_('forceClearActiveTabAnnotations')) return;
+
+    const tabId  = DocOps.getTabIdByName(tabName);
+    const docTab = DocOps.getTabByName(tabName);
+    if (!tabId || !docTab) {
+      Tracer.warn(`[forceClearActiveTabAnnotations] tab "${tabName}" cannot be resolved`);
+      return;
+    }
+
+    Tracer.warn(`[forceClearActiveTabAnnotations] OVERRIDE — clearing tab "${tabName}" (managed=${DocOps.isManagedTab(tabName)})`);
+    const prefixes = ['[EarTune]', '[Auditor]', '[Tether]', '[Publisher]', '[Architect]'];
+    // clearAgentAnnotations_ has no managed-tab gate of its own — proceed directly.
+    CollaborationService.clearAgentAnnotations(tabId, tabName, docTab, prefixes);
+    clearDirectivesOnTab(tabName, undefined, { force: true });
+    CollaborationService.removeOrphanedEntitiesOnTab(tabName, { force: true });
+    Tracer.info(`[forceClearActiveTabAnnotations] done`);
+  }, true);
+}
+
+/**
+ * Client-callable: clears directives on `tabName` ignoring the managed-tab
+ * gate. Intended for the sidebar Force Clear flow.  Emits an OVERRIDE warn.
+ */
+function forceClearDirectivesOnTab(tabName: string, agentFilter?: string): void {
+  clearDirectivesOnTab(tabName, agentFilter, { force: true });
 }
 
 
@@ -697,7 +1031,7 @@ function runMergeTabsMenu(): void {
   }
   runTrackedJob_(`Create Manuscript (${names.length})`, () => {
     Tracer.info(`[runMergeTabsMenu] Creating Manuscript from ${names.length} tab(s): ${JSON.stringify(names)}`);
-    const result = TabMerger.mergeAllTabs(names);
+    const result = TabMerger.createOrOverwriteManuscript(names);
     if (result.errors.length) {
       Tracer.error(`[runMergeTabsMenu] Merge errors: ${result.errors.join('; ')}`);
     }
@@ -950,16 +1284,19 @@ function copyAllLogsMenu(): void {
   DocumentApp.getUi().showModalDialog(html, 'All Session Logs');
 }
 
-// Tab Merger
-function runMergeAllTabs(tabNames: string[]): { ok: boolean; successes: number; errors: string[] } {
-  return TabMerger.mergeAllTabs(tabNames);
+// Create or Overwrite Manuscript
+function createOrOverwriteManuscript(tabNames: string[]): { ok: boolean; successes: number; errors: string[] } {
+  const result = TabMerger.createOrOverwriteManuscript(tabNames);
+  invalidateTabMetadataStartupCache_();
+  invalidatePublisherWorkflowStartupCache_();
+  return result;
 }
 
-function getMergeTabNames(): string[] {
+function getManuscriptTabNames(): string[] {
   return TabMerger.getSavedTabNames();
 }
 
-function saveMergeTabs(csv: string): { ok: boolean } {
+function saveManuscriptTabNames(csv: string): { ok: boolean } {
   return TabMerger.saveTabNames(csv);
 }
 
@@ -967,24 +1304,25 @@ function saveMergeTabs(csv: string): { ok: boolean } {
 
 /** DocumentProperties key for the user-maintained managed-tabs list. */
 const MANAGED_TABS_PROP_KEY_ = 'managedTabNamesList';
+const PUBLISHER_STRUCT_AUDIT_PROP_KEY_ = 'PUBLISHER_STRUCT_AUDIT';
 
 /**
  * Returns the saved managed-tab names as an array.
  * Stored as a comma-separated string in DocumentProperties.
  */
 function getManagedTabNamesList(): string[] {
-  const raw = PropertiesService.getDocumentProperties().getProperty(MANAGED_TABS_PROP_KEY_);
+  const raw = DocPropsCache.read(MANAGED_TABS_PROP_KEY_);
   if (!raw || !raw.trim()) return [];
   return raw.split(',').map(s => s.trim()).filter(Boolean);
 }
 
 /**
  * Persists the managed-tab names list to DocumentProperties.
- * Accepts a comma-separated string (same format as saveMergeTabs).
+ * Accepts a comma-separated string (same format as saveManuscriptTabNames).
  */
 function saveManagedTabNamesList(csv: string): void {
   const names = csv.split(',').map(s => s.trim()).filter(Boolean);
-  PropertiesService.getDocumentProperties().setProperty(MANAGED_TABS_PROP_KEY_, names.join(','));
+  DocPropsCache.write(MANAGED_TABS_PROP_KEY_, names.join(','));
 }
 
 // ── ElevenLabs TTS server functions ──────────────────────────────────────────
@@ -993,10 +1331,9 @@ function saveManagedTabNamesList(csv: string): void {
 // and follow the same naming convention: elevenLabs<Action>.
 
 /**
- * Saves the ElevenLabs API key to DocumentProperties and eagerly refreshes both
- * the voice-mapping cache and the pronunciation dictionary cache so the
- * directive panel shows human-readable names and generation uses correct
- * pronunciation rules immediately after the key is saved.
+ * Saves the ElevenLabs API key to UserProperties and eagerly refreshes the
+ * voice-mapping cache so the directive panel shows human-readable names
+ * immediately after the key is saved.
  */
 function elevenLabsSaveApiKey(key: string): void {
   ElevenLabsService.saveApiKey(key);
@@ -1005,11 +1342,6 @@ function elevenLabsSaveApiKey(key: string): void {
       ElevenLabsService.prefetchVoiceMappings();
     } catch (_) {
       // Non-fatal — old cache (or no voices) is still acceptable.
-    }
-    try {
-      ElevenLabsService.prefetchPronunciationDictionaries();
-    } catch (_) {
-      // Non-fatal — TTS still works without pronunciation overrides.
     }
   }
 }
@@ -1025,12 +1357,6 @@ function elevenLabsWarmCachesOnUiOpen(): void {
     ElevenLabsService.prefetchVoiceMappings();
   } catch (e: any) {
     Tracer.warn(`[elevenLabsWarmCachesOnUiOpen] voice mappings preload failed: ${e?.message || e}`);
-  }
-
-  try {
-    ElevenLabsService.prefetchPronunciationDictionaries();
-  } catch (e: any) {
-    Tracer.warn(`[elevenLabsWarmCachesOnUiOpen] pronunciation dictionaries preload failed: ${e?.message || e}`);
   }
 }
 
@@ -1050,6 +1376,20 @@ function elevenLabsListVoices(useCase: string): ElevenLabsVoice[] {
 /** Returns all TTS-capable models from the ElevenLabs API. */
 function elevenLabsListModels(): ElevenLabsModel[] {
   return ElevenLabsService.listModels();
+}
+
+/**
+ * Returns the user's ElevenLabs character quota for the credits-remaining
+ * indicator in the sidebar.  Returns null on any failure (no key, network,
+ * 401) so the UI can degrade silently — credits are decorative, not blocking.
+ */
+function elevenLabsGetUserSubscription(): ElevenLabsSubscription | null {
+  try {
+    return ElevenLabsService.getUserSubscription();
+  } catch (e: any) {
+    Tracer.warn(`[elevenLabsGetUserSubscription] ${e?.message || e}`);
+    return null;
+  }
 }
 
 /**
@@ -1096,17 +1436,88 @@ function getOrCreateDriveFolderByName_(folderName: string, parentId?: string): s
 }
 
 function getOrCreateEditorLLMRootFolder_(): string {
-  return getOrCreateDriveFolderByName_('EditorLLM');
+  return getOrCreateDriveFolderByName_(Constants.DRIVE_FOLDERS.ROOT);
 }
+
+// ── Drive safety guard ────────────────────────────────────────────────────────
+/**
+ * Walks the Drive parent chain (max 10 hops) to verify that folderId is a
+ * descendant of the EditorLLM root folder. Throws if the chain reaches a
+ * Drive root without passing through the EditorLLM folder.
+ * Call this before any write to a folder ID that was not created inline by
+ * the current call chain (e.g. an externally-provided cover upload target).
+ */
+function assertInsideEditorLLMRoot_(folderId: string): void {
+  const rootId = getOrCreateEditorLLMRootFolder_();
+  if (folderId === rootId) return;
+  let current = folderId;
+  for (let depth = 0; depth < 10; depth++) {
+    const file = Drive.Files.get(current, { fields: 'parents' } as any) as any;
+    const parents: string[] = file?.parents || [];
+    if (!parents.length) break;
+    if (parents[0] === rootId) return;
+    current = parents[0];
+  }
+  throw new Error(`Drive safety violation: folder "${folderId}" is not inside the EditorLLM root.`);
+}
+
+// ── EditorLLM/Books hierarchy ─────────────────────────────────────────────────
+
+function getOrCreateBooksFolder_(): string {
+  const rootId = getOrCreateEditorLLMRootFolder_();
+  return getOrCreateDriveFolderByName_(Constants.DRIVE_FOLDERS.BOOKS, rootId);
+}
+
+function getOrCreateProjectFolder_(docId: string): string {
+  const booksId = getOrCreateBooksFolder_();
+  return getOrCreateDriveFolderByName_(docId, booksId);
+}
+
+function getOrCreateVersionFolder_(docId: string, label: string): string {
+  const projectId = getOrCreateProjectFolder_(docId);
+  return getOrCreateDriveFolderByName_(buildVersionFolderName(docId, label), projectId);
+}
+
+function getOrCreateVersionEpubFolder_(docId: string, label: string): string {
+  const versionId = getOrCreateVersionFolder_(docId, label);
+  return getOrCreateDriveFolderByName_(Constants.DRIVE_FOLDERS.EPUB, versionId);
+}
+
+function getOrCreateVersionAudioFolder_(docId: string, label: string): string {
+  const versionId = getOrCreateVersionFolder_(docId, label);
+  return getOrCreateDriveFolderByName_(Constants.DRIVE_FOLDERS.AUDIO, versionId);
+}
+
+// ── Version label helpers ─────────────────────────────────────────────────────
+
+/** Returns the active version label from document properties, or throws if unset. */
+function getActiveVersionLabel_(): string {
+  const label = DocPropsCache.read('PUBLISHER_ACTIVE_VERSION');
+  if (!label) throw new Error('No active version set. Create a version first from the Publisher sidebar.');
+  return label;
+}
+
+/**
+ * Returns the active version label, creating V0 automatically when none is set.
+ * Used by TTS audio saves so they work without requiring explicit version setup.
+ */
+function getOrCreateDefaultVersionLabel_(): string {
+  const existing = DocPropsCache.read('PUBLISHER_ACTIVE_VERSION');
+  if (existing) return existing;
+  const docId = DocumentApp.getActiveDocument().getId();
+  const label = '0';
+  getOrCreateVersionEpubFolder_(docId, label);
+  getOrCreateVersionAudioFolder_(docId, label);
+  DocPropsCache.write('PUBLISHER_ACTIVE_VERSION', label);
+  return label;
+}
+
+// ── Audio folder (routes to active version) ───────────────────────────────────
 
 function getOrCreateEditorLLMAudioFolder_(): string {
-  const parentId = getOrCreateEditorLLMRootFolder_();
-  return getOrCreateDriveFolderByName_('Audio', parentId);
-}
-
-function getOrCreateEditorLLMPackagesFolder_(): string {
-  const parentId = getOrCreateEditorLLMRootFolder_();
-  return getOrCreateDriveFolderByName_('Packages', parentId);
+  const docId = DocumentApp.getActiveDocument().getId();
+  const label = getOrCreateDefaultVersionLabel_();
+  return getOrCreateVersionAudioFolder_(docId, label);
 }
 
 function listEditorLLMAudioFiles(): Array<{ id: string; name: string; createdTime?: string; size?: string }> {
@@ -1140,6 +1551,100 @@ function copyDriveFileIntoFolder_(fileId: string, folderId: string): { id: strin
   return { id: copied.id as string, name: copied.name as string };
 }
 
+/** Finds a direct child folder by name; returns its ID or null if not found. */
+function findDriveFolderChild_(parentId: string, folderName: string): string | null {
+  const resp = Drive.Files.list({
+    q: `'${parentId}' in parents and name="${folderName.replace(/"/g, '\\"')}" and mimeType="application/vnd.google-apps.folder" and trashed=false`,
+    fields: 'files(id)',
+    spaces: 'drive',
+  } as any);
+  const files: any[] = (resp as any).files || [];
+  return files.length ? files[0].id as string : null;
+}
+
+/** Finds a Drive folder by name, optionally scoped to a direct parent. */
+function findDriveFolderByName_(folderName: string, parentId?: string): string | null {
+  const parentClause = parentId ? ` and '${parentId}' in parents` : '';
+  const resp = Drive.Files.list({
+    q: `mimeType="application/vnd.google-apps.folder" and name="${folderName.replace(/"/g, '\\"')}" and trashed=false${parentClause}`,
+    fields: 'files(id)',
+    spaces: 'drive',
+  } as any);
+  const files: any[] = (resp as any).files || [];
+  return files.length ? files[0].id as string : null;
+}
+
+/** Permanently deletes all Drive files with the given name inside a folder. */
+function deleteDriveFileByName_(folderId: string, fileName: string): void {
+  const resp = Drive.Files.list({
+    q: `'${folderId}' in parents and name="${fileName.replace(/"/g, '\\"')}" and trashed=false`,
+    fields: 'files(id)',
+    spaces: 'drive',
+  } as any);
+  const files: any[] = (resp as any).files || [];
+  for (const f of files) Drive.Files.remove(f.id as string);
+}
+
+/** Checks which of content.docx / cover.png / style_inkfluence.css exist in an EPUB folder. */
+function checkEpubAssets_(epubFolderId: string): { contentDocx: boolean; coverPng: boolean; styleCss: boolean } {
+  const resp = Drive.Files.list({
+    q: `'${epubFolderId}' in parents and trashed=false and (name='content.docx' or name='cover.png' or name='style_inkfluence.css')`,
+    fields: 'files(name)',
+    spaces: 'drive',
+  } as any);
+  const names = new Set(((resp as any).files || []).map((f: any) => f.name as string));
+  return { contentDocx: names.has('content.docx'), coverPng: names.has('cover.png'), styleCss: names.has('style_inkfluence.css') };
+}
+
+function listDriveFilesInFolder_(
+  folderId: string,
+  querySuffix: string,
+  fields = 'files(id,name)'
+): Array<{ id: string; name: string }> {
+  const resp = Drive.Files.list({
+    q: `'${folderId}' in parents and trashed=false${querySuffix}`,
+    fields,
+    spaces: 'drive',
+  } as any);
+  const files: any[] = (resp as any).files || [];
+  return files.map(file => ({
+    id: file.id as string,
+    name: file.name as string,
+  }));
+}
+
+function sanitizeAudioArtifactToken_(name: string): string {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'untitled';
+}
+
+function findMatchingAudioFileName_(fileNames: string[], targetTabName: string): string | null {
+  const prefix = `audio_${sanitizeAudioArtifactToken_(targetTabName)}`;
+  const lowerNames = fileNames.map(name => String(name || '').toLowerCase());
+  for (let i = 0; i < lowerNames.length; i++) {
+    const lower = lowerNames[i];
+    if (
+      lower === `${prefix}.mp3` ||
+      lower === `${prefix}_hq.mp3` ||
+      lower === `${prefix}_directives.mp3` ||
+      lower.indexOf(`${prefix}_`) === 0
+    ) {
+      return fileNames[i];
+    }
+  }
+  return null;
+}
+
+function getStructuralAuditVersionLabel_(): { label: string; explicit: boolean } {
+  const explicitLabel = DocPropsCache.read('PUBLISHER_ACTIVE_VERSION');
+  if (explicitLabel && explicitLabel.trim()) {
+    return { label: explicitLabel.trim(), explicit: true };
+  }
+  return { label: '0', explicit: false };
+}
+
 function createGoogleDocInFolder_(name: string, folderId: string): { id: string; name: string } {
   const created = Drive.Files.create(
     {
@@ -1153,9 +1658,6 @@ function createGoogleDocInFolder_(name: string, folderId: string): { id: string;
   return { id: created.id as string, name: created.name as string };
 }
 
-function buildPublisherArtifactStamp_(date: Date): string {
-  return Utilities.formatDate(date, Session.getScriptTimeZone(), 'ddMMyy_HHmmss');
-}
 
 function normalizeTextColorForLightExport_(element: any): void {
   if (!element || typeof element.editAsText !== 'function') return;
@@ -1205,66 +1707,308 @@ function appendBodyToBody_(
   }
 }
 
-function publisherGenerateTableOfContents(): { entries: number } {
-  const mergedTab = DocOps.getTabByName(Constants.TAB_NAMES.MANUSCRIPT);
-  if (!mergedTab) throw new Error('Manuscript tab is missing.');
+// ── Version management public API ─────────────────────────────────────────────
 
-  const body = mergedTab.getBody();
-  const lines: string[] = ['## Table of Contents'];
-  let count = 0;
-
-  for (let i = 0; i < body.getNumChildren(); i++) {
-    const child = body.getChild(i);
-    if (child.getType() !== DocumentApp.ElementType.PARAGRAPH) continue;
-    const para = child.asParagraph();
-    const text = para.getText().trim();
-    if (!text) continue;
-
-    const heading = para.getHeading();
-    if (heading === DocumentApp.ParagraphHeading.HEADING1) {
-      lines.push(`- ${text}`);
-      count++;
-    } else if (heading === DocumentApp.ParagraphHeading.HEADING2) {
-      lines.push(`  - ${text}`);
-      count++;
-    } else if (heading === DocumentApp.ParagraphHeading.HEADING3) {
-      lines.push(`    - ${text}`);
-      count++;
-    }
-  }
-
-  const tocMarkdown = count > 0 ? lines.join('\n') : '## Table of Contents\n\n_No heading-based table of contents could be generated from Manuscript._';
-  MarkdownService.markdownToTab(tocMarkdown, Constants.TAB_NAMES.PUBLISHER_TOC, Constants.TAB_NAMES.PUBLISHER_ROOT);
-  return { entries: count };
+/** Returns the active version label, or null if none has been set. */
+function publisherGetActiveVersion(): string | null {
+  return DocPropsCache.read('PUBLISHER_ACTIVE_VERSION');
 }
 
-function countPublisherAnnotationsOnManuscript_(): number {
-  const docId = DocumentApp.getActiveDocument().getId();
-  let pageToken: string | undefined;
-  let count = 0;
-
-  do {
-    const resp = (Drive.Comments as any).list(docId, {
-      fields: 'comments(content),nextPageToken',
-      pageSize: 100,
-      pageToken,
-    });
-    const comments: any[] = (resp as any)?.comments || [];
-    for (const comment of comments) {
-      const content = String(comment?.content || '');
-      if (content.includes('[Publisher]')) count++;
+/** Sets the active version to an existing version label. */
+function publisherSetActiveVersion(label: string): { ok: boolean; error?: string } {
+  try {
+    const docId = DocumentApp.getActiveDocument().getId();
+    const projectFolderId = getOrCreateProjectFolder_(docId);
+    const folderName = buildVersionFolderName(docId, label);
+    const existing = Drive.Files.list({
+      q: `'${projectFolderId}' in parents and name="${folderName.replace(/"/g, '\\"')}" and mimeType="application/vnd.google-apps.folder" and trashed=false`,
+      fields: 'files(id)',
+      spaces: 'drive',
+    } as any);
+    if (((existing as any).files || []).length === 0) {
+      throw new Error(`Version "${label}" does not exist.`);
     }
-    pageToken = (resp as any)?.nextPageToken || undefined;
-  } while (pageToken);
+    // Guard against concurrent version changes from multiple editors.
+    const lock = LockService.getDocumentLock();
+    if (lock.tryLock(3000)) {
+      try {
+        DocPropsCache.write('PUBLISHER_ACTIVE_VERSION', label);
+      } finally {
+        lock.releaseLock();
+      }
+    } else {
+      DocPropsCache.write('PUBLISHER_ACTIVE_VERSION', label);
+    }
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
 
-  return count;
+/**
+ * Lists all versions for this document by scanning its project folder in Drive.
+ * Designed to be called asynchronously after sidebar load.
+ */
+function publisherListVersions(): Array<{
+  label: string;
+  folderId: string;
+  createdTime: string;
+  isActive: boolean;
+  assets: { contentDocx: boolean; coverPng: boolean; styleCss: boolean };
+}> {
+  const docId = DocumentApp.getActiveDocument().getId();
+  const activeLabel = DocPropsCache.read('PUBLISHER_ACTIVE_VERSION') || '';
+  const projectFolderId = getOrCreateProjectFolder_(docId);
+  const prefix = `${docId}_V`;
+
+  const resp = Drive.Files.list({
+    q: `'${projectFolderId}' in parents and mimeType="application/vnd.google-apps.folder" and trashed=false`,
+    fields: 'files(id,name,createdTime)',
+    orderBy: 'createdTime',
+    spaces: 'drive',
+  } as any);
+
+  return ((resp as any).files || [])
+    .filter((f: any) => String(f.name).startsWith(prefix))
+    .map((f: any) => {
+      const label = String(f.name).slice(prefix.length);
+      const epubFolderId = findDriveFolderChild_(f.id as string, Constants.DRIVE_FOLDERS.EPUB);
+      const assets = epubFolderId
+        ? checkEpubAssets_(epubFolderId)
+        : { contentDocx: false, coverPng: false, styleCss: false };
+      return {
+        label,
+        folderId: f.id as string,
+        createdTime: (f.createdTime as string) || '',
+        isActive: label === activeLabel,
+        assets,
+      };
+    });
+}
+
+/**
+ * Creates a new version folder with EPUB/ and Audio/ subfolders.
+ * Copies existing assets from the active version. Does NOT set the new version as active.
+ * Throws (via validateVersionLabel) if the label is empty, contains invalid chars,
+ * or already exists.
+ */
+function publisherCreateVersion(label: string): { ok: boolean; error?: string } {
+  try {
+    const cleanLabel = validateVersionLabel(label);
+    const docId = DocumentApp.getActiveDocument().getId();
+    const projectFolderId = getOrCreateProjectFolder_(docId);
+    const folderName = buildVersionFolderName(docId, cleanLabel);
+
+    // Reject duplicate labels.
+    const existing = Drive.Files.list({
+      q: `'${projectFolderId}' in parents and name="${folderName.replace(/"/g, '\\"')}" and mimeType="application/vnd.google-apps.folder" and trashed=false`,
+      fields: 'files(id)',
+      spaces: 'drive',
+    } as any);
+    if (((existing as any).files || []).length > 0) {
+      throw new Error(`A version with label "${cleanLabel}" already exists. Choose a different label.`);
+    }
+
+    const versionFolderId = getOrCreateDriveFolderByName_(folderName, projectFolderId);
+    assertInsideEditorLLMRoot_(versionFolderId);
+    const newEpubFolderId = getOrCreateDriveFolderByName_(Constants.DRIVE_FOLDERS.EPUB, versionFolderId);
+    getOrCreateDriveFolderByName_(Constants.DRIVE_FOLDERS.AUDIO, versionFolderId);
+
+    // Copy assets from the currently active version (if any).
+    const activeLabel = DocPropsCache.read('PUBLISHER_ACTIVE_VERSION');
+    if (activeLabel) {
+      const activeVersionFolderId = findDriveFolderChild_(
+        projectFolderId,
+        buildVersionFolderName(docId, activeLabel)
+      );
+      if (activeVersionFolderId) {
+        const activeEpubFolderId = findDriveFolderChild_(activeVersionFolderId, Constants.DRIVE_FOLDERS.EPUB);
+        if (activeEpubFolderId) {
+          for (const fileName of ['content.docx', 'cover.png', 'style_inkfluence.css']) {
+            const fileResp = Drive.Files.list({
+              q: `'${activeEpubFolderId}' in parents and name="${fileName}" and trashed=false`,
+              fields: 'files(id)',
+              spaces: 'drive',
+            } as any);
+            const fileHits: any[] = (fileResp as any).files || [];
+            if (fileHits.length) copyDriveFileIntoFolder_(fileHits[0].id as string, newEpubFolderId);
+          }
+        }
+      }
+    }
+
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/** Permanently deletes a version folder and all its contents. Clears the active version if it matches. */
+function publisherDeleteVersion(label: string): { ok: boolean; error?: string } {
+  try {
+    const docId = DocumentApp.getActiveDocument().getId();
+    const projectFolderId = getOrCreateProjectFolder_(docId);
+    const folderName = buildVersionFolderName(docId, label);
+
+    const resp = Drive.Files.list({
+      q: `'${projectFolderId}' in parents and name="${folderName.replace(/"/g, '\\"')}" and mimeType="application/vnd.google-apps.folder" and trashed=false`,
+      fields: 'files(id)',
+      spaces: 'drive',
+    } as any);
+    const files: any[] = (resp as any).files || [];
+    if (!files.length) throw new Error(`Version "${label}" not found.`);
+
+    Drive.Files.remove(files[0].id as string);
+
+    if (DocPropsCache.read('PUBLISHER_ACTIVE_VERSION') === label) {
+      DocPropsCache.remove('PUBLISHER_ACTIVE_VERSION');
+    }
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/** Returns the Drive web URL for a version folder. */
+function publisherGetVersionDriveUrl(label: string): { ok: boolean; url?: string; error?: string } {
+  try {
+    const docId = DocumentApp.getActiveDocument().getId();
+    const projectFolderId = getOrCreateProjectFolder_(docId);
+    const folderName = buildVersionFolderName(docId, label);
+
+    const resp = Drive.Files.list({
+      q: `'${projectFolderId}' in parents and name="${folderName.replace(/"/g, '\\"')}" and mimeType="application/vnd.google-apps.folder" and trashed=false`,
+      fields: 'files(id)',
+      spaces: 'drive',
+    } as any);
+    const files: any[] = (resp as any).files || [];
+    if (!files.length) throw new Error(`Version "${label}" not found.`);
+
+    return { ok: true, url: `https://drive.google.com/drive/folders/${files[0].id as string}` };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Returns true if the active version's EPUB folder already contains any files.
+ * The sidebar uses this to show a write-guard confirmation before building.
+ */
+function publisherCheckVersionHasFiles(): { ok: boolean; hasFiles?: boolean; error?: string } {
+  try {
+    const label = getActiveVersionLabel_();
+    const docId = DocumentApp.getActiveDocument().getId();
+    const epubFolderId = getOrCreateVersionEpubFolder_(docId, label);
+    const resp = Drive.Files.list({
+      q: `'${epubFolderId}' in parents and trashed=false`,
+      fields: 'files(id)',
+      pageSize: 1,
+      spaces: 'drive',
+    } as any);
+    return { ok: true, hasFiles: ((resp as any).files || []).length > 0 };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Accepts a base64-encoded image from the sidebar and saves it as cover.png
+ * in the active version's EPUB folder, replacing any prior cover file.
+ */
+function publisherUploadCoverImage(base64Data: string, mimeType: string): { ok: boolean; error?: string } {
+  try {
+    const docId = DocumentApp.getActiveDocument().getId();
+    const label = getActiveVersionLabel_();
+    const epubFolderId = getOrCreateVersionEpubFolder_(docId, label);
+    assertInsideEditorLLMRoot_(epubFolderId);
+
+    const bytes = Utilities.base64Decode(base64Data);
+    const blob = Utilities.newBlob(bytes, mimeType, 'cover.png');
+
+    deleteDriveFileByName_(epubFolderId, 'cover.png');
+    Drive.Files.create(
+      { name: 'cover.png', parents: [epubFolderId], mimeType: mimeType },
+      blob,
+      { fields: 'id' }
+    );
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Sidebar entry: walks the Publisher/Cover tab, generates one Nano Banana Pro
+ * image per concept (using the prior baseline image + the concept's prompt
+ * text), saves each to EditorLLM/images, and inserts the new image into the
+ * doc just after the prior baseline so it becomes the new baseline.
+ */
+function publisherGenerateCoverImages(): {
+  ok: boolean;
+  folderName?: string;
+  folderUrl?: string;
+  results?: Array<{
+    conceptName: string | null;
+    conceptNumber: number | null;
+    status: 'generated' | 'skipped' | 'failed';
+    fileName?: string;
+    fileUrl?: string;
+    archivedAs?: string;
+    error?: string;
+  }>;
+  error?: string;
+} {
+  let result: {
+    ok: boolean;
+    folderName?: string;
+    folderUrl?: string;
+    results?: Array<{
+      conceptName: string | null;
+      conceptNumber: number | null;
+      status: 'generated' | 'skipped' | 'failed';
+      fileName?: string;
+      fileUrl?: string;
+      archivedAs?: string;
+      error?: string;
+    }>;
+    error?: string;
+  } = { ok: false, error: 'Cover image generation failed.' };
+
+  runTrackedJob_('Publisher → Generate Cover Images', () => {
+    try {
+      const out = CoverImageGenerator.generateCoverImages();
+      result = { ok: true, ...out };
+    } catch (e: any) {
+      result = { ok: false, error: e.message };
+    }
+  }, true);
+
+  return result;
+}
+
+function readPublisherTabContentMap_(tabNames: string[]): Record<string, string> {
+  const byName: Record<string, string> = {};
+  for (const name of Array.from(new Set(tabNames))) {
+    byName[name] = DocOps.getTabContent(name);
+  }
+  return byName;
+}
+
+interface LastStructuralAudit_ {
+  ts: string;
+  versionLabel: string;
+  hasExplicitActiveVersion: boolean;
+  epubOk: boolean;
+  audioOk: boolean;
+  epubChecks: Array<{ label: string; ok: boolean; detail: string }>;
+  audioChecks: Array<{ label: string; ok: boolean; detail: string }>;
+  commonChecks: Array<{ label: string; ok: boolean; detail: string }>;
 }
 
 function getPublisherWorkflowState(): {
   instructions: { done: boolean; missingReason: string | null };
   tabs: { done: boolean; present: string[]; missing: string[] };
-  toc: { done: boolean; detail: string };
-  structuralAudit: { done: boolean; annotationCount: number; detail: string };
+  structuralAudit: { done: boolean; detail: string; lastAudit: LastStructuralAudit_ | null };
   publish: {
     status: 'done' | 'partial' | 'pending';
     epubReady: boolean;
@@ -1273,40 +2017,63 @@ function getPublisherWorkflowState(): {
     detail: string;
   };
 } {
+  const cached = getCachedJson_<{
+    instructions: { done: boolean; missingReason: string | null };
+    tabs: { done: boolean; present: string[]; missing: string[] };
+    structuralAudit: { done: boolean; detail: string; lastAudit: LastStructuralAudit_ | null };
+    publish: {
+      status: 'done' | 'partial' | 'pending';
+      epubReady: boolean;
+      acxReady: boolean;
+      audioFiles: number;
+      detail: string;
+    };
+  }>('publisherWorkflowState');
+  if (cached) return cached;
+
   const requiredPublisherTabs = [
-    Constants.TAB_NAMES.PUBLISHER_TITLE,
     Constants.TAB_NAMES.PUBLISHER_COPYRIGHT,
     Constants.TAB_NAMES.PUBLISHER_ABOUT_AUTHOR,
     Constants.TAB_NAMES.PUBLISHER_SALES,
     Constants.TAB_NAMES.PUBLISHER_HOOKS,
     Constants.TAB_NAMES.PUBLISHER_COVER,
+    Constants.TAB_NAMES.PUBLISHER_OPENING_CREDITS,
+    Constants.TAB_NAMES.PUBLISHER_CLOSING_CREDITS,
   ];
-
-  const instructionsContent = DocOps.getTabContent(Constants.TAB_NAMES.PUBLISHER_INSTRUCTIONS);
-  const instructionsDone = !isBlankPublisherContent(instructionsContent);
-
-  const presentPublisherTabs = requiredPublisherTabs.filter(name => !isBlankPublisherContent(DocOps.getTabContent(name)));
-  const missingPublisherTabs = requiredPublisherTabs.filter(name => presentPublisherTabs.indexOf(name) === -1);
-
-  const tocContent = DocOps.getTabContent(Constants.TAB_NAMES.PUBLISHER_TOC);
-  const tocDone = !isBlankPublisherContent(tocContent);
-
-  const annotationCount = countPublisherAnnotationsOnManuscript_();
-  const audioFiles = listEditorLLMAudioFiles().length;
-
   const epubRequiredTabs = [
-    Constants.TAB_NAMES.PUBLISHER_TITLE,
     Constants.TAB_NAMES.PUBLISHER_COPYRIGHT,
-    Constants.TAB_NAMES.PUBLISHER_TOC,
     Constants.TAB_NAMES.MANUSCRIPT,
     Constants.TAB_NAMES.PUBLISHER_ABOUT_AUTHOR,
   ];
-  const epubReady = epubRequiredTabs.every(name => !isBlankPublisherContent(DocOps.getTabContent(name)));
+  const tabContentByName = readPublisherTabContentMap_([
+    Constants.TAB_NAMES.PUBLISHER_INSTRUCTIONS,
+    ...requiredPublisherTabs,
+    ...epubRequiredTabs,
+  ]);
+
+  const instructionsContent = tabContentByName[Constants.TAB_NAMES.PUBLISHER_INSTRUCTIONS] || '';
+  const instructionsDone = !isBlankPublisherContent(instructionsContent);
+
+  const presentPublisherTabs = requiredPublisherTabs.filter(name => !isBlankPublisherContent(tabContentByName[name] || ''));
+  const missingPublisherTabs = requiredPublisherTabs.filter(name => presentPublisherTabs.indexOf(name) === -1);
+
+  const structuralAuditMissing = [
+    ...(instructionsDone ? [] : [Constants.TAB_NAMES.PUBLISHER_INSTRUCTIONS]),
+    ...missingPublisherTabs,
+  ];
+  const audioFiles = listEditorLLMAudioFiles().length;
+  const epubReady = epubRequiredTabs.every(name => !isBlankPublisherContent(tabContentByName[name] || ''));
   const acxReady = audioFiles > 0;
   const publishStatus: 'done' | 'partial' | 'pending' =
     epubReady && acxReady ? 'done' : (epubReady || acxReady ? 'partial' : 'pending');
 
-  return {
+  let lastAudit: LastStructuralAudit_ | null = null;
+  try {
+    const raw = DocPropsCache.read(PUBLISHER_STRUCT_AUDIT_PROP_KEY_);
+    if (raw) lastAudit = JSON.parse(raw) as LastStructuralAudit_;
+  } catch (_) {}
+
+  const state = {
     instructions: {
       done: instructionsDone,
       missingReason: instructionsDone ? null : 'Publisher Instructions is blank or missing.',
@@ -1316,16 +2083,12 @@ function getPublisherWorkflowState(): {
       present: presentPublisherTabs,
       missing: missingPublisherTabs,
     },
-    toc: {
-      done: tocDone,
-      detail: tocDone ? 'Table of Contents tab is present.' : 'Table of Contents has not been generated yet.',
-    },
     structuralAudit: {
-      done: annotationCount > 0,
-      annotationCount,
-      detail: annotationCount > 0
-        ? `${annotationCount} live [Publisher] annotation(s) on Manuscript.`
-        : 'No live [Publisher] structural-audit annotations detected on Manuscript.',
+      done: structuralAuditMissing.length === 0,
+      detail: structuralAuditMissing.length === 0
+        ? 'Publisher Instructions and required publisher tabs are present.'
+        : `Missing required publisher artifacts: ${structuralAuditMissing.join(', ')}.`,
+      lastAudit,
     },
     publish: {
       status: publishStatus,
@@ -1335,6 +2098,8 @@ function getPublisherWorkflowState(): {
       detail: `EPUB ${epubReady ? 'ready' : 'not ready'} • ACX ${acxReady ? `ready (${audioFiles} mp3)` : 'needs mp3 audio'}`,
     },
   };
+  putCachedJson_('publisherWorkflowState', state);
+  return state;
 }
 
 function publisherBuildEpubPackage(): { ok: boolean; folderName?: string; folderUrl?: string; fileName?: string; error?: string } {
@@ -1381,17 +2146,16 @@ function publisherBuildAcxPackageFromAllAudio(): { ok: boolean; folderName?: str
 function publisherBuildEpubPackageImpl_(): { ok: true; folderName: string; folderUrl: string; fileName: string } {
   DocOps.ensureStandardTabs();
   const doc = DocumentApp.getActiveDocument();
-  const packagesFolderId = getOrCreateEditorLLMPackagesFolder_();
-  const now = new Date();
-  const isoDate = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd');
-  const hhmmss = Utilities.formatDate(now, Session.getScriptTimeZone(), 'HHmmss');
-  const artifactStamp = buildPublisherArtifactStamp_(now);
-  const packageFolderName = buildPublisherPackageFolderName(doc.getName(), isoDate, hhmmss);
-  const packageFolderId = getOrCreateDriveFolderByName_(packageFolderName, packagesFolderId);
+  const docId = doc.getId();
+  const label = getActiveVersionLabel_();
+  const epubFolderId = getOrCreateVersionEpubFolder_(docId, label);
+  assertInsideEditorLLMRoot_(epubFolderId);
+  const versionFolderName = buildVersionFolderName(docId, label);
 
-  Tracer.info(`[publisherBuildEpubPackage] package folder="${packageFolderName}" doc="${doc.getName()}"`);
+  Tracer.info(`[publisherBuildEpubPackage] version="${versionFolderName}" doc="${doc.getName()}"`);
 
-  const tempDocFile = createGoogleDocInFolder_(`${doc.getName()} EPUB Export_${artifactStamp}`, packageFolderId);
+  // Assemble content into a temporary Google Doc for export.
+  const tempDocFile = createGoogleDocInFolder_(`${doc.getName()} Export_V${label}`, epubFolderId);
   Tracer.info(`[publisherBuildEpubPackage] temp doc created id=${tempDocFile.id}`);
 
   const tempDoc = DocumentApp.openById(tempDocFile.id as string);
@@ -1399,9 +2163,7 @@ function publisherBuildEpubPackageImpl_(): { ok: true; folderName: string; folde
   DocOps.clearBodySafely(tempBody);
 
   const sequence = [
-    Constants.TAB_NAMES.PUBLISHER_TITLE,
     Constants.TAB_NAMES.PUBLISHER_COPYRIGHT,
-    Constants.TAB_NAMES.PUBLISHER_TOC,
     Constants.TAB_NAMES.MANUSCRIPT,
     Constants.TAB_NAMES.PUBLISHER_ABOUT_AUTHOR,
   ];
@@ -1415,30 +2177,51 @@ function publisherBuildEpubPackageImpl_(): { ok: true; folderName: string; folde
   }
   tempDoc.saveAndClose();
 
-  const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(tempDocFile.id as string)}/export?mimeType=application/epub%2Bzip`;
-  const response = UrlFetchApp.fetch(url, {
+  // Export the assembled doc as DOCX.
+  const docxMime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  const exportUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(tempDocFile.id as string)}/export?mimeType=${encodeURIComponent(docxMime)}`;
+  const response = UrlFetchApp.fetch(exportUrl, {
     method: 'get',
     headers: { Authorization: `Bearer ${ScriptApp.getOAuthToken()}` },
     muteHttpExceptions: true,
   });
-  Tracer.info(`[publisherBuildEpubPackage] export response code=${response.getResponseCode()}`);
+  Tracer.info(`[publisherBuildEpubPackage] DOCX export response code=${response.getResponseCode()}`);
   if (response.getResponseCode() < 200 || response.getResponseCode() >= 300) {
-    throw new Error(`EPUB export failed (${response.getResponseCode()}).`);
+    throw new Error(`DOCX export failed (${response.getResponseCode()}).`);
   }
 
-  const epubName = `${doc.getName()}_${artifactStamp}.epub`;
-  const file = Drive.Files.create(
-    { name: epubName, parents: [packageFolderId], mimeType: 'application/epub+zip' },
-    response.getBlob().setName(epubName),
-    { fields: 'id,name,webViewLink' }
-  ) as any;
-  Tracer.info(`[publisherBuildEpubPackage] created file="${file.name}" folderId=${packageFolderId}`);
+  // Clean up temp doc now that we have the blob.
+  Drive.Files.remove(tempDocFile.id as string);
+
+  // Write content.docx into the EPUB folder (overwrite if present).
+  deleteDriveFileByName_(epubFolderId, 'content.docx');
+  Drive.Files.create(
+    { name: 'content.docx', parents: [epubFolderId], mimeType: docxMime },
+    response.getBlob().setName('content.docx'),
+    { fields: 'id' }
+  );
+  Tracer.info('[publisherBuildEpubPackage] saved content.docx');
+
+  // Write style_inkfluence.css from the Visual Styles tab (if present).
+  const visualStylesMarkdown = DocOps.getTabContent(Constants.TAB_NAMES.PUBLISHER_VISUAL_STYLES);
+  if (visualStylesMarkdown && visualStylesMarkdown.trim()) {
+    const cssContent = extractCssFromTab(visualStylesMarkdown);
+    deleteDriveFileByName_(epubFolderId, 'style_inkfluence.css');
+    Drive.Files.create(
+      { name: 'style_inkfluence.css', parents: [epubFolderId], mimeType: 'text/css' },
+      Utilities.newBlob(cssContent, 'text/css', 'style_inkfluence.css'),
+      { fields: 'id' }
+    );
+    Tracer.info('[publisherBuildEpubPackage] saved style_inkfluence.css');
+  }
+
+  invalidatePublisherWorkflowStartupCache_();
 
   return {
     ok: true,
-    folderName: packageFolderName,
-    folderUrl: `https://drive.google.com/drive/folders/${packageFolderId}`,
-    fileName: file.name as string,
+    folderName: versionFolderName,
+    folderUrl: `https://drive.google.com/drive/folders/${epubFolderId}`,
+    fileName: 'content.docx',
   };
 }
 
@@ -1447,88 +2230,27 @@ function publisherBuildAcxPackageImpl_(audioFileIds: string[]): { ok: true; fold
     throw new Error('No audio files selected.');
   }
 
-  const doc = DocumentApp.getActiveDocument();
-  const packagesFolderId = getOrCreateEditorLLMPackagesFolder_();
-  const now = new Date();
-  const isoDate = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd');
-  const hhmmss = Utilities.formatDate(now, Session.getScriptTimeZone(), 'HHmmss');
-  const packageFolderName = buildPublisherPackageFolderName(doc.getName(), isoDate, hhmmss);
-  const packageFolderId = getOrCreateDriveFolderByName_(packageFolderName, packagesFolderId);
-  const acxFolderId = getOrCreateDriveFolderByName_('ACX Audio', packageFolderId);
+  const docId = DocumentApp.getActiveDocument().getId();
+  const label = getActiveVersionLabel_();
+  const audioFolderId = getOrCreateVersionAudioFolder_(docId, label);
+  assertInsideEditorLLMRoot_(audioFolderId);
+  const versionFolderName = buildVersionFolderName(docId, label);
 
-  Tracer.info(`[publisherBuildAcxPackage] package folder="${packageFolderName}" files=${audioFileIds.length}`);
+  Tracer.info(`[publisherBuildAcxPackage] version="${versionFolderName}" files=${audioFileIds.length}`);
 
   const copiedNames: string[] = [];
   for (const fileId of audioFileIds) {
-    const copied = copyDriveFileIntoFolder_(fileId, acxFolderId);
+    const copied = copyDriveFileIntoFolder_(fileId, audioFolderId);
     copiedNames.push(copied.name);
     Tracer.info(`[publisherBuildAcxPackage] copied "${copied.name}"`);
   }
 
   return {
     ok: true,
-    folderName: packageFolderName,
-    folderUrl: `https://drive.google.com/drive/folders/${acxFolderId}`,
+    folderName: versionFolderName,
+    folderUrl: `https://drive.google.com/drive/folders/${audioFolderId}`,
     copied: copiedNames,
   };
-}
-
-/**
- * Converts `text` to speech using ElevenLabs and saves the resulting MP3 to
- * the "EditorLLM/audio" folder in the user's Google Drive.  Returns:
- *   • `audioBase64`   — for immediate in-dialog playback via a blob URL.
- *   • `driveUrl`      — a shareable Drive download link (persists after the
- *                       dialog is closed).
- *   • `driveFileName` — the filename saved in Drive (shown in the TTS overlay).
- *
- * Drive save failures are non-fatal: the audio is still returned so the user
- * can play it back in the dialog even if Drive is unavailable.
- *
- * ElevenLabs accepts ≈5 000 chars per request on the standard tier; the
- * dialog truncates text client-side before calling this function.
- */
-function elevenLabsTextToSpeech(
-  text:    string,
-  voiceId: string,
-  modelId: string
-): { ok: boolean; audioBase64?: string; driveUrl?: string; driveFileId?: string; driveFileName?: string; mimeType?: string; error?: string } {
-  try {
-    const audioBase64 = ElevenLabsService.textToSpeech(text, voiceId, modelId || undefined);
-
-    // Save to Drive for a permanent shareable link.
-    // Uses the existing Advanced Drive Service (Drive v3) rather than DriveApp
-    // so we stay consistent with CollaborationService and avoid a second Drive
-    // client.  Drive.Files.create uploads the blob and returns the new file
-    // resource; Drive.Permissions.create makes it readable by anyone with the link.
-    let driveUrl:      string | undefined;
-    let driveFileId:   string | undefined;
-    let driveFileName: string | undefined;
-    try {
-      const folderId = getOrCreateEditorLLMAudioFolder_();
-      const bytes    = Utilities.base64Decode(audioBase64);
-      const filename = 'tts_' + Utilities.getUuid().replace(/-/g, '').slice(0, 12) + '.mp3';
-      const blob     = Utilities.newBlob(bytes, 'audio/mpeg', filename);
-      const fileRes  = Drive.Files.create(
-        { name: filename, mimeType: 'audio/mpeg', parents: [folderId] },
-        blob,
-        { fields: 'id' }
-      );
-      driveFileId   = (fileRes as any).id as string;
-      driveFileName = filename;
-      Drive.Permissions.create(
-        { role: 'reader', type: 'anyone' },
-        driveFileId,
-        { sendNotificationEmail: false }
-      );
-      driveUrl = `https://drive.google.com/uc?id=${driveFileId}&export=download`;
-    } catch (driveErr: any) {
-      Tracer.warn(`[elevenLabsTextToSpeech] Drive save failed: ${driveErr.message}`);
-    }
-
-    return { ok: true, audioBase64, driveUrl, driveFileId, driveFileName, mimeType: 'audio/mpeg' };
-  } catch (e: any) {
-    return { ok: false, error: e.message };
-  }
 }
 
 /** Saves the document's preferred ElevenLabs voice ID to DocumentProperties. */
@@ -1566,94 +2288,33 @@ function elevenLabsEnsureVoiceMappings(): Record<string, string> | null {
   return ElevenLabsService.ensureVoiceMappings();
 }
 
-/**
- * Returns the cached pronunciation dictionaries (id, version_id, name, graphemes)
- * from CacheService, or null if they have not been prefetched yet.
- * The TTS dialog can use this to show the user which dictionaries will be
- * applied to the next generation.
- */
-function elevenLabsGetPronunciationDictionaries(): ElevenLabsPronunciationDictionary[] | null {
-  return ElevenLabsService.getCachedPronunciationDictionaries();
-}
-
-/**
- * Re-fetches all pronunciation dictionaries from ElevenLabs, rebuilds the
- * cache, and returns the refreshed list.  Called when the user clicks
- * "Refresh" in the pronunciation overlay — handles the case where the cache
- * was empty at startup (e.g. API key was set after onOpen ran).
- */
-function elevenLabsRefreshPronunciationDictionaries(): ElevenLabsPronunciationDictionary[] {
-  ElevenLabsService.prefetchPronunciationDictionaries();
-  return ElevenLabsService.getCachedPronunciationDictionaries() ?? [];
-}
-
-/**
- * Persists the user's selected pronunciation dictionary ID to DocumentProperties.
- * DocumentProperties are per-document (shared across all editors of this doc).
- */
-function elevenLabsSaveSelectedDictionaryId(id: string): void {
-  ElevenLabsService.saveSelectedDictionaryId(id);
-}
-
-/** Returns the saved selected pronunciation dictionary ID, or null if none set. */
-function elevenLabsGetSelectedDictionaryId(): string | null {
-  return ElevenLabsService.getSelectedDictionaryId();
-}
-
-/** Persists last-generation metadata so the dialog can recall it on next open. */
-function elevenLabsSaveLastGeneration(meta: ElevenLabsLastGenMeta): void {
-  ElevenLabsService.saveLastGeneration(meta);
-}
-
-/** Returns the persisted last-generation metadata, or null if none exists. */
-function elevenLabsGetLastGeneration(): ElevenLabsLastGenMeta | null {
-  return ElevenLabsService.getLastGeneration();
-}
-
-/**
- * Fetches the audio bytes for the last saved generation from Google Drive and
- * returns them as base64 so the dialog can populate its audio player.
- *
- * The file was created by this script (Drive.Files.create) so it is within the
- * `drive.file` OAuth scope.  UrlFetchApp is used with the user's OAuth token
- * so the Drive API returns the binary content directly (avoids the large-file
- * redirect that `https://drive.google.com/uc?export=download` triggers).
- */
-function elevenLabsLoadLastAudio(): { audioBase64: string; mimeType: string } | null {
-  const meta = ElevenLabsService.getLastGeneration();
-  if (!meta || !meta.fileId) return null;
-  try {
-    const token = ScriptApp.getOAuthToken();
-    const url   = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(meta.fileId)}?alt=media`;
-    const resp  = UrlFetchApp.fetch(url, {
-      headers:            { Authorization: `Bearer ${token}` },
-      muteHttpExceptions: true,
-    });
-    const code = resp.getResponseCode();
-    if (code < 200 || code >= 300) return null;
-    return {
-      audioBase64: Utilities.base64Encode(resp.getBlob().getBytes()),
-      mimeType:    'audio/mpeg',
-    };
-  } catch (_) {
-    return null;
-  }
-}
 
 /**
  * Returns the title of the tab the user currently has open.
  * Falls back to the first tab if getActiveTab() is not supported or returns null.
  */
 function getActiveTabName(): string | null {
+  const cached = getCachedJson_<string | null>('activeTabName');
+  if (cached !== null) return cached;
+
   const doc = DocumentApp.getActiveDocument();
   const active = (doc as any).getActiveTab?.();
-  if (active) return active.getTitle() as string;
+  if (active) {
+    const title = active.getTitle() as string;
+    putCachedJson_('activeTabName', title);
+    return title;
+  }
   const tabs = doc.getTabs();
-  return tabs.length > 0 ? tabs[0].getTitle() : null;
+  const fallback = tabs.length > 0 ? tabs[0].getTitle() : null;
+  putCachedJson_('activeTabName', fallback);
+  return fallback;
 }
 
 // Tab list (used by sidebar dropdowns)
 function getTabNames(): string[] {
+  const cached = getCachedJson_<string[]>('tabNames');
+  if (cached) return cached;
+
   const doc = DocumentApp.getActiveDocument();
   const names: string[] = [];
 
@@ -1665,6 +2326,7 @@ function getTabNames(): string[] {
   }
 
   collect(doc.getTabs());
+  putCachedJson_('tabNames', names);
   return names;
 }
 
@@ -1695,9 +2357,23 @@ function getDirectivesOnTab_(tabName: string, agentFilter?: string): any[] {
   return DirectivePersistence.listDirectivesOnTab(tabName, agentFilter);
 }
 
-/** Backward-compatible UI helper: TTS panel asks for TtsAgent directives only. */
+/**
+ * Returns TTS directives for the tab. Break directives are augmented with a
+ * `_previewText` field (first two words of tab text after the break position)
+ * so the directive list can show a live location hint.
+ */
 function getTabDirectives(tabName: string): any[] {
-  return getDirectivesOnTab_(tabName, 'TtsAgent');
+  const directives = getDirectivesOnTab_(tabName, 'TtsAgent');
+  const hasBreaks = directives.some((d: any) => d.type === 'break');
+  if (!hasBreaks) return directives;
+  const tabText = DocOps.getTabContent(tabName);
+  return directives.map((d: any) => {
+    if (d.type === 'break' && Number.isFinite(d._insertPos)) {
+      const words = tabText.slice(d._insertPos as number).trimStart().split(/\s+/).slice(0, 2).join(' ');
+      return { ...d, _previewText: words };
+    }
+    return d;
+  });
 }
 
 function jumpToDirective(tabName: string, namedRangeName: string): boolean {
@@ -1818,214 +2494,822 @@ function addTtsDirectiveFromSelection(
   return true;
 }
 
+function addBreakDirectiveFromSelection(
+  tabName: string,
+  timeMs: number
+): boolean {
+  const activeTab = getActiveTabName();
+  if (!activeTab || activeTab !== tabName) {
+    throw new Error(`Active tab must be "${tabName}" when adding a directive.`);
+  }
+
+  const doc = DocumentApp.getActiveDocument();
+  const docTab = DocOps.getTabByName(tabName);
+  if (!docTab) {
+    throw new Error(`Tab "${tabName}" not found.`);
+  }
+
+  const cursor = doc.getCursor();
+  if (!cursor) {
+    throw new Error('Place the cursor in the document before adding a break.');
+  }
+  const surrounding = cursor.getSurroundingText();
+  if (!surrounding) {
+    throw new Error('Cursor must be inside text before adding a break.');
+  }
+  const off = cursor.getSurroundingTextOffset();
+  const len = surrounding.getText().length;
+  if (len <= 0 || off < 0 || off >= len) {
+    throw new Error('Cursor must be placed before a character to add a break.');
+  }
+
+  const range = docTab.newRange()
+    .addElement(surrounding, off, off)
+    .build();
+  DirectivePersistence.createDirectiveAtRange(
+    docTab,
+    'TtsAgent',
+    'break',
+    { timeMs },
+    range
+  );
+  return true;
+}
+
 function locateDirectivePositions_(directives: any[]): any[] {
   return directives
     .filter((d: any) => Number.isFinite(d._insertPos) && d._insertPos >= 0)
     .sort((a: any, b: any) => a._insertPos - b._insertPos);
 }
 
-function injectBreakTags_(text: string, segmentStart: number, breaks: any[]): string {
-  if (!breaks.length) return text;
-  let out = '';
-  let cursor = 0;
-  for (const br of breaks) {
-    const rel = br._insertPos - segmentStart;
-    if (rel < 0 || rel > text.length) continue;
-    out += text.slice(cursor, rel);
-    const ms = Number(br.payload?.timeMs);
-    if (Number.isFinite(ms) && ms > 0) {
-      out += `<break time="${Math.round(ms)}ms" />`;
+/**
+ * Collapses break directives that share the EXACT same `_insertPos` into a
+ * single break with the maximum duration.  Breaks at distinct positions are
+ * always preserved — even when no TTS event sits between them — because the
+ * text between them must be voiced followed by silence at each break point.
+ *
+ * Same-position duplicates do happen in practice, e.g. when an LLM emits an
+ * explicit break for "..." and the auto-injected ellipsis break also matches
+ * the same offset.  In that case the longest duration wins.
+ *
+ * Breaks before the first TTS directive are discarded (no voice context).
+ * A break is trailing (and discarded) only when its `_insertPos` is at or
+ * beyond `tabTextLength` — i.e. there is no text remaining after the break.
+ */
+function deduplicateConsecutiveBreaks_(sortedEvents: any[], tabTextLength: number): any[] {
+  const result: any[] = [];
+  let pendingBreak: any | null = null;
+  let seenFirstTts = false;
+
+  const flushPending = () => {
+    if (pendingBreak !== null) {
+      result.push(pendingBreak);
+      pendingBreak = null;
     }
-    cursor = rel;
+  };
+
+  for (const event of sortedEvents) {
+    if (event.type === 'tts') {
+      seenFirstTts = true;
+      flushPending();
+      result.push(event);
+    } else if (event.type === 'break') {
+      if (!seenFirstTts) continue; // ignore breaks before first TTS
+      const ms = Number(event.payload?.timeMs ?? 0);
+      if (pendingBreak === null) {
+        pendingBreak = { ...event, payload: { timeMs: ms } };
+      } else if (pendingBreak._insertPos === event._insertPos) {
+        // Same cursor location — keep the longer duration.
+        const prevMs = Number(pendingBreak.payload?.timeMs ?? 0);
+        pendingBreak = { ...pendingBreak, payload: { timeMs: Math.max(prevMs, ms) } };
+      } else {
+        // Different cursor location — both breaks are valid; flush the
+        // previous one and start tracking the new one.  Text between them
+        // must still be voiced.
+        flushPending();
+        pendingBreak = { ...event, payload: { timeMs: ms } };
+      }
+    }
   }
-  out += text.slice(cursor);
-  return out;
+  // Discard trailing break only when there is no text remaining after it.
+  if (pendingBreak !== null && pendingBreak._insertPos < tabTextLength) {
+    result.push(pendingBreak);
+  }
+  return result;
 }
 
 /**
- * Renames the Drive audio file created by a previous TTS generation.
- * The `.mp3` extension is appended automatically if not already present.
- */
-function elevenLabsRenameAudioFile(fileId: string, newName: string): boolean {
-  try {
-    const safeName = newName.trim().endsWith('.mp3') ? newName.trim() : newName.trim() + '.mp3';
-    Drive.Files.update({ name: safeName }, fileId);
-    return true;
-  } catch (e: any) {
-    Tracer.warn(`[elevenLabsRenameAudioFile] failed: ${e.message}`);
-    return false;
-  }
-}
-
-/**
- * Generates audio from TTS directives on the given tab, stitching each
- * voice-change segment sequentially.  When `useStitching` is true, each
- * ElevenLabs request receives the previous request IDs so the API can
- * maintain prosody continuity across voice-switch boundaries.
+ * Core audio segment builder — pure function with injected ElevenLabs caller for testability.
  *
- * Returns the combined MP3 as base64 and a Drive download link.
- */
-
-/**
- * Generates a short audio preview for a single TTS directive.
+ * Processes all TTS + break directives for a tab and produces a flat array of
+ * AudioSegmentItem values ready for client-side assembly:
+ *   - {type:'audio', audioBase64}  — MP3 bytes from a single ElevenLabs call
+ *   - {type:'break', durationMs}   — silence to be generated client-side via ffmpeg
  *
- * Uses the SAME segment-boundary logic as {@link elevenLabsTextToSpeechFromDirectives}:
- *   • Locate ALL TTS directives on the tab together so relative positions are
- *     computed consistently (the locator advances its search cursor through the
- *     located list, so locating directives one-at-a-time can return different
- *     positions).
- *   • Segment i starts at position 0 when i === 0, otherwise at
- *     `located[i]._matchPos`.  This mirrors the generation function exactly and
- *     avoids the bug where previewing the first directive skips to the second
- *     one because the bookmark cursor (`_matchPos`) sits at the END of the
- *     match range rather than the start of the segment.
- *   • The segment is capped at the next directive's position (or end of text).
- *   • Only the first sentence (up to 400 chars) is sent to the API.
- *
- * No Drive file is created; audio bytes are returned as base64 for immediate
- * playback in the sidebar.
+ * Algorithm:
+ *   1. Sort all events by _insertPos.
+ *   2. Deduplicate consecutive breaks (keep the longest); discard breaks before
+ *      the first TTS event and breaks whose _insertPos >= tabText.length (nothing
+ *      to voice after them).
+ *   3. Walk events in order.  A TTS event updates the current voice and generates
+ *      audio for text[event._insertPos .. nextEvent._insertPos).  The first TTS
+ *      event also includes preamble text from position 0.
+ *   4. When a TTS event switches voice_id relative to the previous TTS event and
+ *      no explicit break has been seen between them, a 1 s silence is
+ *      auto-inserted before the new voice begins.
+ *   5. A break event appends a break item, then generates audio for the text
+ *      that follows it (still under the current voice) up to the next event.
+ *   6. If the result contains any audio, a 2 s silence is prepended and appended
+ *      to the entire sequence (leader/trailer silence).
+ *   7. Stitching request IDs are accumulated per voice across the entire tab,
+ *      including across break boundaries, so ElevenLabs maintains prosody continuity.
  */
-function elevenLabsPreviewDirective(
-  tabName: string,
-  directiveName: string,
-): { ok: boolean; audioBase64?: string; mimeType?: string; error?: string } {
-  try {
-    // Locate ALL TTS directives together — same as the full generation path.
-    const allRaw    = getDirectivesOnTab_(tabName, 'TtsAgent');
-    const tabText   = DocOps.getTabContent(tabName);
-    const ttsRaw    = allRaw.filter((d: any) => d.type === 'tts');
-    const located   = locateDirectivePositions_(ttsRaw);
+function buildAudioSegments_(
+  allDirectives: any[],
+  tabText: string,
+  useStitching: boolean,
+  callElevenLabs: (
+    text: string,
+    voiceId: string,
+    modelId: string,
+    prevIds: string[],
+    voiceSettings: { stability: number; similarity_boost: number }
+  ) => { audioBytes: number[]; requestId: string }
+): AudioSegmentItem[] {
+  const located = locateDirectivePositions_(allDirectives);
+  const ttsDirectives = located.filter((d: any) => d.type === 'tts');
+  if (!ttsDirectives.length) return [];
 
-    const idx = located.findIndex((d: any) => d.name === directiveName);
-    if (idx < 0) return { ok: false, error: 'Directive not found or could not locate in tab text.' };
+  // Merge and deduplicate
+  const allEvents = [...located].sort((a: any, b: any) => a._insertPos - b._insertPos);
+  const events = deduplicateConsecutiveBreaks_(allEvents, tabText.length);
 
-    const directive = located[idx];
+  const result: AudioSegmentItem[] = [];
+  const requestIdsByVoice: Record<string, string[]> = {};
+  let currentDirective: any | null = null;
+  let firstTtsSeen = false;
+  let prevVoiceId: string | null = null;
+  let breakSeenSinceTts = false;
 
-    // Segment boundaries: identical to elevenLabsTextToSpeechFromDirectives.
-    const segStart  = idx === 0 ? 0 : directive._insertPos;
-    const segEnd    = idx + 1 < located.length ? located[idx + 1]._insertPos : tabText.length;
-
-    if (segStart >= segEnd) return { ok: false, error: 'Directive segment is empty.' };
-
-    // Extract first sentence from the segment (cap at 400 chars).
-    const segText = tabText.slice(segStart, segEnd).trim();
-    const cap     = segText.slice(0, 400);
-    const sentEnd = cap.search(/[.!?](\s|$)/);
-    const preview = (sentEnd >= 0 ? cap.slice(0, sentEnd + 1) : cap).trim();
-
-    if (!preview) return { ok: false, error: 'No speakable text found in directive segment.' };
-
-    Tracer.info(`[elevenLabsPreviewDirective] idx=${idx} start=${segStart} end=${segEnd} preview="${preview.slice(0, 80)}…"`);
-
-    const audioBase64 = ElevenLabsService.textToSpeech(
-      preview,
-      directive.voice_id,
-      directive.tts_model || undefined,
+  function generateAudio_(text: string, directive: any): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const voiceId = directive.voice_id as string;
+    const prevIds = stitchingIdsForVoice(voiceId, requestIdsByVoice, useStitching);
+    const res = callElevenLabs(
+      trimmed,
+      voiceId,
+      directive.tts_model as string,
+      prevIds,
+      { stability: directive.stability ?? 0.6, similarity_boost: directive.similarity_boost ?? 0.75 }
     );
-    return { ok: true, audioBase64, mimeType: 'audio/mpeg' };
-  } catch (e: any) {
-    return { ok: false, error: e.message };
+    recordRequestId(voiceId, res.requestId, requestIdsByVoice);
+    result.push({ type: 'audio', audioBase64: Utilities.base64Encode(res.audioBytes) });
   }
-}
 
-function elevenLabsTextToSpeechFromDirectives(
-  tabName: string,
-  useStitching: boolean
-): { ok: boolean; audioBase64?: string; driveUrl?: string; driveFileId?: string; driveFileName?: string; segmentCount?: number; error?: string } {
-  try {
-    const directives = getDirectivesOnTab_(tabName, 'TtsAgent');
-    if (!directives.length) {
-      return { ok: false, error: 'No directives found on this tab.' };
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
+    const nextPos = i + 1 < events.length ? events[i + 1]._insertPos : tabText.length;
+
+    if (event.type === 'tts') {
+      const voiceId = event.voice_id as string;
+      // Auto-insert 1s silence at voice switches with no explicit break.
+      if (prevVoiceId !== null && voiceId !== prevVoiceId && !breakSeenSinceTts) {
+        result.push({ type: 'break', durationMs: 1000 });
+      }
+      // First TTS event includes the preamble (text before position 0..event.pos).
+      const textStart = !firstTtsSeen ? 0 : event._insertPos;
+      firstTtsSeen = true;
+      currentDirective = event;
+      prevVoiceId = voiceId;
+      breakSeenSinceTts = false;
+      generateAudio_(tabText.slice(textStart, nextPos), currentDirective);
+
+    } else if (event.type === 'break') {
+      breakSeenSinceTts = true;
+      const durationMs = Number(event.payload?.timeMs ?? 0);
+      if (durationMs > 0) {
+        result.push({ type: 'break', durationMs });
+      }
+      // Text after the break (up to the next event) is voiced by the current directive.
+      if (currentDirective) {
+        generateAudio_(tabText.slice(event._insertPos, nextPos), currentDirective);
+      }
     }
-
-    const tabText = DocOps.getTabContent(tabName);
-    if (!tabText.trim()) {
-      return { ok: false, error: 'Tab is empty.' };
-    }
-
-    const located = locateDirectivePositions_(directives);
-    const ttsDirectives = located.filter((d: any) => d.type === 'tts');
-    const breakDirectives = located.filter((d: any) => d.type === 'break');
-
-    if (!ttsDirectives.length) {
-      return { ok: false, error: 'No TTS directives found on this tab.' };
-    }
-
-    if (!located.length) {
-      return { ok: false, error: 'No directives with locatable positions in tab text.' };
-    }
-
-    // Build text segments: TTS directive[i] covers text[pos[i]..pos[i+1]) or end.
-    // The preamble before the first directive is read in the first TTS voice.
-    type Segment = { text: string; directive: any };
-    const segments: Segment[] = [];
-    for (let i = 0; i < ttsDirectives.length; i++) {
-      const start = i === 0 ? 0 : ttsDirectives[i]._insertPos;
-      const end   = i + 1 < ttsDirectives.length ? ttsDirectives[i + 1]._insertPos : tabText.length;
-      const segmentBreaks = breakDirectives.filter((d: any) => d._insertPos >= start && d._insertPos <= end);
-      const text = injectBreakTags_(tabText.slice(start, end), start, segmentBreaks).trim();
-      if (text) segments.push({ text, directive: ttsDirectives[i] });
-    }
-
-    // Generate audio for each segment.
-    // Request IDs are tracked per voice so stitching only provides continuity
-    // hints to the same voice — passing IDs from a different voice is meaningless.
-    const audioChunks: number[][] = [];
-    const requestIdsByVoice: Record<string, string[]> = {};
-
-    for (const seg of segments) {
-      const voiceId = seg.directive.voice_id;
-      const prevIds = stitchingIdsForVoice(voiceId, requestIdsByVoice, useStitching);
-      const result = ElevenLabsService.textToSpeechWithStitching(
-        seg.text,
-        voiceId,
-        seg.directive.tts_model,
-        prevIds,
-        { stability: seg.directive.stability ?? 0.6, similarity_boost: seg.directive.similarity_boost ?? 0.75 }
-      );
-      audioChunks.push(result.audioBytes as number[]);
-      recordRequestId(voiceId, result.requestId, requestIdsByVoice);
-    }
-
-    // Concatenate all MP3 byte arrays.
-    const combined: number[] = [];
-    for (const chunk of audioChunks) { for (const b of chunk) combined.push(b); }
-    const audioBase64 = Utilities.base64Encode(combined);
-
-    // Save to Drive under EditorLLM/audio folder.
-    let driveUrl:      string | undefined;
-    let driveFileId:   string | undefined;
-    let driveFileName: string | undefined;
-    try {
-      const folderId = getOrCreateEditorLLMAudioFolder_();
-      const filename  = 'tts_directives_' + Utilities.getUuid().replace(/-/g, '').slice(0, 12) + '.mp3';
-      const blob      = Utilities.newBlob(combined, 'audio/mpeg', filename);
-      const fileRes   = Drive.Files.create(
-        { name: filename, mimeType: 'audio/mpeg', parents: [folderId] },
-        blob,
-        { fields: 'id' }
-      );
-      driveFileId   = (fileRes as any).id as string;
-      driveFileName = filename;
-      Drive.Permissions.create({ role: 'reader', type: 'anyone' }, driveFileId, { sendNotificationEmail: false });
-      driveUrl = `https://drive.google.com/uc?id=${driveFileId}&export=download`;
-    } catch (driveErr: any) {
-      Tracer.warn(`[elevenLabsTextToSpeechFromDirectives] Drive save failed: ${driveErr.message}`);
-    }
-
-    return { ok: true, audioBase64, driveUrl, driveFileId, driveFileName, segmentCount: segments.length };
-  } catch (e: any) {
-    return { ok: false, error: e.message };
   }
+
+  // Wrap the entire recording with 2s silence at start and end.
+  const hasAudio = result.some(s => s.type === 'audio');
+  if (hasAudio) {
+    result.unshift({ type: 'break', durationMs: 2000 });
+    result.push({ type: 'break', durationMs: 2000 });
+  }
+
+  return result;
 }
 
 function setActiveTabByName(tabName: string): void {
   const tab = DocOps.getTabByName(tabName);
   if (tab) {
     DocumentApp.getActiveDocument().setActiveTab(tab as any);
+    putCachedJson_('activeTabName', tabName);
   }
 }
 
 function getTabContent(tabName: string): string {
   return DocOps.getTabContent(tabName);
+}
+
+// ── Custom Agents ─────────────────────────────────────────────────────────────
+
+/** Returns all custom agents visible to the current user (own + document-shared). */
+function listCustomAgents(): { agents: CustomAgentDefinition[]; currentUserEmail: string } {
+  const email = (() => { try { return Session.getActiveUser().getEmail() ?? ''; } catch (_) { return ''; } })();
+  return { agents: CustomAgentService.listAll(), currentUserEmail: email };
+}
+
+/**
+ * Validates and saves (or updates) a custom agent definition.
+ * Pass `id` to update an existing agent; omit to create a new one.
+ * Returns the saved definition (with generated id and timestamps).
+ */
+function saveCustomAgent(def: Partial<CustomAgentDefinition>): { ok: boolean; agent?: CustomAgentDefinition; error?: string } {
+  try {
+    const saved = CustomAgentService.save(def);
+    return { ok: true, agent: saved };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/** Deletes a custom agent by id. Only the owner can delete document-shared agents. */
+function deleteCustomAgent(id: string): { ok: boolean; error?: string } {
+  try {
+    CustomAgentService.remove(id);
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Promotes a user-stored agent to Document Properties, making it visible to
+ * all collaborators. The owner's email is stored with the definition so others
+ * know who to contact for changes.
+ */
+function promoteCustomAgentToDocument(id: string): { ok: boolean; agent?: CustomAgentDefinition; error?: string } {
+  try {
+    const agent = CustomAgentService.promoteToDocument(id);
+    return { ok: true, agent };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/** Promotes an agent to Script Properties so all users across all documents can use it. */
+function promoteCustomAgentToScript(id: string): { ok: boolean; agent?: CustomAgentDefinition; error?: string } {
+  try {
+    const agent = CustomAgentService.promoteToScript(id);
+    return { ok: true, agent };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/** Moves a document-shared agent back to User Properties (owner only). */
+function demoteCustomAgentToUser(id: string): { ok: boolean; agent?: CustomAgentDefinition; error?: string } {
+  try {
+    const agent = CustomAgentService.demoteToUser(id);
+    return { ok: true, agent };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+// ── Annotation auto-cleanup ────────────────────────────────────────────────
+
+/**
+ * Time-based trigger handler — invoked by GAS scheduler, not by the sidebar.
+ * Polls for resolved agent-created comments and clears their annotation artifacts.
+ */
+function autoCleanupAnnotations(): void {
+  try {
+    const result = AnnotationAutoCleanup.run();
+    Tracer.info(
+      `[autoCleanupAnnotations] cleared=${result.cleared} ` +
+      `skipped=${result.skipped} errors=${result.errors}`
+    );
+  } catch (e: any) {
+    Tracer.error(`[autoCleanupAnnotations] ${e}`);
+  }
+}
+
+function enableAnnotationAutoCleanup(intervalMinutes: number): { ok: boolean; error?: string } {
+  try {
+    AnnotationAutoCleanup.installTrigger(intervalMinutes);
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function disableAnnotationAutoCleanup(): { ok: boolean; error?: string } {
+  try {
+    AnnotationAutoCleanup.removeTrigger();
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function getAnnotationAutoCleanupStatus(): { enabled: boolean; intervalMinutes?: number } {
+  return AnnotationAutoCleanup.status();
+}
+
+/**
+ * Runs W2 (annotateTab) for the named custom agent on the given tab.
+ * tabName defaults to the currently active tab.
+ */
+function runCustomAgentAnnotate(agentId: string, tabName?: string): void {
+  const def = CustomAgentService.findById(agentId);
+  if (!def) throw new Error(`Custom agent id=${agentId} not found.`);
+  const target = tabName || getActiveTabName();
+  if (!target) throw new Error('No active tab detected.');
+  runTrackedJob_(`${def.displayName} → "${target}"`, () => {
+    if (!ensureDriveFileScopeOrAbort_('runCustomAgentAnnotate')) return;
+    BaseAgent.clearAllAgentCaches();
+    new CustomAgent(def).annotateTab(target);
+  }, true);
+}
+
+/**
+ * Runs W3 (handleCommentThreads) for all custom agents that have W3 enabled.
+ * Called via the existing "Process @AI Comments" flow; exposed separately so
+ * the UI can also trigger it standalone.
+ */
+function runCustomAgentComments(): { replied: number; skipped: number; byAgent: Record<string, number> } {
+  let result: { replied: number; skipped: number; byAgent: Record<string, number> } = { replied: 0, skipped: 0, byAgent: {} };
+  runTrackedJob_('Process Custom Agent Comments', () => {
+    if (!ensureDriveFileScopeOrAbort_('runCustomAgentComments')) return;
+    BaseAgent.clearAllAgentCaches();
+    for (const def of CustomAgentService.listAll()) {
+      if (def.workflows.w3) new CustomAgent(def);
+    }
+    CommentProcessor.init(BaseAgent.getAllAgents());
+    result = CommentProcessor.processAll();
+  }, true);
+  return result;
+}
+
+// ── W6 — Run with Context ────────────────────────────────────────────────────
+
+/**
+ * W6: Reads a content tab, applies the agent's system prompt + instruction/context
+ * tabs + a user-supplied refine action, and writes the result to an output tab.
+ * The output tab must already exist — this function never creates tabs.
+ */
+function runCustomAgentW6(
+  agentId: string,
+  contentTabName: string,
+  refineAction: string,
+  outputTabName: string
+): { ok: boolean; outputTabName: string; error?: string } {
+  const def = CustomAgentService.findById(agentId);
+  if (!def) return { ok: false, outputTabName, error: `Agent id=${agentId} not found.` };
+
+  // Output tab must exist
+  const outputDocTab = DocOps.getTabByName(outputTabName);
+  if (!outputDocTab) {
+    return {
+      ok: false, outputTabName,
+      error: `Output tab "${outputTabName}" not found. Please create it first.`,
+    };
+  }
+
+  // Read content tab
+  const content = MarkdownService.tabToMarkdown(contentTabName);
+  if (!content || !content.trim()) {
+    return { ok: false, outputTabName, error: `Content tab "${contentTabName}" is empty or not found.` };
+  }
+
+  let result = '';
+  runTrackedJob_(`${def.displayName} W6 — "${contentTabName}" → "${outputTabName}"`, () => {
+    // Build system prompt: agent system prompt + instruction tab
+    const instructions = def.instructionTabName ? MarkdownService.tabToMarkdown(def.instructionTabName) : '';
+    const systemParts: string[] = [def.systemPrompt];
+    if (instructions) systemParts.push('\n\n## Agent Instructions\n\n' + instructions);
+    const systemPrompt = systemParts.join('');
+
+    // Build user prompt: context + content + refine action
+    const context = def.contextTabName ? MarkdownService.tabToMarkdown(def.contextTabName) : '';
+    const userParts: string[] = [];
+    if (context) userParts.push('## Context\n\n' + context);
+    userParts.push('## Content to Process\n\n' + content);
+    userParts.push('## Refine Action\n\n' + refineAction);
+    userParts.push(
+      '## Your Task\n\n' +
+      'Apply the refine action to the content above. ' +
+      'Write the full output in GitHub-Flavoured Markdown. ' +
+      'Output the refined content directly — no preamble, no meta-commentary.'
+    );
+    const userPrompt = userParts.join('\n\n');
+
+    result = String(GeminiService.generate(systemPrompt, userPrompt, Constants.MODEL.THINKING));
+
+    // Write to output tab (overwrite)
+    MarkdownService.writeMarkdownToBody(result, outputDocTab.getBody());
+  }, true);
+
+  return { ok: true, outputTabName };
+}
+
+// ── Agent export / import ────────────────────────────────────────────────────
+
+/**
+ * Exports agent definitions to a JSON string.
+ * When ids is empty or omitted, all visible agents are exported.
+ * Each entry includes bundled tab content for instruction and context tabs
+ * so the agent can be fully recreated in another document.
+ */
+function exportCustomAgents(ids?: string[]): { ok: boolean; json?: string; error?: string } {
+  // Always-on Tracer job so the result is visible in the Logs panel
+  // regardless of debug-mode setting (same pattern as runStartupJob_).
+  Tracer.startJob('Export Agents');
+  try {
+    const json = CustomAgentService.exportAgents(ids || []);
+    let count = 0;
+    try { count = (JSON.parse(json) as { agents: unknown[] }).agents.length; } catch (_) {}
+    Tracer.info(`Exported ${count} agent(s) to JSON.`);
+    Tracer.finishJob();
+    return { ok: true, json };
+  } catch (e: any) {
+    Tracer.error(`Export failed: ${e.message}`);
+    Tracer.failJob(e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Imports agents from a JSON string produced by exportCustomAgents().
+ * Each agent is saved to User Properties (personal tier).
+ * Agents whose tag already exists are skipped (not overwritten) — this is
+ * logged as a warning so the user can see exactly which tags collided.
+ */
+function importCustomAgents(json: string): { ok: boolean; imported: number; skipped: string[]; errors: string[] } {
+  // Always-on Tracer job so skips, errors, and successes are all visible
+  // in the Logs panel and "Copy all logs" output.
+  Tracer.startJob('Import Agents');
+  try {
+    const result = CustomAgentService.importAgents(json);
+    if (result.imported > 0) {
+      Tracer.info(`Imported ${result.imported} agent(s).`);
+    }
+    if (result.skipped.length) {
+      Tracer.warn(
+        `Skipped ${result.skipped.length} agent(s) — tag already exists in this document: ` +
+        result.skipped.join(', ') +
+        '. To reimport with a different name, also change the @tag in the JSON.'
+      );
+    }
+    if (result.errors.length) {
+      Tracer.error(`Import errors: ${result.errors.join('; ')}`);
+    }
+    if (result.imported === 0 && result.skipped.length === 0 && result.errors.length === 0) {
+      Tracer.warn('No agents were found in the import payload.');
+    }
+    Tracer.finishJob();
+    return { ok: true, ...result };
+  } catch (e: any) {
+    Tracer.error(`Import failed: ${e.message}`);
+    Tracer.failJob(e.message);
+    return { ok: false, imported: 0, skipped: [], errors: [e.message] };
+  }
+}
+
+// ── Agent Team CRUD ───────────────────────────────────────────────────────────
+
+/**
+ * Returns all agent teams visible to the current user.
+ */
+function listAgentTeams(): AgentTeamDefinition[] {
+  return AgentTeamService.listAll();
+}
+
+/**
+ * Saves (creates or updates) an agent team definition.
+ */
+function saveAgentTeam(def: Partial<AgentTeamDefinition>): { ok: boolean; team?: AgentTeamDefinition; error?: string } {
+  try {
+    const team = AgentTeamService.save(def);
+    return { ok: true, team };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Deletes an agent team by id.
+ */
+function deleteAgentTeam(id: string): { ok: boolean; error?: string } {
+  try {
+    AgentTeamService.remove(id);
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Promotes a user-owned team to Document Properties.
+ */
+function promoteAgentTeamToDocument(id: string): { ok: boolean; team?: AgentTeamDefinition; error?: string } {
+  try {
+    const team = AgentTeamService.promoteToDocument(id);
+    return { ok: true, team };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Exports agent teams to a JSON string.
+ */
+function exportAgentTeams(ids?: string[]): { ok: boolean; json?: string; error?: string } {
+  try {
+    const json = AgentTeamService.exportTeams(ids || []);
+    return { ok: true, json };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Imports agent teams from a JSON string.
+ */
+function importAgentTeams(json: string): { ok: boolean; imported: number; skipped: string[]; errors: string[] } {
+  try {
+    const result = AgentTeamService.importTeams(json);
+    return { ok: true, ...result };
+  } catch (e: any) {
+    return { ok: false, imported: 0, skipped: [], errors: [e.message] };
+  }
+}
+
+// ── Agentic Team Analysis ─────────────────────────────────────────────────────
+
+/**
+ * Starts or continues an Agentic Team Analysis.
+ * Called in a loop by the client until status === 'complete'.
+ *
+ * One analysis per (team + sourceTab + calendar day).
+ * To restart, delete the output tab.
+ */
+function startOrContinueTeamAnalysis(teamId: string, sourceTabName: string, outputTabName: string): TeamAnalysisResult {
+  return AgentTeamAnalysis.startOrContinue(teamId, sourceTabName, outputTabName);
+}
+
+// ── Manifest Generation ───────────────────────────────────────────────────────
+
+/**
+ * Builds an AudioManifest from TTS directives on the specified tab.
+ * Sections are ordered by document position (same order as audio generation).
+ *
+ * - TTS directives → speech sections with voice/model params
+ * - Break directives → silence sections with duration
+ *
+ * Returns null if the tab does not exist or has no TTS directives.
+ */
+function buildManifest(tabName: string): AudioManifest | null {
+  const tab = DocOps.getTabByName(tabName);
+  if (!tab) return null;
+
+  const directives = DirectivePersistence.listDirectivesOnTab(tabName);
+  if (!directives.length) return null;
+
+  const doc = DocumentApp.getActiveDocument();
+
+  // Full body text — offsets from _rangeStart align with body.getText() positions
+  // because buildBodyTextIndex_ adds exactly 1 character between paragraph children,
+  // matching the \n separator that body.getText() produces.
+  const bodyText = tab.getBody().getText();
+
+  // ── Semantic rule: a break directive is a PAUSE, not a speaker change.
+  //
+  // A TTS directive sets the current voice and that voice remains active for
+  // all text until the *next* TTS directive changes it.  Break directives
+  // within a voice region simply split it into speech+silence+speech segments
+  // — all using the same voice.
+  //
+  // Algorithm:
+  //   • Keep running voice state (curVoice*).
+  //   • Keep textPos = start of the next speech segment within the current voice.
+  //   • On a TTS directive  → flush speech [textPos, pos) in current voice,
+  //                           update voice, advance textPos.
+  //   • On a break directive → flush speech [textPos, pos) in current voice,
+  //                            emit silence, advance textPos (voice unchanged).
+  //   • After all directives → flush any remaining text in current voice.
+
+  const rawSections: ManifestSection[] = [];
+
+  const voiceMap = ElevenLabsService.ensureVoiceMappings() ?? {};
+
+  let curVoiceId         = '';
+  let curVoiceName       = '';
+  let curTtsModel        = '';
+  let curStability       = 0.5;
+  let curSimilarityBoost = 0.75;
+  let hasVoice           = false;
+  let textPos            = 0;   // start of next speech segment
+
+  function flushSpeech_(upTo: number): void {
+    if (!hasVoice || upTo <= textPos) return;
+    const text = bodyText.slice(textPos, upTo).trim();
+    if (!text) return;
+    rawSections.push({
+      id:              Utilities.getUuid().replace(/-/g, ''),
+      type:            'speech',
+      text,
+      voiceId:         curVoiceId,
+      voiceName:       curVoiceName,
+      ttsModel:        curTtsModel,
+      stability:       curStability,
+      similarityBoost: curSimilarityBoost,
+    });
+  }
+
+  for (const d of (directives as any[])) {
+    // _rangeStart === -1 for directives outside the body text index (table cells etc.)
+    const pos: number = d._rangeStart >= 0 ? d._rangeStart : -1;
+
+    if (d.type === 'tts') {
+      if (pos >= 0) flushSpeech_(pos);
+      // Switch voice.
+      curVoiceId         = d.voice_id ?? '';
+      curVoiceName       = (voiceMap as Record<string, string>)[curVoiceId] ?? '';
+      curTtsModel        = d.tts_model ?? '';
+      curStability       = typeof d.stability       === 'number' ? d.stability       : 0.5;
+      curSimilarityBoost = typeof d.similarity_boost === 'number' ? d.similarity_boost : 0.75;
+      hasVoice           = true;
+      if (pos >= 0) textPos = pos;
+    } else {
+      // break / ellipsis_break — pause in the current voice.
+      if (pos >= 0) flushSpeech_(pos);
+      const durationMs: number =
+        (typeof d.payload?.timeMs      === 'number' ? d.payload.timeMs      : 0) ||
+        (typeof d.payload?.duration_ms === 'number' ? d.payload.duration_ms : 0);
+      rawSections.push({
+        id:         Utilities.getUuid().replace(/-/g, ''),
+        type:       'silence',
+        durationMs,
+      });
+      if (pos >= 0) textPos = pos;   // resume after the pause at the same position
+    }
+  }
+
+  // Flush any remaining text after the last directive.
+  flushSpeech_(bodyText.length);
+
+  // Collapse consecutive silence sections: sum durations, keep the first id.
+  const sections: ManifestSection[] = [];
+  for (const section of rawSections) {
+    const prev = sections[sections.length - 1];
+    if (section.type === 'silence' && prev && prev.type === 'silence') {
+      (prev as any).durationMs += (section as any).durationMs;
+    } else {
+      sections.push(section);
+    }
+  }
+
+  // Log each section and the total.
+  const speechCount  = sections.filter((s: any) => s.type === 'speech').length;
+  const silenceCount = sections.filter((s: any) => s.type === 'silence').length;
+  sections.forEach((s: any, i: number) => {
+    if (s.type === 'speech') {
+      Tracer.info(`buildManifest: section ${i + 1} — speech | voice: ${s.voiceName || s.voiceId} | ${s.text.length} chars`);
+    } else {
+      Tracer.info(`buildManifest: section ${i + 1} — silence | ${s.durationMs} ms`);
+    }
+  });
+  Tracer.info(`buildManifest: exported ${sections.length} section(s) total — ${speechCount} speech, ${silenceCount} silence — tab: "${tabName}"`);
+
+  const manifest: AudioManifest = {
+    version:       1,
+    documentTitle: doc.getName(),
+    tabName,
+    generatedAt:   new Date().toISOString(),
+    sections,
+  };
+
+  return manifest;
+}
+
+/**
+ * Builds an AudioManifest for a special (credits / about-author) tab.
+ *
+ * If the tab has TTS directives, defers to buildManifest.
+ * If not, falls back to the raw body text as a single speech section with an
+ * empty voiceId — the user can assign a voice in the desktop app.
+ *
+ * allowMultiple = false → throws if the result contains more than 1 speech section.
+ */
+function buildSpecialManifest_(tabName: string, allowMultiple: boolean): AudioManifest | null {
+  const tab = DocOps.getTabByName(tabName);
+  if (!tab) return null;
+
+  const fromDirectives = buildManifest(tabName);
+  if (fromDirectives) {
+    if (!allowMultiple) {
+      const speechCount = fromDirectives.sections.filter((s: any) => s.type === 'speech').length;
+      if (speechCount > 1) {
+        throw new Error(
+          `"${tabName}" must have exactly 1 TTS directive but found ${speechCount}. ` +
+          'Remove the extra directives before exporting.',
+        );
+      }
+    }
+    return fromDirectives;
+  }
+
+  // Fallback: raw body text as a single voiceless speech section.
+  const bodyText = tab.getBody().getText().trim();
+  if (!bodyText) return null;
+
+  const doc = DocumentApp.getActiveDocument();
+  const sections: ManifestSection[] = [{
+    id:              Utilities.getUuid().replace(/-/g, ''),
+    type:            'speech',
+    text:            bodyText,
+    voiceId:         '',
+    voiceName:       '',
+    ttsModel:        '',
+    stability:       0.5,
+    similarityBoost: 0.75,
+  }];
+
+  Tracer.info(`buildSpecialManifest_: built fallback section from raw text — tab: "${tabName}"`);
+  return {
+    version:       1,
+    documentTitle: doc.getName(),
+    tabName,
+    generatedAt:   new Date().toISOString(),
+    sections,
+  };
+}
+
+function exportPartialManifest(tabName: string): PartialManifest | null {
+  // Publisher tabs that contain no audio content — export not meaningful.
+  const PROHIBITED: Record<string, string> = {
+    [Constants.TAB_NAMES.PUBLISHER_SALES]:
+      'Sales copy is for EPUB publishing, not ACX audio. Cannot export as a manifest.',
+    [Constants.TAB_NAMES.PUBLISHER_HOOKS]:
+      'Hooks are for EPUB publishing, not ACX audio. Cannot export as a manifest.',
+    [Constants.TAB_NAMES.PUBLISHER_COVER]:
+      'Cover tab contains design prompts, not audio content. Cannot export as a manifest.',
+    [Constants.TAB_NAMES.PUBLISHER_VISUAL_STYLES]:
+      'Visual Styles is for EPUB styling. Cannot export as a manifest.',
+    [Constants.TAB_NAMES.PUBLISHER_COPYRIGHT]:
+      'Copyright tab is document metadata, not audio content. Cannot export as a manifest.',
+    [Constants.TAB_NAMES.PUBLISHER_INSTRUCTIONS]:
+      'Publisher Instructions is a system-prompt tab. Cannot export as a manifest.',
+  };
+
+  // Special audio section tabs — exported under a named root key only.
+  const SPECIAL: Record<string, { key: PartialManifestKind; allowMultiple: boolean }> = {
+    [Constants.TAB_NAMES.PUBLISHER_OPENING_CREDITS]: { key: 'openingCredits', allowMultiple: false },
+    [Constants.TAB_NAMES.PUBLISHER_CLOSING_CREDITS]: { key: 'closingCredits', allowMultiple: false },
+    [Constants.TAB_NAMES.PUBLISHER_ABOUT_AUTHOR]:    { key: 'aboutAuthor',    allowMultiple: true  },
+  };
+
+  const prohibited = PROHIBITED[tabName];
+  if (prohibited) throw new Error(prohibited);
+
+  const specialConfig = SPECIAL[tabName];
+  if (specialConfig) {
+    const inner = buildSpecialManifest_(tabName, specialConfig.allowMultiple);
+    if (!inner) return null;
+    return { [specialConfig.key]: inner } as PartialManifest;
+  }
+
+  // Chapter tab: include chapter + all available credits (best-effort).
+  const chapter = buildManifest(tabName);
+  if (!chapter) return null;
+
+  const result: PartialManifest = { chapter };
+
+  try {
+    const oc = buildSpecialManifest_(Constants.TAB_NAMES.PUBLISHER_OPENING_CREDITS, false);
+    if (oc) result.openingCredits = oc;
+  } catch (_) { /* non-fatal */ }
+
+  try {
+    const cc = buildSpecialManifest_(Constants.TAB_NAMES.PUBLISHER_CLOSING_CREDITS, false);
+    if (cc) result.closingCredits = cc;
+  } catch (_) { /* non-fatal */ }
+
+  try {
+    const aa = buildSpecialManifest_(Constants.TAB_NAMES.PUBLISHER_ABOUT_AUTHOR, true);
+    if (aa) result.aboutAuthor = aa;
+  } catch (_) { /* non-fatal */ }
+
+  return result;
 }

@@ -75,6 +75,13 @@ const CommentProcessor = (() => {
       return all;
     } catch (e: any) {
       Tracer.error(`[CommentProcessor] fetchComments_: Drive.Comments.list failed — ${e.message}`);
+      const msg: string = (e?.message ?? '').toLowerCase();
+      if (msg.includes('file not found') || msg.includes('403') || msg.includes('insufficientpermissions')) {
+        throw new Error(
+          'Drive file access denied — drive.file scope not yet granted for this document. ' +
+          'Use the "Open" menu item to authorize EditorLLM Drive access, then retry.'
+        );
+      }
       throw new Error(`Could not fetch comments: ${e.message}`);
     }
   }

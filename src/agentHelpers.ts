@@ -91,6 +91,36 @@ export function validateOps(
   );
 }
 
+function normalizeEarTuneReasonText_(s: string): string {
+  return s
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, '\'')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractEarTuneSuggestedRewrite_(reason: string): string | null {
+  const mainReason = reason.split(/\n##\s+Phonetic Lexicon Suggestions\b/i)[0];
+  const m = mainReason.match(/Suggested rewrite:\s*(?:"([^"]+)"|“([^”]+)”)/i);
+  const rewrite = (m?.[1] ?? m?.[2] ?? '').trim();
+  return rewrite || null;
+}
+
+export function validateEarTuneOps(
+  ops: Array<{ match_text: string; reason: string }>,
+  passage: string
+): Array<{ match_text: string; reason: string }> {
+  const grounded = validateOps(ops, passage);
+  const normalizedPassage = normalizeEarTuneReasonText_(passage);
+
+  return grounded.filter(op => {
+    const rewrite = extractEarTuneSuggestedRewrite_(op.reason);
+    if (!rewrite) return false;
+    return !normalizedPassage.includes(normalizeEarTuneReasonText_(rewrite));
+  });
+}
+
 /**
  * Sorts `ops` by the position of their `match_text` in `passage` (document
  * order), then removes consecutive operations whose TTS parameters are
@@ -102,6 +132,172 @@ export function validateOps(
  * Precondition: every op in `ops` has a `match_text` that exists in `passage`
  * (i.e. validateOps has already been applied).
  */
+/**
+ * Builds synthetic break directives that pause 1 s at every ellipsis in the
+ * tab.  Always emits BOTH a literal `"..."` (three ASCII periods) and the
+ * Unicode `"…"` (U+2026 HORIZONTAL ELLIPSIS) directive — Google Docs
+ * auto-substitutes the latter for the former under common autocorrect
+ * settings, so we cover both unconditionally.  No passage scan; if the marker
+ * is absent CollaborationService.createBookmarkDirectives_ logs a benign warn
+ * and skips it.  Cheaper and simpler than scanning here.
+ *
+ * Each directive uses `apply_to: 'every_occurrence'` so CollaborationService
+ * fans it out to all matches via findAllTextOccurrences_.
+ *
+ * Wire format: payload key is `timeMs` (what Code.ts audio renderer reads),
+ * not `duration_ms` (the prompt-facing field on TtsBreakOperation).
+ *
+ * Pure function — no GAS globals.
+ */
+export function buildEllipsisBreakDirectives(): DirectiveCreate[] {
+  return [
+    { match_text: '...', type: 'break', payload: { timeMs: 1000 }, apply_to: 'every_occurrence' },
+    { match_text: '…',   type: 'break', payload: { timeMs: 1000 }, apply_to: 'every_occurrence' },
+  ];
+}
+
+/**
+ * Reduces a (possibly multi-line) `match_text` to its first non-empty line,
+ * trimmed.  Required because `Body.findText()` in GAS does NOT span paragraph
+ * boundaries — a regex containing literal `\n` cannot match because each
+ * paragraph is a separate text element with no `\n` in its content.
+ *
+ * The LLM, under strict-schema pressure with no length cap on `match_text`,
+ * sometimes emits a multi-paragraph chunk to mark the start of a transition
+ * (e.g. for the very first directive in a tab, it may dump the first three
+ * paragraphs into match_text).  We normalise here so the find succeeds on
+ * the first paragraph — which is exactly the position the model intended.
+ *
+ * Returns the input unchanged when it's already single-line.
+ *
+ * Pure function — no GAS globals.
+ */
+export function firstLineForMatchText(matchText: string): string {
+  if (!matchText) return matchText;
+  // Split on any line break (LF, CR, or VT) and take the first non-empty.
+  const lines = matchText.split(/[\r\n\v]+/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return matchText.trim();
+}
+
+/**
+ * Heading-break duration constants, in milliseconds.  Used by the auto-break
+ * pass that emits silence before and after every heading paragraph.
+ *
+ * Picked at the low-to-mid range of pro audiobook conventions
+ * (Audible/ACX: H1 2-5s, H2 1-3s, H3+ 0.5-1s).
+ */
+export const H1_BREAK_MS = 3250;
+export const H2_BREAK_MS = 2250;
+export const H3_PLUS_BREAK_MS = 1250;
+
+/**
+ * Maps a heading level (1-6) to the auto-break duration in ms.
+ * Level outside 1-6 returns 0 (caller should not emit a break).
+ *
+ * Pure function — no GAS globals.
+ */
+export function getHeadingDurationMsForLevel(level: number): number {
+  if (level === 1) return H1_BREAK_MS;
+  if (level === 2) return H2_BREAK_MS;
+  if (level >= 3 && level <= 6) return H3_PLUS_BREAK_MS;
+  return 0;
+}
+
+/**
+ * Given a list of heading levels per paragraph (1-6 for H1-H6, null for
+ * non-heading paragraphs), returns one entry per heading-adjacent paragraph
+ * boundary describing where to anchor a break and what duration to use.
+ *
+ * Per-boundary algorithm (Approach B):
+ *   - boundary i sits before paragraph index i (i.e. between ¶i-1 and ¶i)
+ *   - if neither side is a heading: skip
+ *   - if both sides are headings: duration = min(left, right) — adjacent
+ *     headings collapse to one tighter break
+ *   - else: duration = the one heading's level duration
+ *
+ * The returned `atParagraphIndex` is the index of the paragraph the break
+ * anchors to (i.e. the break fires BEFORE that paragraph's text).  A boundary
+ * "after the last paragraph" is intentionally not emitted — there is nothing
+ * to anchor to and the trailing-break rule would discard it anyway.
+ *
+ * Pure function — no GAS globals.
+ */
+export function computeHeadingBreakBoundaries(
+  paragraphLevels: Array<number | null>
+): Array<{ atParagraphIndex: number; durationMs: number }> {
+  const out: Array<{ atParagraphIndex: number; durationMs: number }> = [];
+  for (let i = 0; i < paragraphLevels.length; i++) {
+    const left  = i > 0 ? paragraphLevels[i - 1] : null;
+    const right = paragraphLevels[i];
+    const leftIsHeading  = left  !== null && left  !== undefined;
+    const rightIsHeading = right !== null && right !== undefined;
+    if (!leftIsHeading && !rightIsHeading) continue;
+
+    let dur: number;
+    if (leftIsHeading && rightIsHeading) {
+      dur = Math.min(getHeadingDurationMsForLevel(left as number), getHeadingDurationMsForLevel(right as number));
+    } else if (rightIsHeading) {
+      dur = getHeadingDurationMsForLevel(right as number);
+    } else {
+      dur = getHeadingDurationMsForLevel(left as number);
+    }
+    if (dur > 0) out.push({ atParagraphIndex: i, durationMs: dur });
+  }
+  return out;
+}
+
+/**
+ * Maximum number of characters used as `match_text` for a heading-break
+ * directive.  Long enough that body-paragraph prefixes are normally unique
+ * within a tab; short enough not to bloat directive metadata.  Always paired
+ * with `firstLineForMatchText` first to avoid soft-line-break failures inside
+ * a paragraph (Body.findText does not span line breaks).
+ */
+export const HEADING_MATCH_TEXT_MAX_CHARS = 80;
+
+/**
+ * Project-wide TTS parameter defaults.  Mirrors ElevenLabsService default
+ * voice_settings — used when LLM emits 0 / null / undefined under strict-schema
+ * pressure (see TtsAgent.annotateTab post-process).
+ */
+export const TTS_DEFAULT_STABILITY = 0.5;
+export const TTS_DEFAULT_SIMILARITY_BOOST = 0.75;
+
+/**
+ * Replaces 0 / null / undefined / NaN values for `stability` and
+ * `similarity_boost` with project defaults.  Returns a NEW op when any field
+ * was substituted (so the original LLM output remains untouched), otherwise
+ * the input op by reference.
+ *
+ * Why 0 is treated as a substitution sentinel: under OpenAI strict-schema
+ * mode the field is required, but the W2 prompt instructs the model not to
+ * guess when the Cast Role Policy lacks a concrete value.  The model resolves
+ * the conflict by emitting 0.  In practice no operator legitimately wants 0
+ * for these parameters; treat 0 as "model gave up" and apply defaults.
+ *
+ * Pure function — no GAS globals.
+ */
+export function applyTtsOperationDefaults(op: TtsOperation): { op: TtsOperation; appliedStability: boolean; appliedSimilarityBoost: boolean } {
+  const stabBad = !Number.isFinite(op.stability) || op.stability <= 0;
+  const simBad  = !Number.isFinite(op.similarity_boost) || op.similarity_boost <= 0;
+  if (!stabBad && !simBad) {
+    return { op, appliedStability: false, appliedSimilarityBoost: false };
+  }
+  return {
+    op: {
+      ...op,
+      stability:        stabBad ? TTS_DEFAULT_STABILITY        : op.stability,
+      similarity_boost: simBad  ? TTS_DEFAULT_SIMILARITY_BOOST : op.similarity_boost,
+    },
+    appliedStability: stabBad,
+    appliedSimilarityBoost: simBad,
+  };
+}
+
 export function deduplicateTtsOps(passage: string, ops: TtsOperation[]): TtsOperation[] {
   const normPassage = passage.replace(/\s+/g, ' ').toLowerCase();
 
@@ -533,7 +729,7 @@ ${args.markdown}
     const rationale = (result.rationale ?? '').slice(0, 300);
     Tracer.info(`${args.logTag} Instruction quality score=${score} — ${rationale}`);
     const pk = args.propKeys;
-    PropertiesService.getDocumentProperties().setProperties({
+    DocPropsCache.writeMany({
       [pk.score]:     String(score),
       [pk.rationale]: rationale,
       [pk.ts]:        new Date().toISOString(),

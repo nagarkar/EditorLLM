@@ -1,4 +1,4 @@
-// Feature-level unit tests for StringProcessor, TabMerger, and CommentProcessor.
+// Feature-level unit tests for StringProcessor, TabMerger (Create or Overwrite Manuscript), and CommentProcessor.
 // All tests run purely in Node.js — no GAS runtime required.
 //
 // Functions are imported directly from their source modules.
@@ -44,19 +44,19 @@ describe('createStringArray', () => {
   });
 });
 
-// --------------- TabMerger result shapes ---------------
-// TabMerger.mergeOneTab and clearDestination return structured result objects.
-// These tests verify the expected shapes without requiring a live Document.
+// --------------- Create or Overwrite Manuscript — result shapes ---------------
+// TabMerger.createOrOverwriteManuscript (and internal helpers) return structured
+// result objects. These tests verify the expected shapes without requiring a live Document.
 
-describe('TabMerger result shapes', () => {
-  it('mergeOneTab ok result has ok:true and a name', () => {
+describe('Manuscript result shapes', () => {
+  it('tab append ok result has ok:true and a name', () => {
     const ok = { ok: true, name: 'Chapter 1' };
     expect(ok.ok).toBe(true);
     expect(typeof ok.name).toBe('string');
     expect(ok).not.toHaveProperty('message');
   });
 
-  it('mergeOneTab error result has ok:false, name, and message', () => {
+  it('tab append error result has ok:false, name, and message', () => {
     const err = { ok: false, name: 'Chapter 1', message: 'Source tab "Chapter 1" not found.' };
     expect(err.ok).toBe(false);
     expect(err.message).toBeTruthy();
@@ -79,7 +79,7 @@ describe('TabMerger result shapes', () => {
   });
 });
 
-// --------------- TabMerger — sanitizePlatformError logic ---------------
+// --------------- Manuscript — sanitizePlatformError logic ---------------
 // The error sanitization strips internal document IDs from error messages
 // to avoid leaking sensitive data in the UI.
 
@@ -147,6 +147,100 @@ describe('CommentProcessor tag normalisation', () => {
     expect(normaliseTagWord_('@AI')).toBe('@ai');
     expect(normaliseTagWord_('@Architect')).toBe('@architect');
     expect(normaliseTagWord_('@AUDIT:')).toBe('@audit');
+  });
+});
+
+// --------------- AgentExportPayload / AgentTeamDefinition shapes ---------------
+
+describe('Agent export payload shape', () => {
+  it('exportPayload has version:1, exportedAt string, and agents array', () => {
+    const payload: AgentExportPayload = {
+      version:    1,
+      exportedAt: '2026-05-09T00:00:00.000Z',
+      agents:     [],
+    };
+    expect(payload.version).toBe(1);
+    expect(typeof payload.exportedAt).toBe('string');
+    expect(Array.isArray(payload.agents)).toBe(true);
+  });
+
+  it('AgentExportEntry has required fields', () => {
+    const entry: AgentExportEntry = {
+      displayName:  'My Reviewer',
+      tag:          '@myreviewer',
+      systemPrompt: 'You are a reviewer.',
+      workflows:    { w2: true, w3: false, w6: false },
+    };
+    expect(entry.displayName).toBe('My Reviewer');
+    expect(entry.tag).toBe('@myreviewer');
+    expect(entry.workflows.w2).toBe(true);
+    expect(entry.instructionTabContent).toBeUndefined();
+  });
+
+  it('AgentExportEntry with bundled tab content', () => {
+    const entry: AgentExportEntry = {
+      displayName:          'Bundled',
+      tag:                  '@bundled',
+      systemPrompt:         'Check this.',
+      workflows:            { w2: false, w3: true, w6: false },
+      instructionTabName:   'My Tab',
+      instructionTabContent: '# Instructions\n\nDo X.',
+      contextTabName:       'StyleProfile',
+      contextTabContent:    '# Style\n\nKeep it short.',
+    };
+    expect(entry.instructionTabContent).toContain('Instructions');
+    expect(entry.contextTabContent).toContain('Style');
+  });
+});
+
+describe('AgentTeamDefinition shape', () => {
+  it('has id, name, agentIds, storedIn, and createdAt', () => {
+    const team: AgentTeamDefinition = {
+      id:        'abc123',
+      name:      'Editorial Review',
+      agentIds:  ['id1', 'id2'],
+      storedIn:  'user',
+      createdAt: Date.now(),
+    };
+    expect(team.id).toBe('abc123');
+    expect(Array.isArray(team.agentIds)).toBe(true);
+    expect(team.agentIds).toHaveLength(2);
+    expect(team.storedIn).toBe('user');
+  });
+
+  it('TeamAnalysisResult complete shape', () => {
+    const result: TeamAnalysisResult = {
+      status:         'complete',
+      processedCount: 10,
+      totalCount:     10,
+      outputTabName:  'Agentic Analysis 09/05/2026',
+    };
+    expect(result.status).toBe('complete');
+    expect(result.processedCount).toBe(result.totalCount);
+    expect(result.outputTabName).toContain('Agentic Analysis');
+  });
+
+  it('TeamAnalysisResult continuing shape', () => {
+    const result: TeamAnalysisResult = {
+      status:         'continuing',
+      processedCount: 5,
+      totalCount:     20,
+      outputTabName:  'Agentic Analysis 09/05/2026',
+    };
+    expect(result.status).toBe('continuing');
+    expect(result.processedCount).toBeLessThan(result.totalCount);
+  });
+
+  it('TeamAnalysisResult error shape', () => {
+    const result: TeamAnalysisResult = {
+      status:         'error',
+      processedCount: 0,
+      totalCount:     0,
+      outputTabName:  '',
+      error:          'Quota exceeded.',
+    };
+    expect(result.status).toBe('error');
+    expect(result.error).toBeTruthy();
   });
 });
 

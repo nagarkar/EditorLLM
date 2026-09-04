@@ -17,6 +17,7 @@
      ============================================================ -->
 <style>
   /* ── MultiSelectTabs component styles ───────────────────── */
+  /* Icon map: × = remove chip | drag handle = grab cursor on chip body */
   .mst-root {
     position: relative;
     background: var(--input-bg, #1E1E1E);
@@ -47,7 +48,16 @@
     white-space: nowrap;
     max-width: 180px;
     overflow: hidden;
+    cursor: grab;
+    user-select: none;
+    transition: opacity 0.12s, box-shadow 0.12s;
   }
+  .mst-chip:active { cursor: grabbing; }
+  /* Dragged chip fades out */
+  .mst-chip-dragging { opacity: 0.35; }
+  /* Drop-insertion indicators: coloured shadow on the near edge */
+  .mst-chip-drag-before { box-shadow: -3px 0 0 2px var(--accent, #8AB4F8); }
+  .mst-chip-drag-after  { box-shadow:  3px 0 0 2px var(--accent, #8AB4F8); }
   .mst-chip-label {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -147,6 +157,9 @@ var MultiSelectTabs = (function() {
     var activeIdx = -1;  // keyboard-highlighted dropdown index
     var open = false;
 
+    // Track the chip value currently being dragged
+    var dragSrcVal = null;
+
     // ── DOM ───────────────────────────────────────────────────
     var root = document.createElement('div');
     root.className = 'mst-root';
@@ -175,6 +188,19 @@ var MultiSelectTabs = (function() {
       dropdown.style.width = rect.width  + 'px';
     }
 
+    // ── Drag helpers ──────────────────────────────────────────
+    function clearDragIndicators() {
+      root.querySelectorAll('.mst-chip').forEach(function(c) {
+        c.classList.remove('mst-chip-drag-before', 'mst-chip-drag-after');
+      });
+    }
+
+    /** Return true if the pointer is in the left half of the element. */
+    function isLeftHalf(el, clientX) {
+      var rect = el.getBoundingClientRect();
+      return clientX < rect.left + rect.width / 2;
+    }
+
     // ── Chip rendering ────────────────────────────────────────
     function renderChips() {
       // Remove old chips
@@ -183,7 +209,9 @@ var MultiSelectTabs = (function() {
       selected.forEach(function(val) {
         var chip = document.createElement('span');
         chip.className = 'mst-chip';
-        chip.title = val;
+        chip.title = val + ' — drag to reorder';
+        chip.draggable = true;
+        chip.dataset.mstVal = val;
 
         var label = document.createElement('span');
         label.className = 'mst-chip-label';
@@ -192,7 +220,7 @@ var MultiSelectTabs = (function() {
         var btn = document.createElement('button');
         btn.className = 'mst-chip-remove';
         btn.type = 'button';
-        btn.textContent = '\u00d7'; // ×
+        btn.textContent = '×'; // ×
         btn.addEventListener('click', function(e) {
           e.stopPropagation();
           removeValue(val);
@@ -201,6 +229,69 @@ var MultiSelectTabs = (function() {
         chip.appendChild(label);
         chip.appendChild(btn);
         root.insertBefore(chip, input);
+
+        // ── Drag-and-drop events ──────────────────────────────
+        chip.addEventListener('dragstart', function(e) {
+          dragSrcVal = val;
+          chip.classList.add('mst-chip-dragging');
+          e.dataTransfer.effectAllowed = 'move';
+          // Required by Firefox to initiate drag
+          e.dataTransfer.setData('text/plain', val);
+          // Close the dropdown while dragging
+          closeDropdown();
+        });
+
+        chip.addEventListener('dragend', function() {
+          dragSrcVal = null;
+          chip.classList.remove('mst-chip-dragging');
+          clearDragIndicators();
+        });
+
+        chip.addEventListener('dragover', function(e) {
+          if (!dragSrcVal || dragSrcVal === val) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          clearDragIndicators();
+          if (isLeftHalf(chip, e.clientX)) {
+            chip.classList.add('mst-chip-drag-before');
+          } else {
+            chip.classList.add('mst-chip-drag-after');
+          }
+        });
+
+        chip.addEventListener('dragleave', function(e) {
+          // Only clear if leaving the chip itself, not entering a child
+          if (!chip.contains(e.relatedTarget)) {
+            chip.classList.remove('mst-chip-drag-before', 'mst-chip-drag-after');
+          }
+        });
+
+        chip.addEventListener('drop', function(e) {
+          if (!dragSrcVal || dragSrcVal === val) return;
+          e.preventDefault();
+          e.stopPropagation();
+
+          var insertBefore = isLeftHalf(chip, e.clientX);
+
+          var fromIdx = selected.indexOf(dragSrcVal);
+          var toIdx   = selected.indexOf(val);
+          if (fromIdx < 0 || toIdx < 0) return;
+
+          // Remove the dragged item
+          selected.splice(fromIdx, 1);
+          // Recalculate target index after removal
+          var newToIdx = selected.indexOf(val);
+          if (insertBefore) {
+            selected.splice(newToIdx, 0, dragSrcVal);
+          } else {
+            selected.splice(newToIdx + 1, 0, dragSrcVal);
+          }
+
+          dragSrcVal = null;
+          clearDragIndicators();
+          renderChips();
+          onchange(selected.slice());
+        });
       });
     }
 
@@ -232,7 +323,7 @@ var MultiSelectTabs = (function() {
 
           var check = document.createElement('span');
           check.className = 'mst-option-check';
-          check.textContent = '\u2713'; // ✓
+          check.textContent = '✓'; // ✓
 
           var text = document.createElement('span');
           text.textContent = o;
@@ -251,7 +342,7 @@ var MultiSelectTabs = (function() {
         if (q && options.indexOf(q) < 0) {
           var hint = document.createElement('div');
           hint.className = 'mst-hint';
-          hint.textContent = 'Press Enter to add \u201c' + q + '\u201d';
+          hint.textContent = 'Press Enter to add “' + q + '”';
           dropdown.appendChild(hint);
         }
       }

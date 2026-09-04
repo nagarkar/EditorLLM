@@ -21,6 +21,11 @@ paths:
 
 # TypeScript + Google Apps Script — Workspace Rules
 
+> **Scope:** GAS server-side build (`src/`, `tsconfig.json`, `dist/`).
+> For projects that also compile browser-side TypeScript, see
+> `gas-client-typescript.md` which covers `client/`, `tsconfig.client.json`,
+> the three-file type system, and the `build_client.js` pipeline.
+
 These rules apply to every TypeScript/Google Apps Script project in this
 workspace. They are inferred from the shared build artefacts across projects
 and must be maintained as the canonical standard.

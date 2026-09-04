@@ -1,15 +1,4 @@
-const fs = require('fs');
-const path = require('path');
-
-function loadCompiledGlobal(varName: string, fileName: string): void {
-  const src = fs.readFileSync(
-    path.join(__dirname, '..', '..', 'dist', fileName),
-    'utf8'
-  );
-  const patched = src.replace(new RegExp('^const ' + varName + '\\b', 'm'), varName);
-  const fn = new Function(patched);
-  fn();
-}
+import { loadCompiledGlobal } from './helpers/gasVmContext';
 
 function loadFactoryStack(): void {
   loadCompiledGlobal('Constants', 'Constants.js');

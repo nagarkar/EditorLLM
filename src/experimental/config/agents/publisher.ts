@@ -1,10 +1,9 @@
 // ============================================================
 // src/experimental/config/agents/publisher.ts
 //
-// Declarative definition of PublisherAgent — W1 and W2 only.
-// W5 (generatePublishingTabs) requires extending WorkflowDef.responseFormat
-// with a 'tab_generation' variant and AgentDefinition.workflows with a
-// generatePublishingTabs key; it is not modelled here yet.
+// Declarative definition of PublisherAgent — W1 only.
+// Publishing-tab generation requires extending WorkflowDef.responseFormat
+// with a 'tab_generation' variant; it is not modelled here yet.
 //
 // Must produce the same (systemPrompt, userPrompt) as the concrete
 // PublisherAgent for each modelled workflow — verified by agent-parity.test.ts.
@@ -18,8 +17,6 @@ import {
   PUBLISHER_SYSTEM_PROMPT_BODY,
   PUBLISHER_INSTRUCTION_QUALITY_RUBRIC,
   PUBLISHER_W1_INSTRUCTIONS,
-  PUBLISHER_W2_INSTRUCTIONS,
-  W2_PASSAGE_SECTION_TITLE,
 } from '../../../agentPrompts';
 
 // ── Publisher-specific system prompt (mirrors PublisherAgent.SYSTEM_PROMPT) ──
@@ -79,35 +76,6 @@ export const publisherDefinition: AgentDefinition = {
       ],
       instructions: PUBLISHER_W1_INSTRUCTIONS + '\n' + W1_FORMAT_GUIDELINES,
       postSteps: [{ kind: 'evaluate_instruction_quality' }],
-    },
-
-    // W2 — Structural audit of Manuscript
-    // PublisherAgent.annotateManuscriptStructure() always operates on Manuscript,
-    // never on a user-selected tab. Call interpreter.annotateTab(MANUSCRIPT) to match.
-    // Context sections match PublisherAgent.generateStructuralAuditPrompt():
-    //   - 'Style Profile' (plain via getTabContent_)
-    //   - 'Publisher Instructions' (plain via getTabContent_, falls back to SYSTEM_PROMPT)
-    //   - passage (uniform W2 title from Constants)
-    annotateTab: {
-      modelTier:            'thinking',
-      requiresStyleProfile: true,
-      responseFormat:       'annotation_operations',
-      contextSections: [
-        {
-          title:  'Style Profile',
-          source: { kind: 'style_profile', format: 'plain' },
-        },
-        {
-          title:  'Publisher Instructions',
-          source: { kind: 'self_instructions', format: 'plain' },
-        },
-        {
-          title: W2_PASSAGE_SECTION_TITLE,
-          source: { kind: 'passage' },
-        },
-      ],
-      instructions: PUBLISHER_W2_INSTRUCTIONS,
-      postSteps: [{ kind: 'validate_operations' }],
     },
 
   },

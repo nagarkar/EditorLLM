@@ -59,13 +59,22 @@ const Constants = (() => {
     TETHER_INSTRUCTIONS:           'Tether Instructions',
     GENERAL_PURPOSE_INSTRUCTIONS:  'General Purpose Instructions',
     PUBLISHER_INSTRUCTIONS:        'Publisher Instructions',
-    PUBLISHER_TITLE:               'Title',
     PUBLISHER_COPYRIGHT:           'Copyright',
-    PUBLISHER_TOC:                 'Table of Contents',
     PUBLISHER_ABOUT_AUTHOR:        'About The Author',
     PUBLISHER_SALES:               'Sales',
     PUBLISHER_HOOKS:               'Hooks',
     PUBLISHER_COVER:               'Cover',
+    PUBLISHER_VISUAL_STYLES:         'Visual Styles',
+    PUBLISHER_OPENING_CREDITS:       'Opening Audio Credits',
+    PUBLISHER_CLOSING_CREDITS:       'Closing Audio Credits',
+  } as const;
+
+  /** Drive folder names for the EditorLLM hierarchy. */
+  const DRIVE_FOLDERS = {
+    ROOT:  'EditorLLM',
+    BOOKS: 'Books',
+    EPUB:  'EPUB',
+    AUDIO: 'Audio',
   } as const;
 
   /**
@@ -99,6 +108,7 @@ const Constants = (() => {
     LLM_SERVICE,
     DEFAULT_MODELS,
     TAB_NAMES,
+    DRIVE_FOLDERS,
     NEVER_PROCESSED_TABS,
     HIGHLIGHT_COLOR,
     AGENT_COMMENT_PREFIX,

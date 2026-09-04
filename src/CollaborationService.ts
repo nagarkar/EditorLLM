@@ -589,9 +589,14 @@ const CollaborationService = (() => {
    * passes skip. For each named range, highlight formatting is cleared first
    * (same as deleteAnnotation_), then the range is removed.
    */
-  function removeOrphanedEntitiesOnTab_(tabName: string): void {
-    if (!DocOps.isManagedTab(tabName)) {
+  function removeOrphanedEntitiesOnTab_(tabName: string, opts?: { force?: boolean }): void {
+    if (!opts?.force && !DocOps.isManagedTab(tabName)) {
       return;
+    }
+    if (opts?.force && !DocOps.isManagedTab(tabName)) {
+      Tracer.warn(
+        `[CollaborationService] removeOrphanedEntitiesOnTab_: OVERRIDE — proceeding on tab "${tabName}" despite isManagedTab=false`
+      );
     }
     const docTab = DocOps.getTabByName(tabName);
     if (!docTab) {
@@ -828,33 +833,70 @@ const CollaborationService = (() => {
     const ops: DirectiveCreate[] = update.directives ?? [];
     const body = targetDocTab.getBody();
     let count = 0;
-    for (const op of ops) {
-      const rangeEl = findTextOrFallback_(body, op.match_text);
-      if (!rangeEl) {
-        Tracer.warn(`[CollaborationService] createBookmarkDirectives_: match_text "${op.match_text}" not found in tab "${update.target_tab}"`);
+
+    // Track per-batch (match_text, apply_to) pairs so we can detect when
+    // multiple ops anchor on the same string and would therefore resolve
+    // to the same offset (last-write-wins → silent voice loss).  Real
+    // example: 11 ops with match_text="---" all collapsing onto position
+    // 8347 in the Sermons tab, voicing the narrator interlude with the
+    // wrong cast.  This warn surfaces such collisions in clasp logs so
+    // the prompt feedback loop can fix the policy.
+    const seenAnchorIndex = new Map<string, number>();
+    let anchorCollisionCount = 0;
+
+    for (let opIdx = 0; opIdx < ops.length; opIdx++) {
+      const op = ops[opIdx];
+      const everyOccurrence = (op as any).apply_to === 'every_occurrence';
+      const anchorKey = `${everyOccurrence ? 'every' : 'first'}::${op.match_text}`;
+      if (seenAnchorIndex.has(anchorKey)) {
+        anchorCollisionCount++;
+        const firstIdx = seenAnchorIndex.get(anchorKey);
+        Tracer.warn(
+          `[CollaborationService] createBookmarkDirectives_: anchor collision — directive #${opIdx} ` +
+          `(type=${op.type}, match_text=${JSON.stringify(op.match_text)}) shares the same anchor as directive #${firstIdx}; ` +
+          `they will resolve to the same offset and stack on top of each other`
+        );
+      } else {
+        seenAnchorIndex.set(anchorKey, opIdx);
+      }
+
+      // Resolve the match targets: one element for first_occurrence (default),
+      // all elements for every_occurrence (e.g. every '---' in the tab).
+      const matchTargets: GoogleAppsScript.Document.RangeElement[] = everyOccurrence
+        ? findAllTextOccurrences_(body, op.match_text)
+        : (() => {
+            const el = findTextOrFallback_(body, op.match_text);
+            return el ? [el] : [];
+          })();
+
+      if (!matchTargets.length) {
+        Tracer.warn(
+          `[CollaborationService] createBookmarkDirectives_: match_text "${op.match_text}" not found in tab "${update.target_tab}"`
+        );
         continue;
       }
 
-      try {
-        const range = targetDocTab.newRange()
-          .addElement(rangeEl.getElement().asText(), rangeEl.getStartOffset(), rangeEl.getEndOffsetInclusive())
-          .build();
-        DirectivePersistence.createDirectiveAtRange(
-          targetDocTab,
-          agentPrefix,
-          op.type,
-          op.payload,
-          range
-        );
-      } catch (e) {
-        Tracer.error(
-          `[CollaborationService] createBookmarkDirectives_: failed to create directive for "${op.match_text}" — ${e}`
-        );
-        continue;
+      for (const rangeEl of matchTargets) {
+        try {
+          const range = targetDocTab.newRange()
+            .addElement(rangeEl.getElement().asText(), rangeEl.getStartOffset(), rangeEl.getEndOffsetInclusive())
+            .build();
+          DirectivePersistence.createDirectiveAtRange(targetDocTab, agentPrefix, op.type, op.payload, range);
+          count++;
+        } catch (e) {
+          Tracer.error(
+            `[CollaborationService] createBookmarkDirectives_: failed to create directive for "${op.match_text}" — ${e}`
+          );
+        }
       }
-      count++;
     }
 
+    if (anchorCollisionCount > 0) {
+      Tracer.warn(
+        `[CollaborationService] createBookmarkDirectives_: ${anchorCollisionCount} ` +
+        `directive(s) had colliding anchors on tab "${update.target_tab}" — voice/break stacking expected`
+      );
+    }
     Tracer.info(`[CollaborationService] createBookmarkDirectives_: added ${count} directive(s) on tab "${update.target_tab}"`);
   }
 
@@ -879,6 +921,71 @@ const CollaborationService = (() => {
     }
   }
 
+  /**
+   * Clears document-side annotation artifacts (highlight, named range, bookmark)
+   * for a pre-filtered list of resolved Drive comments, then deletes each comment.
+   *
+   * Called by AnnotationAutoCleanup — the Drive.Comments.list + resolved filter
+   * step happens in the caller; this function is purely the mutation phase.
+   *
+   * Old-style annotations (no bookmark URL in comment body) are logged and
+   * skipped — the manual "Clear Annotations" command handles those.
+   */
+  function clearResolvedAnnotations_(
+    resolvedComments: Array<{ id: string; content: string; anchor: string }>,
+    docId: string
+  ): { cleared: number; skipped: number; errors: number } {
+    if (!resolvedComments.length) return { cleared: 0, skipped: 0, errors: 0 };
+
+    const tabMap = buildTabMap_();
+    let cleared = 0, skipped = 0, errors = 0;
+
+    for (const comment of resolvedComments) {
+      const bm = comment.content.match(/#bookmark=([\w.-]+)/);
+      if (!bm) {
+        // Old-style annotation — no bookmark URL embedded in the comment body.
+        // Cannot locate the named range without it; skip rather than sweep blindly.
+        Tracer.warn(
+          `[CollaborationService] clearResolvedAnnotations_: comment ${comment.id} ` +
+          `has no bookmark URL — skipping (run Clear Annotations manually).`
+        );
+        skipped++;
+        continue;
+      }
+
+      const commentTabId = resolveCommentTabId_(comment.content, comment.anchor);
+      const tabEntry     = commentTabId ? tabMap.get(commentTabId) : undefined;
+      const docTab       = tabEntry?.docTab ?? null;
+
+      const ann = {
+        commentId:    comment.id,
+        content:      comment.content,
+        bookmarkId:   bm[1],
+        commentTabId,
+      };
+
+      const needsColorSweep = { value: false };
+      const r = deleteAnnotation_(ann, docTab, docId, needsColorSweep);
+
+      if (needsColorSweep.value) {
+        // Should not occur for new-style annotations (bm matched above).
+        // Log rather than sweep the whole tab without knowing the agent prefix.
+        Tracer.warn(
+          `[CollaborationService] clearResolvedAnnotations_: named range missing for ` +
+          `comment ${comment.id} despite bookmark URL — skipping color sweep.`
+        );
+      }
+
+      if (r.ok) cleared++; else errors++;
+    }
+
+    Tracer.info(
+      `[CollaborationService] clearResolvedAnnotations_: ` +
+      `cleared=${cleared} skipped=${skipped} errors=${errors}`
+    );
+    return { cleared, skipped, errors };
+  }
+
   return {
     processUpdate,
     clearAgentAnnotations:     clearAgentAnnotations_,
@@ -887,6 +994,7 @@ const CollaborationService = (() => {
     // clearAllAnnotations (Code.ts). It is also called internally as a fallback
     // for old-style annotations. Returns true if the tab was found, false otherwise.
     clearTabHighlights: clearTabHighlights_,
+    clearResolvedAnnotations: clearResolvedAnnotations_,
     /** After clearing annotations and directives on a tab — strips any remaining named ranges and bookmarks. */
     removeOrphanedEntitiesOnTab: removeOrphanedEntitiesOnTab_,
   };

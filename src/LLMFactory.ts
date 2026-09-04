@@ -15,13 +15,11 @@ const LLMFactory = (() => {
     if (typeof process !== 'undefined' && process.env.LLM_SERVICE) {
       return normalizeService_(process.env.LLM_SERVICE);
     }
-    return normalizeService_(
-      PropertiesService.getDocumentProperties().getProperty(PROP_KEY_SERVICE)
-    );
+    return normalizeService_(DocPropsCache.read(PROP_KEY_SERVICE));
   }
 
   function saveSelectedService(service: LlmServiceName): void {
-    PropertiesService.getDocumentProperties().setProperty(PROP_KEY_SERVICE, normalizeService_(service));
+    DocPropsCache.write(PROP_KEY_SERVICE, normalizeService_(service));
   }
 
   function create(service?: LlmServiceName): LlmClient {
@@ -31,7 +29,11 @@ const LLMFactory = (() => {
   }
 
   function hasApiKeyForSelectedService(): boolean {
-    return (create() as any).hasApiKey();
+    return create().hasApiKey();
+  }
+
+  function listAvailableModelsForService(force = false, service?: LlmServiceName): string[] {
+    return create(service).listAvailableModels(force);
   }
 
   return {
@@ -39,5 +41,6 @@ const LLMFactory = (() => {
     getSelectedService,
     saveSelectedService,
     hasApiKeyForSelectedService,
+    listAvailableModelsForService,
   };
 })();

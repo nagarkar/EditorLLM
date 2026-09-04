@@ -119,8 +119,23 @@ CLASP_BACKUP="$(mktemp)"
 cp .clasp.json "$CLASP_BACKUP"
 trap 'cp "$CLASP_BACKUP" .clasp.json; rm -f "$CLASP_BACKUP"; info "Restored .clasp.json (staging)"' EXIT
 
-cp .clasp.prod.json .clasp.json
-info "Switched .clasp.json → production script ($SCRIPT_ID)"
+python3 - <<'PYEOF'
+import json
+
+with open('.clasp.json', 'r', encoding='utf-8') as f:
+    staging = json.load(f)
+
+with open('.clasp.prod.json', 'r', encoding='utf-8') as f:
+    prod = json.load(f)
+
+if staging.get('filePushOrder'):
+    prod['filePushOrder'] = staging['filePushOrder']
+
+with open('.clasp.json', 'w', encoding='utf-8') as f:
+    json.dump(prod, f, indent=2)
+    f.write('\n')
+PYEOF
+info "Switched .clasp.json → production script ($SCRIPT_ID) with synchronized filePushOrder"
 
 clasp push --force
 info "Pushed source to @HEAD (production)"

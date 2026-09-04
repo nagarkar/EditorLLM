@@ -69,7 +69,6 @@ const MAPPINGS = [
   // Publisher Agent
   { mdFile: 'agents/publisher-system-role.md', constName: 'PUBLISHER_SYSTEM_PROMPT_BODY' },
   { mdFile: 'agents/publisher-w1-instructions.md', constName: 'PUBLISHER_W1_INSTRUCTIONS' },
-  { mdFile: 'agents/publisher-w2-instructions.md', constName: 'PUBLISHER_W2_INSTRUCTIONS' },
   { mdFile: 'agents/publisher-rubric.md', constName: 'PUBLISHER_INSTRUCTION_QUALITY_RUBRIC' },
 ];
 

@@ -1,29 +1,13 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import * as vm from 'vm';
-
 import {
   encodeDirectiveNamedRangeName,
   makeDirectivePropertyKey_,
 } from '../agentHelpers';
+import {
+  clearJestDocumentPropertyCache_,
+  createEditorLlmCodeVmContext,
+} from './helpers/gasVmContext';
 
-const agentHelpersJs = fs.readFileSync(
-  path.resolve(__dirname, '../../dist/agentHelpers.js'),
-  'utf8',
-);
-const directivePersistenceJs = fs.readFileSync(
-  path.resolve(__dirname, '../../dist/DirectivePersistence.js'),
-  'utf8',
-);
-const codeJs = fs.readFileSync(
-  path.resolve(__dirname, '../../dist/Code.js'),
-  'utf8',
-);
-
-const ctx = Object.assign(vm.createContext({}), global) as any;
-vm.runInContext(agentHelpersJs, ctx);
-vm.runInContext(directivePersistenceJs, ctx);
-vm.runInContext(codeJs, ctx);
+const ctx = createEditorLlmCodeVmContext();
 
 function clearDirectivesOnTab(tabName: string): void {
   ctx.clearDirectivesOnTab(tabName);
@@ -56,6 +40,7 @@ describe('clearDirectivesOnTab', () => {
 
   beforeEach(() => {
     propStore.clear();
+    clearJestDocumentPropertyCache_();
     jest.clearAllMocks();
     ctx.PropertiesService = {
       getDocumentProperties: () => ({

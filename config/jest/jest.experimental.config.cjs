@@ -10,9 +10,9 @@ module.exports = {
   moduleFileExtensions: ['ts', 'js'],
   setupFilesAfterEnv: ['<rootDir>/config/jest/jest.setup.js'],
   transformIgnorePatterns: ['/node_modules/'],
-  globals: {
-    'ts-jest': {
+  transform: {
+    '^.+\\.tsx?$': ['ts-jest', {
       tsconfig: '<rootDir>/config/jest/tsconfig.test.json',
-    },
+    }],
   },
 };

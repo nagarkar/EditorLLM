@@ -102,12 +102,19 @@ global.DocumentApp = {
 global.PropertiesService = {
   getUserProperties: jest.fn().mockReturnValue({
     getProperty: jest.fn().mockReturnValue(null),
+    getProperties: jest.fn().mockReturnValue({}),
     setProperty: jest.fn(),
     deleteProperty: jest.fn(),
   }),
   getScriptProperties: jest.fn().mockReturnValue({
     getProperty: jest.fn().mockReturnValue(null),
     setProperty: jest.fn(),
+  }),
+};
+
+global.Session = {
+  getActiveUser: jest.fn().mockReturnValue({
+    getEmail: jest.fn().mockReturnValue('test@example.com'),
   }),
 };
 
@@ -155,6 +162,11 @@ global.Drive = {
   // Used by elevenLabsTextToSpeech to save TTS audio and share it.
   Files: {
     create: jest.fn().mockReturnValue({ id: 'mock-tts-file-id' }),
+    list:   jest.fn().mockReturnValue({ files: [] }),
+    update: jest.fn().mockReturnValue({}),
+    get:    jest.fn().mockReturnValue({}),
+    remove: jest.fn(),
+    copy:   jest.fn().mockReturnValue({ id: 'mock-copy-id', name: 'copy.mp3' }),
   },
   Permissions: {
     create: jest.fn().mockReturnValue({}),
@@ -228,6 +240,22 @@ global.CacheService = {
   _createMockCache: createMockCache,
 };
 
+// HttpRetry helpers — pass-through to UrlFetchApp.fetch so existing service
+// tests (OpenAIService, ElevenLabsService) that assert on UrlFetchApp.fetch
+// calls continue to work without retry-loop interference.  The retry
+// semantics are covered separately in httpRetry.test.ts.
+global.httpFetchWithRetry = jest.fn().mockImplementation((url, opts /*, cfg */) => {
+  return global.UrlFetchApp.fetch(url, opts);
+});
+global.httpComputeBaseMs = jest.fn().mockImplementation((bytes, opts) => {
+  const minMs = (opts && opts.minMs) || 5000;
+  const maxMs = (opts && opts.maxMs) || 30000;
+  const bpm   = (opts && opts.bytesPerMs) || 2;
+  const safe  = (typeof bytes === 'number' && Number.isFinite(bytes) && bytes > 0) ? bytes : 0;
+  return Math.max(minMs, Math.min(maxMs, Math.round(safe / bpm)));
+});
+global.httpParseRetryAfterMs = jest.fn().mockReturnValue(null);
+
 global.Tracer = {
   info:       jest.fn(),
   warn:       jest.fn(),
@@ -245,8 +273,13 @@ global.Utilities = {
   sleep:         jest.fn(),
   base64Encode:  jest.fn().mockReturnValue('bW9ja2F1ZGlv'),
   base64Decode:  jest.fn().mockReturnValue([0, 1, 2, 3]),
-  newBlob:       jest.fn().mockReturnValue({ getBytes: jest.fn().mockReturnValue([]) }),
+  newBlob:       jest.fn().mockReturnValue({
+    getBytes:        jest.fn().mockReturnValue([]),
+    getContentType:  jest.fn().mockReturnValue('image/png'),
+    setName:         jest.fn(),
+  }),
   getUuid:       jest.fn().mockReturnValue('00000000-0000-0000-0000-000000000000'),
+  formatDate:    jest.fn().mockReturnValue('01012026000000'),
 };
 
 // ── DocOps stub ───────────────────────────────────────────────────────────────
@@ -311,6 +344,39 @@ global.Constants = {
   COMMENT_ANCHOR_TAB:   '__comment_anchor_tab__',
 };
 
+// ── DocPropsCache global ──────────────────────────────────────────────────────
+// In tests, DocPropsCache is a simple pass-through to PropertiesService with
+// no CacheService involvement. This prevents cross-test cache contamination
+// and ensures tests that replace global.PropertiesService see consistent
+// reads and writes without needing to also clear a shared cache.
+//
+// vm-context tests (ttsDirectives, directiveRemoval) load dist/DocPropsCache.js
+// directly into their context so DocPropsCache there closes over ctx.PropertiesService.
+global.DocPropsCache = (function() {
+  function dp() { return global.PropertiesService.getDocumentProperties(); }
+  return {
+    read: function(key) {
+      return dp().getProperty(key);
+    },
+    write: function(key, value) {
+      dp().setProperty(key, value);
+    },
+    writeMany: function(entries) {
+      var d = dp();
+      if (typeof d.setProperties === 'function') {
+        d.setProperties(entries);
+      } else {
+        Object.keys(entries).forEach(function(k) { d.setProperty(k, entries[k]); });
+      }
+    },
+    remove: function(key) {
+      var d = dp();
+      if (typeof d.deleteProperty === 'function') d.deleteProperty(key);
+    },
+    invalidate: function(key) { /* no-op in tests */ },
+  };
+})();
+
 // ── parsePlsRules global ──────────────────────────────────────────────────────
 // ElevenLabsService calls parsePlsRules() from the GAS flat scope.  In tests
 // that load ElevenLabsService via new Function() (vm-context pattern), the real
@@ -323,6 +389,17 @@ global.parsePlsRules = jest.fn().mockReturnValue([]);
 // Provides safe defaults so vm-context tests that spread { ...global } into a
 // sandbox (e.g. collaboration.test.ts) don't fail on an undefined global when
 // Code.js references ElevenLabsService.
+// ── CoverImageGenerator stub ──────────────────────────────────────────────────
+// Allows vm-context tests that spread { ...global } into a sandbox to reference
+// CoverImageGenerator without loading the compiled module.
+global.CoverImageGenerator = {
+  generateCoverImages: jest.fn().mockReturnValue({
+    folderName: 'images',
+    folderUrl: 'https://drive.google.com/drive/folders/mock',
+    results: [],
+  }),
+};
+
 global.ElevenLabsService = {
   saveApiKey:   jest.fn(),
   hasApiKey:    jest.fn().mockReturnValue(false),
@@ -330,9 +407,13 @@ global.ElevenLabsService = {
   getModelId:   jest.fn().mockReturnValue('eleven_multilingual_v2'),
   listVoices:   jest.fn().mockReturnValue([]),
   listModels:   jest.fn().mockReturnValue([]),
+  getUserSubscription: jest.fn().mockReturnValue({ characterCount: 0, characterLimit: 0 }),
   textToSpeech: jest.fn().mockReturnValue('bW9ja2F1ZGlv'),
   prefetchPronunciationDictionaries:  jest.fn(),
   getCachedPronunciationDictionaries: jest.fn().mockReturnValue(null),
+  getVoiceMappings:    jest.fn().mockReturnValue(null),
+  ensureVoiceMappings: jest.fn().mockReturnValue(null),
+  getSelectedDictionary: jest.fn().mockReturnValue(null),
 };
 
 // ── MarkdownService pure-function stubs ────────────────────────────────────

@@ -1,5 +1,5 @@
 {
-  "scriptId": "1B1grAkwGxf9cb25gnmajfi9YeViJgu8N_dNO_nQ3WtESyH9ThWzvnhE2",
+  "scriptId": "1wnHwA4qe05EKTozVFtI56UYZtw8J_q6hijwPJwQHAJ3hCdLZnbiEbNNg",
   "rootDir": "dist",
   "scriptExtensions": [
     ".js",
@@ -13,9 +13,18 @@
   ],
   "filePushOrder": [
     "dist/Types.js",
+    "dist/Constants.js",
+    "dist/DocPropsCache.js",
     "dist/StringProcessor.js",
+    "dist/agentHelpers.js",
+    "dist/w1FormatGuidelines.js",
+    "dist/agentPrompts.js",
+    "dist/PublisherHelpers.js",
     "dist/GeminiService.js",
+    "dist/PlsParser.js",
+    "dist/ElevenLabsService.js",
     "dist/DocOps.js",
+    "dist/CollaborationHelpers.js",
     "dist/CollaborationService.js",
     "dist/BaseAgent.js",
     "dist/ArchitectAgent.js",
@@ -23,8 +32,11 @@
     "dist/AuditAgent.js",
     "dist/TetherAgent.js",
     "dist/GeneralPurposeAgent.js",
+    "dist/PublisherAgent.js",
     "dist/MarkdownService.js",
+    "dist/TabMergerHelpers.js",
     "dist/TabMerger.js",
+    "dist/CommentProcessorHelpers.js",
     "dist/CommentProcessor.js",
     "dist/Tracer.js",
     "dist/Code.js"

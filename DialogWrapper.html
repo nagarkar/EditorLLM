@@ -43,6 +43,8 @@
       background: var(--surface);
       border-bottom: 2px solid var(--accent-muted);
       flex-shrink: 0;
+      position: relative;
+      z-index: var(--z-layer3-1); /* stay above #spinner-overlay (--z-layer3) */
     }
     #dw-header-title {
       font-size: 14px;
@@ -174,10 +176,14 @@
     <div id="dw-header">
       <h2 id="dw-header-title"><?= title ?></h2>
       <div id="dw-header-toolbar">
-        <button type="button" id="dw-tab-main" class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="switchTab('main')">Main</button>
-        <button type="button" id="dw-tab-tts"  class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="switchTab('tts')">TTS</button>
-        <button type="button" id="dw-tab-publisher" class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="switchTab('publisher')">Publisher</button>
-        <button type="button" id="dw-tab-logs" class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="switchTab('logs')">Logs</button>
+        <button type="button" id="dw-tab-main"      class="btn-secondary btn-sm tab-active" onclick="switchTab('main')">Main</button>
+        <button type="button" id="dw-tab-tts"       class="btn-secondary btn-sm"            onclick="switchTab('tts')">TTS</button>
+        <button type="button" id="dw-tab-publisher" class="btn-secondary btn-sm"            onclick="switchTab('publisher')">Publisher</button>
+        <button type="button" id="dw-tab-agents"    class="btn-secondary btn-sm"            onclick="switchTab('agents')">Agents</button>
+        <button type="button" id="dw-tab-logs"      class="btn-secondary btn-sm"            onclick="switchTab('logs')">Logs</button>
+        <span class="dw-toolbar-sep" aria-hidden="true"></span>
+        <button type="button" class="btn-secondary btn-sm" onclick="runClearActiveTabAnnotations()" title="Clear highlights, named ranges, and bookmarks on the active tab">Clear Annotations</button>
+        <button type="button" class="btn-secondary btn-sm" onclick="runProcessCommentsQuick()" title="Process all @tag comment threads">Process @comments</button>
         <span class="dw-toolbar-sep" aria-hidden="true"></span>
         <button type="button" class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="dwMinimize()" title="Minimize">↓ Min</button>
       </div>

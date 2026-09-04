@@ -826,6 +826,31 @@ Compare "Current Style Profile (if any)" with "Last Generated Instructions" to i
 The StyleProfile is the seed context for other agents. It must be concrete enough that
 EarTune, Audit, Tether, TTS, Publisher, and General Purpose can refresh their own
 instructions from StyleProfile alone when Manuscript context is unavailable.
+
+## Required sections
+
+Include all of the following sections in every StyleProfile. Each must be concrete and
+specific — avoid generic phrases like "balanced" or "accessible" that apply to almost
+any book.
+
+**## Overall Mood** — A single adjective or short phrase (2–4 words) capturing the
+dominant emotional register of the book as a whole. This drives visual styling decisions
+for the cover, title page, and chapter openings. Examples: grandeur, austere solemnity,
+warm intimacy, dark mysticism, quiet severity, lyrical melancholy, restless exuberance.
+
+**## Author Personality** — The implied relational stance of the narrator or author
+voice toward the reader. This shapes typographic choices in the "About The Author"
+section. Examples: intimate and confessional, formally distant, humbly instructive,
+wry and irreverent, authoritative but generous.
+
+**## Key Chapters and Their Moods** — A list of chapter titles (or chapter-number
+ranges) each paired with a per-chapter mood qualifier. These moods govern how
+chapter-title styling should modulate across the book. Include at least 3 entries;
+more if the manuscript has distinct tonal movements. Examples of mood qualifiers:
+ceremonial, sharp and direct, minimal, lyrical, urgent, elegiac, playful, solemn.
+
+Format this section as a markdown list:
+- Chapter N — Title: mood qualifier
 Your StyleProfile must function as a compact "author operating system" for downstream agents. It should be specific enough that EarTune, Audit, Tether, TTS, Publisher, and General Purpose agents can refresh their own instructions from StyleProfile alone when Manuscript context is unavailable.
 
 Required H2 sections:
@@ -1025,6 +1050,9 @@ You work exclusively within the StyleProfile constraints.
 
 When proposing changes (content_annotation), your match_text must be sampled
 verbatim from the passage currently being edited.
+Every annotation must propose a concrete rewritten wording or punctuation pattern
+that is materially different from the existing passage. Never emit a no-op
+annotation that merely restates the current text.
 
 ## EarTune Markdown Requirements
 When generating EarTune instructions, return valid GitHub-Flavored Markdown
@@ -1195,6 +1223,15 @@ quantum probability produces peculiar phenomena that resist materialist reductio
 ## Instructions
 
 Identify every passage with a rhythmic, phonetic, or cadence problem.
+Only annotate when you can name a real issue and provide a concrete fix that is
+different from the current wording or punctuation.
+
+Reason format requirements:
+- Start with a brief diagnosis.
+- Then include `Suggested rewrite: "..."` with the exact replacement wording or punctuation pattern you want.
+- The suggested rewrite may be a clause or full sentence, but it must NOT be copied verbatim from the passage.
+- If you cannot supply a distinct rewrite, omit the annotation entirely.
+
 Also scout for "Pronunciation Traps" in the passage:
 - Scan for proper nouns (character/place names), technical jargon, or uncommon words (e.g., "Chid", "Axiom", "Eigenstate").
 - For any annotation involving a pronunciation trap, append to the end of that operation's `reason` a markdown section headed `## Phonetic Lexicon Suggestions`.
@@ -1206,7 +1243,7 @@ Also scout for "Pronunciation Traps" in the passage:
 Return a JSON object with:
 - operations: one per problem found. Each must have:
     - match_text: verbatim 3–4-word phrase from the passage above
-    - reason: description of the issue and suggested improvement; when relevant, end with the `## Phonetic Lexicon Suggestions` section described above
+    - reason: brief diagnosis plus `Suggested rewrite: "..."`; when relevant, end with the `## Phonetic Lexicon Suggestions` section described above
 ```
 
 ## Comment Responses Prompt (generateCommentResponsesPrompt)

@@ -1,13 +1,17 @@
 // ============================================================
-// Types.ts — Shared TypeScript type declarations for EditorLLM.
+// Types.ts — Server-side TypeScript type declarations for EditorLLM.
 //
-// This file contains ONLY compile-time constructs (interfaces, type aliases,
+// Contains ONLY compile-time constructs (interfaces, type aliases,
 // ambient function declarations). All runtime constants have moved to
 // Constants.ts so they can be imported by experimental and test code.
 //
+// Types shared with the browser client live in client/server-types.d.ts,
+// which is included by both tsconfig.json and tsconfig.client.json.
+// Do not duplicate those interfaces here.
+//
 // With `module: none` (GAS build), TypeScript compiles this file to an
-// essentially empty script — type declarations are erased entirely — so there
-// is no runtime footprint.
+// essentially empty script — type declarations are erased entirely — so
+// there is no runtime footprint.
 // ============================================================
 
 /**
@@ -48,6 +52,13 @@ interface DirectiveCreate {
   match_text: string;
   type: string;
   payload: Record<string, unknown>;
+  /**
+   * Selects how many directives are created from this entry.
+   * 'first_occurrence' (default) — single directive at the first match of match_text.
+   * 'every_occurrence'           — directive at every match (e.g. structural markers,
+   *   ellipsis breaks).  Resolved by CollaborationService.createBookmarkDirectives_.
+   */
+  apply_to?: 'first_occurrence' | 'every_occurrence';
 }
 
 interface StoredDirectiveRecord {
@@ -62,6 +73,19 @@ interface TtsOperation {
   voice_id: string;
   stability: number;
   similarity_boost: number;
+}
+
+/** A break directive operation from the TTS agent — inserts a timed silence at the given location. */
+interface TtsBreakOperation {
+  match_text: string;
+  duration_ms: number;
+  /**
+   * Controls how many directives are created from this operation.
+   * 'first_occurrence' (default) — one directive at the first match of match_text.
+   * 'every_occurrence'           — one directive at every match in the tab (used
+   *   for structural markers such as '---' and '* * *' that appear repeatedly).
+   */
+  apply_to?: 'first_occurrence' | 'every_occurrence';
 }
 
 /**
@@ -106,6 +130,8 @@ interface LlmGenerateOptions {
 }
 
 interface LlmClient {
+  hasApiKey(): boolean;
+  listAvailableModels(force?: boolean): string[];
   generate(
     systemPrompt: string,
     userPrompt: string,
@@ -148,6 +174,11 @@ declare function findTextOrFallback_(
   body: GoogleAppsScript.Document.Body,
   matchText: string
 ): GoogleAppsScript.Document.RangeElement | null;
+
+declare function findAllTextOccurrences_(
+  body: GoogleAppsScript.Document.Body,
+  matchText: string
+): GoogleAppsScript.Document.RangeElement[];
 
 declare function matchesAgentPrefix_(
   content: string,
@@ -200,6 +231,10 @@ declare function validateOps(
   ops: Array<{ match_text: string; reason: string }>,
   passage: string
 ): Array<{ match_text: string; reason: string }>;
+declare function validateEarTuneOps(
+  ops: Array<{ match_text: string; reason: string }>,
+  passage: string
+): Array<{ match_text: string; reason: string }>;
 declare function extractMarkdownFromJsonWrapper(raw: string): string;
 declare function instructionUpdateSchema(): object;
 declare function annotationOperationsSchema(): object;
@@ -214,8 +249,60 @@ declare function validatePublisherTabPayload(
   requestedTabs: string[]
 ): { tabs: GeneratedTab[]; missing: string[]; unexpected: string[] };
 declare function buildPublisherPackageFolderName(docName: string, isoDate: string, hhmmss?: string): string;
+declare function buildVersionFolderName(docId: string, label: string): string;
+declare function validateVersionLabel(label: string): string;
+declare function extractCssFromTab(markdown: string): string;
 declare function isBlankPublisherContent(text: string | null | undefined): boolean;
+
+interface CoverItem {
+  bodyChildIndex: number;
+  kind: 'text' | 'image' | 'marker';
+  text?: string;
+  marker?: { number: number | null; name: string | null };
+  imageRef?: number;
+}
+interface ParsedCoverConcept {
+  number: number | null;
+  name: string | null;
+  text: string;
+  baselineImageRef: number | null;
+  imageRefs: number[];
+  insertAfterBodyChildIndex: number;
+}
+declare function parseCoverConceptMarker(line: string): { number: number | null; name: string | null } | null;
+declare function parseCoverConcepts(items: CoverItem[]): ParsedCoverConcept[];
+declare function sanitizeCoverImageFilename(raw: string): string;
+declare function buildCoverBaselineFilename(name: string | null, number: number | null): string;
+declare function buildCoverArchiveFilename(baselineFilename: string, stamp: string): string;
+
+// Drive helpers defined at flat scope in Code.ts; declared here so other
+// source files (CoverImageGenerator, etc.) type-check in the GAS bundle.
+declare function getOrCreateDriveFolderByName_(folderName: string, parentId?: string): string;
+declare function assertInsideEditorLLMRoot_(folderId: string): void;
 declare function deduplicateTtsOps(passage: string, ops: TtsOperation[]): TtsOperation[];
+declare function httpFetchWithRetry(
+  url: string,
+  fetchOpts: GoogleAppsScript.URL_Fetch.URLFetchRequestOptions,
+  cfg: {
+    maxRetries: number;
+    baseMs: number;
+    label: string;
+    shouldRetry: (response: GoogleAppsScript.URL_Fetch.HTTPResponse, attempt: number) => boolean;
+  }
+): GoogleAppsScript.URL_Fetch.HTTPResponse;
+declare function httpComputeBaseMs(inputBytes: number, opts?: { minMs?: number; maxMs?: number; bytesPerMs?: number }): number;
+declare function httpParseRetryAfterMs(headers: Record<string, string | undefined>, nowMs: number): number | null;
+declare function buildEllipsisBreakDirectives(): DirectiveCreate[];
+declare function firstLineForMatchText(matchText: string): string;
+declare const TTS_DEFAULT_STABILITY: number;
+declare const TTS_DEFAULT_SIMILARITY_BOOST: number;
+declare function applyTtsOperationDefaults(op: TtsOperation): { op: TtsOperation; appliedStability: boolean; appliedSimilarityBoost: boolean };
+declare const H1_BREAK_MS: number;
+declare const H2_BREAK_MS: number;
+declare const H3_PLUS_BREAK_MS: number;
+declare const HEADING_MATCH_TEXT_MAX_CHARS: number;
+declare function getHeadingDurationMsForLevel(level: number): number;
+declare function computeHeadingBreakBoundaries(paragraphLevels: Array<number | null>): Array<{ atParagraphIndex: number; durationMs: number }>;
 declare function stitchingIdsForVoice(voiceId: string, historyByVoice: Record<string, string[]>, useStitching: boolean): string[];
 declare function recordRequestId(voiceId: string, requestId: string, historyByVoice: Record<string, string[]>): Record<string, string[]>;
 declare function makeDirectivePropertyKey_(directiveId: string): string;
@@ -271,7 +358,6 @@ declare const PUBLISHER_GEMINI_TAB_NAMES: readonly string[];
 declare const PUBLISHER_ALL_OUTPUT_TAB_NAMES: readonly string[];
 declare const PUBLISHER_SYSTEM_PROMPT_BODY: string;
 declare const PUBLISHER_W1_INSTRUCTIONS: string;
-declare const PUBLISHER_W2_INSTRUCTIONS: string;
 declare const PUBLISHER_INSTRUCTION_QUALITY_RUBRIC: string;
 
 // Architect Agent
@@ -287,88 +373,108 @@ declare const GENERALPURPOSE_W1_INSTRUCTIONS: string;
 declare const GENERALPURPOSE_W3_INSTRUCTIONS: string;
 declare const GENERALPURPOSE_INSTRUCTION_QUALITY_RUBRIC: string;
 
+// ── Audio Manifest types ──────────────────────────────────────────────────────
+// PartialManifestKind and PartialManifest are defined in client/server-types.d.ts
+// (included by both tsconfigs). Only the ambient function declaration lives here.
+
+declare function buildSpecialManifest_(tabName: string, allowMultiple: boolean): AudioManifest | null;
+declare function exportPartialManifest(tabName: string): PartialManifest | null;
+
 // ── ElevenLabs types ──────────────────────────────────────────────────────────
-
-/**
- * A single voice entry returned by ElevenLabsService.listVoices().
- * Normalised from the raw API shape — callers never need to inspect
- * the raw `labels` map directly (though it is available for edge cases).
- */
-interface ElevenLabsVoice {
-  voice_id: string;
-  name:     string;
-  /** ElevenLabs category: "premade" | "cloned" | "generated" | "professional" */
-  category: string;
-  /** Value of labels['use case'] — e.g. "narration" | "conversational" | "characters" */
-  use_case: string;
-  /** Raw labels object from the API (may contain accent, gender, age, etc.) */
-  labels:   Record<string, string>;
-}
-
-/**
- * A single TTS-capable model returned by ElevenLabsService.listModels().
- */
-interface ElevenLabsModel {
-  model_id:    string;
-  name:        string;
-  description: string;
-}
-
-/**
- * A single rule in a pronunciation dictionary.
- *
- * | alphabet | interpretation |
- * |----------|---------------|
- * | `"ipa"`  | `replace_with` is an IPA phoneme string (ElevenLabs `phoneme` rule) |
- * | `""`     | `replace_with` is a plain word/phrase alias (ElevenLabs `alias` rule) |
- */
-interface ElevenLabsPronunciationRule {
-  /** The word or phrase to be replaced in source text. */
-  string_to_replace: string;
-  /** Replacement: IPA string when alphabet="ipa", plain alias when alphabet="". */
-  replace_with: string;
-  /** "ipa" for phoneme rules; "" for alias rules. */
-  alphabet: string;
-}
-
-/**
- * A pronunciation dictionary cached by ElevenLabsService after prefetching.
- * Stores the data needed to (a) match source text, (b) build the TTS locator,
- * and (c) display the human-readable rules table in the TTS panel.
- */
-interface ElevenLabsPronunciationDictionary {
-  id:         string;
-  version_id: string;
-  name:       string;
-  rules: ElevenLabsPronunciationRule[];
-}
+// ElevenLabsVoice, ElevenLabsModel, ElevenLabsPronunciationRule,
+// ElevenLabsPronunciationDictionary, and ElevenLabsLastGenMeta are defined in
+// client/server-types.d.ts (included by both tsconfigs).
 
 /**
  * One entry in the `pronunciation_dictionary_locators` array sent to the
  * ElevenLabs TTS endpoint.  At most 3 locators are allowed per request.
+ * Server-only — never returned to the client as JSON.
  */
 interface ElevenLabsPronunciationDictionaryLocator {
   pronunciation_dictionary_id: string;
   version_id:                  string;
 }
 
+// ── Agent export / import types ───────────────────────────────────────────────
+
 /**
- * Metadata persisted to UserProperties after each successful TTS generation.
- * Allows the dialog to display (and reload) the last audio when reopened.
+ * A single agent entry in an export payload.
+ * Tab content fields are included so the agent can be fully reconstructed
+ * in another document without needing access to the source document.
  */
-interface ElevenLabsLastGenMeta {
-  /** Drive file ID of the saved MP3 — used to re-fetch audio bytes. */
-  fileId:    string;
-  /** Public Drive download URL shown as a link in the dialog. */
-  driveUrl:  string;
-  /** Display name of the voice used (label from the dropdown). */
-  voiceName: string;
-  /** Display name of the model used (label from the dropdown). */
-  modelName: string;
-  /** Number of characters synthesised (= credits consumed). */
-  charCount: number;
-  /** Unix timestamp (ms) when the generation completed. */
-  timestamp: number;
+interface AgentExportEntry {
+  displayName:          string;
+  tag:                  string;
+  systemPrompt:         string;
+  workflows:            { w2: boolean; w3: boolean; w6: boolean };
+  instructionTabName?:  string;
+  instructionTabContent?: string;
+  contextTabName?:      string;
+  contextTabContent?:   string;
+}
+
+/**
+ * Top-level envelope for a portable agent export JSON blob.
+ */
+interface AgentExportPayload {
+  version:    1;
+  exportedAt: string;
+  agents:     AgentExportEntry[];
+}
+
+// ── Agentic Team types ────────────────────────────────────────────────────────
+
+/**
+ * A named, ordered list of custom agent IDs that run together
+ * on a source tab for an Agentic Team Analysis.
+ */
+interface AgentTeamDefinition {
+  /** Stable UUID (no dashes). */
+  id:        string;
+  /** Human-readable team name. */
+  name:      string;
+  /** Ordered list of custom agent IDs. */
+  agentIds:  string[];
+  /** Where this team definition is stored. */
+  storedIn:  'user' | 'document';
+  /** Unix timestamp (ms) of creation. */
+  createdAt: number;
+  /** Owner email — set when storedIn === 'document'. */
+  ownerEmail?: string;
+}
+
+/**
+ * Export envelope for agent teams — same structure as AgentExportPayload
+ * but for teams.
+ */
+interface AgentTeamExportPayload {
+  version:    1;
+  exportedAt: string;
+  teams:      AgentTeamDefinition[];
+}
+
+/**
+ * Progress checkpoint stored in Document Properties while an analysis is running.
+ * Key: `team_analysis_progress::<sourceTabName>::<dateStr>` (e.g. "09/05/2026")
+ */
+interface TeamAnalysisProgress {
+  /** Index of the last fully processed paragraph (0-based). */
+  lastProcessedIndex: number;
+  /** Total paragraph count extracted from source tab at start of run. */
+  totalParagraphs:    number;
+  /** Name of the output tab (e.g. "Agentic Analysis 09/05/2026"). */
+  outputTabName:      string;
+}
+
+/**
+ * Return value from startOrContinueTeamAnalysis().
+ */
+interface TeamAnalysisResult {
+  status:         'complete' | 'continuing' | 'error';
+  processedCount: number;
+  totalCount:     number;
+  outputTabName:  string;
+  error?:         string;
 }
 
 // ── Constants ambient declaration ─────────────────────────────────────────────
@@ -402,13 +508,20 @@ declare const Constants: {
     readonly TETHER_INSTRUCTIONS:          'Tether Instructions';
     readonly GENERAL_PURPOSE_INSTRUCTIONS: 'General Purpose Instructions';
     readonly PUBLISHER_INSTRUCTIONS:       'Publisher Instructions';
-    readonly PUBLISHER_TITLE:              'Title';
     readonly PUBLISHER_COPYRIGHT:          'Copyright';
-    readonly PUBLISHER_TOC:                'Table of Contents';
     readonly PUBLISHER_ABOUT_AUTHOR:       'About The Author';
     readonly PUBLISHER_SALES:              'Sales';
     readonly PUBLISHER_HOOKS:              'Hooks';
     readonly PUBLISHER_COVER:              'Cover';
+    readonly PUBLISHER_VISUAL_STYLES:        'Visual Styles';
+    readonly PUBLISHER_OPENING_CREDITS:      'Opening Audio Credits';
+    readonly PUBLISHER_CLOSING_CREDITS:      'Closing Audio Credits';
+  };
+  readonly DRIVE_FOLDERS: {
+    readonly ROOT:  'EditorLLM';
+    readonly BOOKS: 'Books';
+    readonly EPUB:  'EPUB';
+    readonly AUDIO: 'Audio';
   };
   readonly NEVER_PROCESSED_TABS: readonly string[];
   readonly HIGHLIGHT_COLOR:      string;

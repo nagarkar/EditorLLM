@@ -323,8 +323,22 @@ abstract class BaseAgent {
   /** Markdown rubric for the fast-tier instruction-quality judge after W1. */
   protected abstract getInstructionQualityRubric(): string;
 
+  /**
+   * Default gap between W1 generation and the LLM-as-judge call.  The judge
+   * fires immediately after generation returns, so on smaller paid tiers it
+   * can land in the same per-minute quota window even though it uses the FAST
+   * tier (a different model bucket).  3 s is invisible to the user and
+   * separates the two calls into adjacent rolling windows.
+   */
+  private static readonly QUOTA_GAP_MS_BEFORE_JUDGE = 3000;
+
   /** LLM-as-judge for this agent's instruction tab after W1 content is produced. */
   evaluateInstructions(proposedMarkdown: string): void {
+    Tracer.info(
+      `[${this.constructor.name}] evaluateInstructions: ` +
+      `${BaseAgent.QUOTA_GAP_MS_BEFORE_JUDGE} ms gap before judge call (rate-limit cushion)`
+    );
+    Utilities.sleep(BaseAgent.QUOTA_GAP_MS_BEFORE_JUDGE);
     this.persistInstructionQualityScore_(
       proposedMarkdown,
       this.getInstructionQualityRubric(),

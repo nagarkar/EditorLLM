@@ -73,7 +73,7 @@ const GP_INSTRUCTIONS_MD =
   '## Response Style\n- Match the author\'s voice.\n- Keep replies under 60 words unless complex.';
 
 const PUBLISHER_INSTRUCTIONS_MD =
-  '## Metadata Tabs\n- Title: draft front-matter title page.\n- Copyright: include ISBN and Year placeholders.';
+  '## Metadata Tabs\n- Copyright: include ISBN and Year placeholders.\n- About The Author: preserve useful author edits when possible.';
 
 const MANUSCRIPT_PLAIN =
   'Seven More Sermons To The Dead Epilogue. ' +
@@ -717,15 +717,14 @@ describe('AgentDefinition sanity checks', () => {
     expect(generalPurposeDefinition.workflows.annotateTab).toBeUndefined();
   });
 
-  it('earTuneDefinition W1 has 5 context sections in correct order', () => {
+  it('earTuneDefinition W1 has 4 context sections in correct order', () => {
     const w1 = earTuneDefinition.workflows.generateInstructions!;
-    expect(w1.contextSections).toHaveLength(5);
+    expect(w1.contextSections).toHaveLength(4);
     expect(w1.contextSections[0].source.kind).toBe('style_profile');
-    expect(w1.contextSections[1].source.kind).toBe('manuscript');
-    expect(w1.contextSections[2].source.kind).toBe('literal');
-    expect(w1.contextSections[3].source.kind).toBe('self_instructions');
-    expect(w1.contextSections[4].source.kind).toBe('tab');
-    expect((w1.contextSections[4].source as any).tabName).toBe('${instructionTabName} Scratch');
+    expect(w1.contextSections[1].source.kind).toBe('literal');
+    expect(w1.contextSections[2].source.kind).toBe('self_instructions');
+    expect(w1.contextSections[3].source.kind).toBe('tab');
+    expect((w1.contextSections[3].source as any).tabName).toBe('${instructionTabName} Scratch');
   });
 
   it('architectDefinition W1 has 3 context sections: manuscript, style_profile, scratch tab', () => {
@@ -792,11 +791,6 @@ describe('AgentDefinition sanity checks', () => {
     }
   });
 
-  it('publisherDefinition W2 passage section uses the uniform W2 title', () => {
-    const passage = publisherDefinition.workflows.annotateTab!.contextSections
-      .find(s => s.source.kind === 'passage')!;
-    expect(passage.title).toBe(W2_PASSAGE_SECTION_TITLE);
-  });
 });
 
 // ── PublisherAgent parity tests ───────────────────────────────────────────────

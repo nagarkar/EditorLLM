@@ -8,12 +8,44 @@
 
 <!-- autoShowLogs is set server-side by showSidebar(true) from runTrackedJob_ -->
 <body class="<?= autoShowLogs ? 'auto-log-view' : '' ?>">
-  <!-- MultiSelectTabs component: must live in <body> so DialogWrapper can include
-       it when it extracts <body> content via openAsDialog(). Do NOT move back to
-       <head> — the dialog strips the head and MultiSelectTabs would be undefined. -->
+  <!-- Scripts that must live in <body>: DialogWrapper strips <head> when opening
+       as a dialog, so any JS that must be available in both sidebar and dialog
+       mode must be included here, not in <head>. -->
   <?!= include('MultiSelectTabs'); ?>
 
   <div id="toast-host" class="toast-host" aria-live="polite"></div>
+
+  <!-- Busy spinner — covers the iframe while any runServer call is in flight.
+       Shown/hidden by showSpinner() / hideSpinner() in 01-helpers.ts.
+       Hidden initially; JS sets display:flex to show. -->
+  <div id="spinner-overlay" style="display:none;" role="status" aria-label="Loading">
+    <div class="spinner-overlay-ring"></div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       MANIFEST OVERLAY — root-level so it appears over any tab
+       ══════════════════════════════════════════════════════ -->
+  <div id="manifest-overlay" class="sweep-overlay" style="display:none;">
+    <div class="sweep-panel" style="max-width:95%; width:680px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+        <div class="sweep-title">Audio Manifest</div>
+        <button class="btn-ghost btn-sm" onclick="closeManifestOverlay()">&#x2715;</button>
+      </div>
+      <div style="margin-top:6px; font-size:12px; color:var(--text-secondary);">
+        Generated from TTS directives on <strong id="manifest-tab-label"></strong>.
+        <span id="manifest-section-count"></span>
+      </div>
+      <textarea id="manifest-textarea" readonly
+        style="width:100%; height:280px; margin-top:8px; font-family:Menlo,Monaco,Consolas,monospace;
+               font-size:11px; line-height:1.4; resize:vertical; white-space:pre; overflow:auto;"></textarea>
+      <div class="overlay-actions" style="margin-top:8px;">
+        <button class="btn-secondary btn-sm" onclick="closeManifestOverlay()">Close</button>
+        <button class="btn-secondary btn-sm" onclick="openDesktopApp()">Open Desktop App</button>
+        <button class="btn-primary btn-sm" onclick="copyManifest()">Copy to Clipboard</button>
+      </div>
+      <div class="status-box" id="manifest-status"></div>
+    </div>
+  </div>
 
   <!-- ══════════════════════════════════════════════════════
        MAIN PANEL — hidden when log view is active
@@ -24,11 +56,13 @@
     <div id="sidebar-title-row" style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; padding-bottom:8px; border-bottom:2px solid #1A3461;">
       <h2 style="margin:0; padding:0; border:0;">EditorLLM</h2>
       <div style="display:flex; gap:4px; align-items:center;">
-        <button class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="switchTab('main')">Main</button>
-        <button class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="switchTab('tts')">TTS</button>
-        <button class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="switchTab('publisher')">Publisher</button>
-        <button class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="switchTab('logs')">Logs</button>
-        <button class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="openInDialog()" id="dialog-launch-btn" title="Open in wider dialog">↗</button>
+        <button class="btn-secondary btn-sm" onclick="openHelpOverlay()">Help</button>
+        <button class="btn-secondary btn-sm tab-active" id="sb-tab-main"      onclick="switchTab('main')">Main</button>
+        <button class="btn-secondary btn-sm"            id="sb-tab-tts"       onclick="switchTab('tts')">TTS</button>
+        <button class="btn-secondary btn-sm"            id="sb-tab-publisher" onclick="switchTab('publisher')">Publisher</button>
+        <button class="btn-secondary btn-sm"            id="sb-tab-agents"    onclick="switchTab('agents')">Agents</button>
+        <button class="btn-secondary btn-sm"            id="sb-tab-logs"      onclick="switchTab('logs')">Logs</button>
+        <button class="btn-secondary btn-sm" onclick="openInDialog()" id="dialog-launch-btn" title="Open in wider dialog">↗</button>
       </div>
     </div>
 
@@ -100,11 +134,15 @@
           </div>
           <div class="section-label" style="margin-top:4px;">Fast</div>
           <input type="text" id="openai-model-fast"
+            list="openai-model-options"
             style="width:100%;margin-bottom:6px;padding:5px 8px;border:1px solid #383838;border-radius:4px;font-size:13px;background:#2A2A2A;color:#E0E0E0;">
           <div class="section-label">Thinking</div>
           <input type="text" id="openai-model-thinking"
+            list="openai-model-options"
             style="width:100%;margin-bottom:8px;padding:5px 8px;border:1px solid #383838;border-radius:4px;font-size:13px;background:#2A2A2A;color:#E0E0E0;">
+          <datalist id="openai-model-options"></datalist>
           <div class="btn-row">
+            <button class="btn-action" onclick="refreshAvailableModels()">Refresh List</button>
             <button class="btn-secondary" onclick="loadModelConfig()">Load Saved</button>
             <button class="btn-primary" onclick="saveModelConfig()">Save</button>
           </div>
@@ -128,6 +166,13 @@
         <div class="status-box" id="color-status"></div>
       </div>
     </details>
+
+    <!-- ── Quick actions ─────────────────────────────────────────────────── -->
+    <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; align-items:center;">
+      <button class="btn-secondary btn-sm" onclick="runClearActiveTabAnnotations()">Clear Active Tab Annotations</button>
+      <button class="btn-secondary btn-sm" onclick="runProcessCommentsQuick()">Process @comments</button>
+    </div>
+    <div class="status-box" id="quick-actions-status" style="margin-top:4px;"></div>
 
     <!--
       Six cells in sidebar order (Architect → Merge). In dialog: row1 Architect|Tether,
@@ -265,27 +310,23 @@
       </div>
 
       <div class="dialog-agent-cell dialog-agent-cell-full">
-        <!-- ── Create Manuscript & Refresh — full-width row in dialog (see sidebar_css) ── -->
-        <div class="section-label">Merge &amp; Refresh</div>
+        <!-- ── Create or Overwrite Manuscript — full-width row in dialog (see sidebar_css) ── -->
+        <div class="section-label">Manuscript</div>
         <div class="agent-card">
-          <div class="agent-title">Create Manuscript</div>
+          <div class="agent-title">Create or Overwrite Manuscript</div>
           <div class="agent-desc">
-            Merges listed tabs into <em>Manuscript</em> in order, then refreshes all
-            agent instructions.
+            Concatenates the listed tabs into <em>Manuscript</em> in order, separated by
+            page breaks. Any existing Manuscript content is replaced.
           </div>
           <!-- Multi-select autocomplete replaces the old textarea -->
-          <div id="merge-multiselect" style="margin-bottom:8px;"></div>
+          <div id="manuscript-multiselect" style="margin-bottom:8px;"></div>
           <div class="btn-row">
-            <button class="btn-secondary" onclick="loadSavedMergeNames()">Load Saved</button>
-            <button class="btn-secondary" onclick="saveMergeNames()">Save</button>
-            <button class="btn-green" id="mergeNowBtn" onclick="runMergeNow()">Create Manuscript</button>
-          </div>
-          <div class="btn-row" style="margin-top:6px;">
-            <button class="btn-primary" id="refreshInstructionsBtn" onclick="runFullInstructionRefresh()" style="width:100%;">Refresh All Instructions</button>
+            <button class="btn-secondary" onclick="loadSavedManuscriptTabNames()">Load Saved</button>
+            <button class="btn-secondary" onclick="saveManuscriptTabNames()">Save</button>
+            <button class="btn-green" id="manuscriptBtn" onclick="createOrOverwriteManuscript()">Create or Overwrite Manuscript</button>
           </div>
           <div class="merge-progress" id="merge-progress"></div>
           <div class="status-box" id="merge-status"></div>
-          <div class="status-box" id="refresh-status"></div>
         </div>
       </div>
 
@@ -339,26 +380,31 @@
   <div id="tts-panel" style="display:none;">
     <div class="agent-card" style="padding:10px;">
 
-      <!-- Row 1: Selected Tab label + dropdown -->
-      <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
-        <span class="section-label" style="flex-shrink:0; margin:0; white-space:nowrap;">Selected Tab</span>
-        <select id="tts-tab-select" onchange="onTtsTabChange()" style="flex:1;"></select>
+      <!-- Row 1: Selected Tab label + dropdown + Clear & Reprocess -->
+      <div class="row row--gap-md row--mb-md">
+        <span class="section-label col--shrink" style="margin:0; white-space:nowrap;">Selected Tab</span>
+        <select id="tts-tab-select" onchange="onTtsTabChange()" style="flex:0 1 50%; min-width:0;"></select>
+        <button class="btn-secondary btn-sm col--shrink" onclick="clearAndReprocessTtsTab()" title="Clear all TTS directives on the selected tab and re-run the TTS annotation pass" style="white-space:nowrap;">Clear &amp; Reprocess</button>
+        <button class="btn-secondary btn-sm col--shrink" onclick="generateManifest()" style="white-space:nowrap;">Export Manifest</button>
       </div>
 
       <!-- Row 2: Directives column | Configuration column -->
-      <div style="display:flex; gap:10px; align-items:flex-start;">
+      <div class="row row--top row--gap-lg">
 
         <!-- Left — Directives table -->
-        <div style="flex:1; min-width:0;">
-          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+        <div class="col--fluid">
+          <div class="panel-header-row row--gap-xs">
             <span class="section-label" style="margin:0;">Directives</span>
-            <button class="btn-secondary btn-sm" onclick="openAddDirectiveOverlay()">Add</button>
+            <button class="btn-secondary btn-sm" onclick="openAddDirectiveOverlay()">Add Voice</button>
+            <button class="btn-secondary btn-sm" onclick="addBreakDirective()">Add Break</button>
+            <button class="btn-ghost btn-sm" onclick="exportTtsDirectives()" title="Export directives as JSON for review">Export</button>
+            <button class="btn-ghost btn-sm" onclick="refreshTtsDirectives()" title="Reload directives from document">&#x21BA;</button>
           </div>
           <div id="tts-directives-list" style="overflow:auto; max-height:300px;"></div>
         </div>
 
         <!-- Right — Configuration table -->
-        <div style="flex:1; min-width:0;">
+        <div class="col--fluid">
           <div class="section-label" style="margin-bottom:6px;">Configuration</div>
           <table style="width:100%; border-collapse:collapse; font-size:12px;">
             <tr>
@@ -366,7 +412,6 @@
               <td style="padding:2px 0 5px; width:100%; vertical-align:middle;">
                 <div class="key-row">
                   <input type="password" id="tts-apiKey" autocomplete="off" placeholder="sk_…" style="flex:1; font-size:11px;">
-                  <button class="btn-ghost btn-sm" onclick="saveTtsApiKey()">Set</button>
                 </div>
                 <div style="margin-top:4px; font-size:11px; line-height:1.35; color:var(--warn-fg); background:var(--warn-bg); border:1px solid var(--border); border-radius:4px; padding:6px 8px;">
                   <strong>WARNING:</strong> Anyone with access to this document can use ElevenLabs features configured for it, but they cannot see the raw key.
@@ -397,68 +442,72 @@
               </td>
             </tr>
           </table>
-          <div style="display:flex; align-items:center; justify-content:space-between; margin-top:4px;">
-            <select id="tts-dictSelect" style="flex:1; font-size:11px; margin-right:6px;" onchange="saveTtsDictSelection()">
+          <div class="row row--between row--gap-sm" style="margin-top:4px;">
+            <select id="tts-dictSelect" class="col--fluid" style="font-size:11px;" onchange="saveTtsDictSelection()">
               <option value="">(no dictionary)</option>
             </select>
-            <button class="btn-pron-link" onclick="openPronOverlay()" style="flex-shrink:0; font-size:11px; white-space:nowrap;">Pron. rules</button>
+            <button class="btn-pron-link col--shrink" onclick="openPronOverlay()" style="font-size:11px; white-space:nowrap;">Pron. rules</button>
           </div>
           <div class="status-box" id="tts-dict-status" style="margin-top:3px;"></div>
-        </div>
-      </div>
-
-      <!-- Audio generation controls — below the two columns -->
-      <div style="margin-top:10px;">
-        <div class="btn-row">
-          <button class="btn-primary" id="tts-generateBtn" onclick="generateTtsAudio()">▶ Generate Audio</button>
-        </div>
-        <div id="tts-audio-player-container" style="display:none; margin-top:8px; padding:10px; border:1px solid #383838; border-radius:6px; background:#1E1E1E;">
-          <label>Audio Output</label>
-          <audio id="tts-audioPlayer" controls style="width:100%; margin-bottom:6px;"></audio>
-          <div id="tts-driveLinkWrap"></div>
-          <div id="tts-rename-row" style="display:none; margin-top:6px;">
-            <div class="key-row">
-              <input type="text" id="tts-rename-input" placeholder="New filename (without .mp3)" style="flex:1; font-size:12px;">
-              <button class="btn-secondary btn-sm" onclick="renameTtsAudioFile()">Rename</button>
-            </div>
+          <div style="margin-top:6px; text-align:right;">
+            <button class="btn-primary btn-sm" onclick="saveAllTtsSettings()">Save Settings</button>
           </div>
         </div>
-      </div>
-
-      <!-- Preview player: inline small player for directive previews -->
-      <div id="tts-preview-container" style="display:none; margin-top:6px; padding:6px 10px; border:1px solid #2A3A5A; border-radius:5px; background:#161E2E;">
-        <div style="font-size:11px; color:var(--text-secondary); margin-bottom:4px;">Preview</div>
-        <audio id="tts-previewPlayer" controls style="width:100%; height:28px;"></audio>
       </div>
 
       <div class="status-box" id="tts-status"></div>
+
     </div>
-    
-    <!-- Pronunciation Dictionary Overlay -->
-    <div id="pron-overlay" class="sweep-overlay" style="display:none;" onclick="onPronBackdropClick(event)">
-      <div class="sweep-panel" style="max-width:95%; max-height:70vh; display:flex; flex-direction:column; padding:0; overflow:hidden;">
-        <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px 10px; border-bottom:1px solid var(--border); flex-shrink:0;">
-          <div class="sweep-title" style="margin:0;">Pronunciation Dictionary</div>
-          <div style="display:flex; gap:6px; align-items:center;">
-            <button class="btn-ghost btn-sm" id="pron-refresh-btn" onclick="refreshPronOverlay()" style="padding:3px 8px; font-size:12px; line-height:1;">&#x21BA; Refresh</button>
-            <button class="btn-ghost btn-sm" onclick="closePronOverlay()" style="padding:3px 8px; font-size:13px; line-height:1;">&#x2715;</button>
-          </div>
+
+    <!-- Directive Export Overlay -->
+    <div id="tts-directive-export-overlay" class="sweep-overlay" style="display:none;">
+      <div class="sweep-panel" style="max-width:95%; width:720px;">
+        <div class="row row--between row--gap-md">
+          <div class="sweep-title">Export Directives</div>
+          <span id="tts-directive-export-count" class="section-label" style="margin:0;"></span>
         </div>
-        <!-- Dict metadata header — populated by renderPronTable() -->
-        <div id="pron-dict-meta" style="padding:8px 14px 0; flex-shrink:0; display:none;">
-          <div id="pron-dict-name" style="font-size:13px; font-weight:600; color:var(--text-primary);"></div>
-          <div id="pron-dict-ids" style="font-size:11px; color:var(--text-secondary); margin-top:2px; font-family:monospace;"></div>
+        <div style="margin-top:8px; font-size:12px; color:var(--text-secondary);">
+          JSON representation of every directive on
+          <strong id="tts-directive-export-tab"></strong>,
+          ordered by document position.
         </div>
-        <div id="pron-body" style="overflow-y:auto; padding:12px 14px; flex:1;">
-          <div id="pron-empty" style="font-size:12px; color:var(--text-secondary); text-align:center; padding:20px 0;">Loading&hellip;</div>
+        <textarea id="tts-directive-export-textarea" readonly
+          style="width:100%; height:340px; margin-top:8px; font-family:Menlo,Monaco,Consolas,monospace; font-size:11px; line-height:1.4; resize:vertical; white-space:pre; overflow:auto;"></textarea>
+        <div class="overlay-actions">
+          <button class="btn-secondary btn-sm" onclick="closeTtsDirectiveExportOverlay()">Close</button>
+          <button class="btn-secondary btn-sm" onclick="downloadTtsDirectiveExport()">Download .json</button>
+          <button class="btn-primary btn-sm" onclick="copyTtsDirectiveExport()">Copy</button>
         </div>
-        <!-- Static link to edit dictionaries in ElevenLabs -->
-        <div style="padding:8px 14px 10px; border-top:1px solid var(--border); flex-shrink:0;">
-          <a href="https://elevenlabs.io/app/studio?pronunciation-dictionaries=true"
-             target="_blank"
-             style="font-size:11px; color:#8AB4F8; text-decoration:none;">
-            Edit in ElevenLabs &#8599;
-          </a>
+      </div>
+    </div>
+
+    <!-- Clear & Reprocess Confirmation Overlay -->
+    <div id="tts-clear-confirm-overlay" class="sweep-overlay" style="display:none;">
+      <div class="sweep-panel" style="max-width:95%;">
+        <div class="sweep-title">Clear &amp; Reprocess</div>
+        <div style="margin-top:8px; font-size:13px;">
+          Clear all TTS directives on
+          <strong id="tts-clear-confirm-tab"></strong>
+          and re-run the TTS annotation pass?
+        </div>
+        <div class="overlay-actions">
+          <button class="btn-secondary btn-sm" onclick="closeClearReprocessOverlay()">Cancel</button>
+          <button class="btn-primary btn-sm" onclick="confirmClearAndReprocessTts_()">Clear &amp; Reprocess</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Break Overlay -->
+    <div id="directive-break-overlay" class="sweep-overlay" style="display:none;">
+      <div class="sweep-panel" style="max-width:95%;">
+        <div class="sweep-title">Add Break</div>
+        <div style="margin-top:8px;">
+          <label class="section-label">Duration (seconds)</label>
+          <input type="number" id="break-duration-input" min="0.1" step="0.1" style="width:100%; margin-top:4px;">
+        </div>
+        <div class="overlay-actions">
+          <button class="btn-secondary btn-sm" onclick="closeBreakOverlay()">Cancel</button>
+          <button class="btn-primary btn-sm" onclick="saveBreakDirective()">Add</button>
         </div>
       </div>
     </div>
@@ -469,23 +518,23 @@
         <div class="sweep-title" id="directive-edit-title">Edit Directive</div>
         <div id="directive-edit-content" style="margin-top:8px;">
           <!-- Row 1: Model | Voice (2-col) -->
-          <div style="display:flex; gap:8px; margin-bottom:8px;">
-            <div style="flex:1; min-width:0;">
+          <div class="row row--gap-md" style="margin-bottom:8px;">
+            <div class="col--fluid">
               <label class="section-label">Model</label>
               <select id="edit-tts-model" style="width:100%;"></select>
             </div>
-            <div style="flex:1; min-width:0;">
+            <div class="col--fluid">
               <label class="section-label">Voice</label>
               <select id="edit-voice-select" style="width:100%;"></select>
             </div>
           </div>
           <!-- Row 2: Stability | Sim. Boost | Cancel | Save | Delete -->
-          <div style="display:flex; gap:6px; align-items:flex-end; flex-wrap:wrap;">
-            <div style="display:flex; flex-direction:column; flex:1; min-width:55px;">
+          <div class="row row--bottom row--gap-sm row--wrap">
+            <div class="col col--fluid" style="min-width:55px;">
               <label class="section-label" style="font-size:10px;">Stability</label>
               <input type="text" id="edit-stability" style="width:100%;">
             </div>
-            <div style="display:flex; flex-direction:column; flex:1; min-width:55px;">
+            <div class="col col--fluid" style="min-width:55px;">
               <label class="section-label" style="font-size:10px;">Sim. Boost</label>
               <input type="text" id="edit-similarity-boost" style="width:100%;">
             </div>
@@ -508,7 +557,7 @@
       <h2 style="margin:0 0 10px;">Publisher &amp; Packaging</h2>
 
       <div class="agent-desc" style="margin-bottom:8px;">
-        Generates publisher tabs under <strong>Publisher</strong>, audits <strong>Manuscript</strong>,
+        Generates publisher tabs under <strong>Publisher</strong>, checks publisher package readiness,
         and builds EPUB or ACX-ready package folders.
       </div>
 
@@ -525,9 +574,18 @@
         <button class="btn-action" onclick="runPublisherGenerateMissing()">Generate Missing Publishing Tabs</button>
       </div>
 
+      <div class="section-label" style="margin-top:12px; margin-bottom:6px;">Cover Images</div>
+      <div class="agent-desc" style="margin:0 0 6px;">
+        Walks the <strong>Cover</strong> tab, generates one image per concept via Nano Banana Pro
+        (Gemini 3 Pro Image), saves each to <strong>EditorLLM/images</strong>, and inserts the new
+        image into the doc as the next baseline.
+      </div>
+      <div class="btn-row">
+        <button class="btn-action" onclick="runPublisherGenerateCoverImages()">Generate Cover Images</button>
+      </div>
+
       <div class="section-label" style="margin-top:12px; margin-bottom:6px;">Structure</div>
       <div class="btn-row">
-        <button class="btn-action" onclick="runPublisherGenerateToc()">Generate Table of Contents</button>
         <button class="btn-green" onclick="runPublisherStructuralAudit()">Run Structural Audit</button>
       </div>
 
@@ -538,7 +596,7 @@
 
       <div class="section-label" style="margin-top:12px; margin-bottom:6px;">ACX Audio Export</div>
       <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
-        <div class="agent-desc" style="margin:0;">Select `.mp3` files from <strong>EditorLLM/Audio</strong>.</div>
+        <div class="agent-desc" style="margin:0;">Select `.mp3` files from the active version&apos;s <strong>Audio</strong> folder.</div>
         <button class="btn-secondary btn-sm" onclick="refreshPublisherAudioFiles()">Refresh</button>
       </div>
       <div id="publisher-audio-list" style="max-height:220px; overflow:auto; border:1px solid var(--border); border-radius:6px; padding:8px; background:#1B1B1B;"></div>
@@ -556,8 +614,9 @@
       <div class="sweep-panel" style="max-width:480px;">
         <div class="sweep-title">Generate All Publishing Tabs</div>
         <div class="agent-desc" style="margin-top:8px;">
-          This will overwrite the current contents of <strong>Title</strong>, <strong>Copyright</strong>,
-          <strong>About The Author</strong>, <strong>Sales</strong>, <strong>Hooks</strong>, and <strong>Cover</strong>.
+          This will overwrite the current contents of <strong>Copyright</strong>, <strong>About The Author</strong>,
+          <strong>Sales</strong>, <strong>Hooks</strong>, <strong>Cover</strong>, <strong>Opening Audio Credits</strong>,
+          and <strong>Closing Audio Credits</strong>.
         </div>
         <div class="agent-desc" style="margin-top:8px;">
           Existing tab content will still be passed to Gemini as preservation guidance before the tabs are rewritten.
@@ -568,7 +627,402 @@
         </div>
       </div>
     </div>
+
+    <div id="publisher-audit-overlay" class="sweep-overlay" style="display:none;">
+      <div class="sweep-panel" style="max-width:920px; width:92%;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+          <div class="sweep-title">Last Audit Results</div>
+          <button class="btn-secondary btn-sm" onclick="closePublisherAuditOverlay()">Close</button>
+        </div>
+        <div id="publisher-audit-overlay-body" style="margin-top:12px;"></div>
+      </div>
+    </div>
+
+    <div id="help-overlay" class="sweep-overlay" style="display:none;">
+      <div class="sweep-panel" style="max-width:980px; width:94%; max-height:80vh; display:flex; flex-direction:column;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+          <div class="sweep-title">Help</div>
+          <button class="btn-secondary btn-sm" onclick="closeHelpOverlay()">Close</button>
+        </div>
+        <div id="help-overlay-scroll" style="overflow:auto; margin-top:12px; padding-right:4px;">
+          <?!= include('help/help_toc'); ?>
+          <?!= include('help/help_main'); ?>
+          <?!= include('help/help_tts'); ?>
+          <?!= include('help/help_publisher'); ?>
+          <?!= include('help/help_logs'); ?>
+          <?!= include('help/help_overlays'); ?>
+        </div>
+      </div>
+    </div>
   </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       AGENTS PANEL — user-defined agent definitions
+       ══════════════════════════════════════════════════════ -->
+  <div id="agents-panel" style="display:none;">
+    <div class="agent-card" style="padding:10px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+        <div class="section-label" style="margin:0;">Custom Agents</div>
+        <div style="display:flex; gap:4px;">
+          <button class="btn-ghost btn-sm" onclick="refreshAgentsList()" title="Reload">&#x21BA;</button>
+          <button class="btn-primary btn-sm" onclick="openAgentEditor()">+ New Agent</button>
+        </div>
+      </div>
+      <div class="agent-desc" style="margin-bottom:8px;">
+        Define agents that annotate tabs (W2) or reply to comment threads (W3).
+        Instructions come from a tab you write — no LLM generation step needed.
+      </div>
+      <div id="agents-list" style="display:flex; flex-direction:column; gap:6px;"></div>
+      <div class="status-box" id="agents-status"></div>
+    </div>
+
+    <!-- ── Export / Import agents ────────────────────────────── -->
+    <div class="agent-card" style="padding:10px; margin-top:8px;">
+      <div class="section-label" style="margin:0 0 6px;">Export / Import Agents</div>
+      <div class="agent-desc" style="margin-bottom:8px;">
+        Export agent definitions (with tab contents) as JSON to share with another document.
+        Agents with conflicting tags are skipped on import.
+      </div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap;">
+        <button class="btn-ghost btn-sm" onclick="openAgentExportOverlay()">Export Agents</button>
+        <button class="btn-ghost btn-sm" onclick="openAgentImportOverlay()">Import Agents</button>
+      </div>
+    </div>
+
+    <!-- ── Auto-cleanup settings ─────────────────────────────── -->
+    <div class="agent-card" style="padding:10px; margin-top:8px;">
+      <div class="section-label" style="margin:0 0 6px;">Auto-clear annotations</div>
+      <div style="display:flex; align-items:flex-start; gap:8px;">
+        <input type="checkbox" id="auto-cleanup-enabled" style="accent-color:#8AB4F8; margin-top:2px; flex-shrink:0;" onchange="onAutoCleanupToggle()">
+        <label for="auto-cleanup-enabled" class="agent-desc" style="margin:0; cursor:pointer;">
+          Remove highlights, named ranges, and bookmarks when an annotation's comment is resolved
+        </label>
+      </div>
+      <div id="auto-cleanup-interval-row" style="display:none; margin-top:8px; align-items:center; gap:8px;">
+        <span class="agent-desc" style="margin:0;">Check every</span>
+        <select id="auto-cleanup-interval" style="font-size:12px; padding:2px 4px;" onchange="onAutoCleanupIntervalChange()">
+          <option value="1">1 min</option>
+          <option value="5" selected>5 min</option>
+          <option value="10">10 min</option>
+          <option value="30">30 min</option>
+        </select>
+      </div>
+      <div class="status-box" id="auto-cleanup-status" style="margin-top:4px;"></div>
+    </div>
+
+    <!-- ── Agent editor overlay ─────────────────────────────── -->
+    <div id="agent-editor-overlay" class="sweep-overlay" style="display:none;">
+      <div class="sweep-panel" style="max-width:95%; width:560px;">
+        <div class="sweep-title" id="agent-editor-title">New Agent</div>
+        <input type="hidden" id="agent-editor-id">
+
+        <div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
+
+          <div>
+            <label class="section-label">Name</label>
+            <input type="text" id="agent-name" placeholder="e.g. My Reviewer"
+              style="width:100%; margin-top:3px;">
+          </div>
+
+          <div>
+            <label class="section-label">Tag</label>
+            <div class="agent-desc" style="margin:2px 0 4px;">Must start with @. Used in Drive comments to address this agent.</div>
+            <input type="text" id="agent-tag" placeholder="@myreviewer"
+              style="width:100%; margin-top:3px;">
+          </div>
+
+          <div>
+            <label class="section-label">Instructions Tab <span style="font-weight:400; color:var(--text-secondary);">(optional)</span></label>
+            <div class="agent-desc" style="margin:2px 0 4px;">Tab where you write this agent's instructions. Leave blank to rely solely on the system prompt.</div>
+            <input type="text" id="agent-instruction-tab" placeholder="e.g. My Reviewer Instructions"
+              style="width:100%; margin-top:3px;">
+          </div>
+
+          <div>
+            <label class="section-label">Context Tab <span style="font-weight:400; color:var(--text-secondary);">(optional)</span></label>
+            <div class="agent-desc" style="margin:2px 0 4px;">A single tab the agent reads for context during annotations and replies (e.g. StyleProfile).</div>
+            <input type="text" id="agent-context-tab" placeholder="e.g. StyleProfile"
+              style="width:100%; margin-top:3px;">
+          </div>
+
+          <div>
+            <label class="section-label">System Prompt</label>
+            <textarea id="agent-system-prompt" rows="4" placeholder="You are a helpful reviewer..."
+              style="width:100%; margin-top:3px; font-size:12px; resize:vertical;"></textarea>
+          </div>
+
+          <div>
+            <label class="section-label">Workflows</label>
+            <div style="display:flex; flex-direction:column; gap:6px; margin-top:4px;">
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                <input type="checkbox" id="agent-w2" style="accent-color:#8AB4F8;">
+                <span class="agent-desc" style="margin:0;">W2 — Annotate tabs</span>
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                <input type="checkbox" id="agent-w3" style="accent-color:#8AB4F8;">
+                <span class="agent-desc" style="margin:0;">W3 — Reply to @tag comments</span>
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                <input type="checkbox" id="agent-w6" style="accent-color:#8AB4F8;">
+                <span class="agent-desc" style="margin:0;">W6 — Run with Context</span>
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <label class="section-label">Storage</label>
+            <div style="display:flex; flex-direction:column; gap:6px; margin-top:4px;">
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                <input type="radio" name="agent-storage" id="agent-storage-user" value="user" checked style="accent-color:#8AB4F8;">
+                <span class="agent-desc" style="margin:0;">Persona (personal, follows you across documents)</span>
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                <input type="radio" name="agent-storage" id="agent-storage-doc" value="document" style="accent-color:#8AB4F8;">
+                <span class="agent-desc" style="margin:0;">Shared with document (visible to all editors of this doc)</span>
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                <input type="radio" name="agent-storage" id="agent-storage-script" value="script" style="accent-color:#8AB4F8;">
+                <span class="agent-desc" style="margin:0;">Share with everyone (visible to all users of this add-on)</span>
+              </label>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="overlay-actions" style="margin-top:12px;">
+          <button class="btn-secondary btn-sm" onclick="closeAgentEditor()">Cancel</button>
+          <button class="btn-primary btn-sm" onclick="saveAgentFromEditor()">Save</button>
+        </div>
+        <div class="status-box" id="agent-editor-status"></div>
+      </div>
+    </div>
+
+    <!-- ── Agent export overlay ──────────────────────────────── -->
+    <div id="agent-export-overlay" class="sweep-overlay" style="display:none;">
+      <div class="sweep-panel" style="max-width:95%; width:560px;">
+        <div class="sweep-title">Export Agents</div>
+        <div class="agent-desc" style="margin-bottom:8px;">
+          Copy the JSON below and paste it into the import dialog of another document.
+        </div>
+        <textarea id="agent-export-textarea" rows="14"
+          style="width:100%; font-size:11px; font-family:monospace; resize:vertical;" readonly></textarea>
+        <div class="overlay-actions" style="margin-top:10px;">
+          <button class="btn-secondary btn-sm" onclick="closeAgentExportOverlay()">Close</button>
+          <button class="btn-primary btn-sm" onclick="copyAgentExportJson()">Copy JSON</button>
+        </div>
+        <div class="status-box" id="agent-export-status"></div>
+      </div>
+    </div>
+
+    <!-- ── Agent import overlay ──────────────────────────────── -->
+    <div id="agent-import-overlay" class="sweep-overlay" style="display:none;">
+      <div class="sweep-panel" style="max-width:95%; width:560px;">
+        <div class="sweep-title">Import Agents</div>
+        <div class="agent-desc" style="margin-bottom:8px;">
+          Paste the export JSON from another document. Agents with conflicting tags are skipped.
+        </div>
+        <textarea id="agent-import-textarea" rows="14"
+          style="width:100%; font-size:11px; font-family:monospace; resize:vertical;"
+          placeholder="Paste exported JSON here…"></textarea>
+        <div class="overlay-actions" style="margin-top:10px;">
+          <button class="btn-secondary btn-sm" onclick="closeAgentImportOverlay()">Cancel</button>
+          <button class="btn-primary btn-sm" id="agent-import-btn" onclick="confirmAgentImport()">Import</button>
+        </div>
+        <div class="status-box" id="agent-import-status"></div>
+      </div>
+    </div>
+
+    <!-- ── W6 Run with Context overlay ──────────────────────────── -->
+    <!-- Icon map: ↺ = refresh tab list -->
+    <div id="w6-overlay" class="sweep-overlay" style="display:none;">
+      <div class="sweep-panel" style="max-width:95%; width:520px;">
+        <div class="sweep-title" id="w6-overlay-title">Run with Context</div>
+        <div class="agent-desc" style="margin-bottom:10px;">
+          Agent reads the content tab, applies your refine action, and writes the result to the output tab.
+          Both tabs must already exist.
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:10px;">
+
+          <div>
+            <label class="section-label">Content Tab</label>
+            <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
+              <select id="w6-content-tab" style="flex:1; font-size:12px; padding:3px 6px;">
+                <option value="">— Loading —</option>
+              </select>
+              <button class="btn-secondary btn-sm" style="padding:2px 7px; flex-shrink:0;" title="Refresh tab list"
+                onclick="loadW6TabSelect_('w6-content-tab')">↺</button>
+            </div>
+          </div>
+
+          <div>
+            <label class="section-label">Refine Action</label>
+            <textarea id="w6-refine-action" rows="4"
+              placeholder="Describe what you want the agent to do with the content…"
+              style="width:100%; margin-top:4px; font-size:12px; resize:vertical;"></textarea>
+          </div>
+
+          <div>
+            <label class="section-label">Output Tab</label>
+            <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
+              <select id="w6-output-tab" style="flex:1; font-size:12px; padding:3px 6px;">
+                <option value="">— Loading —</option>
+              </select>
+              <button class="btn-secondary btn-sm" style="padding:2px 7px; flex-shrink:0;" title="Refresh tab list"
+                onclick="loadW6TabSelect_('w6-output-tab')">↺</button>
+            </div>
+            <div class="agent-desc" style="margin-top:4px;">
+              The output tab must already exist — create it manually first.
+            </div>
+          </div>
+
+        </div>
+
+        <div class="overlay-actions" style="margin-top:14px;">
+          <button class="btn-secondary btn-sm" onclick="closeW6Overlay()">Cancel</button>
+          <button class="btn-primary btn-sm" id="w6-run-btn" onclick="confirmW6()">Run</button>
+        </div>
+        <div class="status-box" id="w6-status"></div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════
+         AGENTIC TEAM ANALYSIS — team CRUD and analysis launch
+         ══════════════════════════════════════════════════════════ -->
+
+    <!-- Teams list -->
+    <div class="agent-card" style="padding:10px; margin-top:8px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+        <div class="section-label" style="margin:0;">Agent Teams</div>
+        <div style="display:flex; gap:4px;">
+          <button class="btn-ghost btn-sm" onclick="openTeamExportOverlay()">Export</button>
+          <button class="btn-ghost btn-sm" onclick="openTeamImportOverlay()">Import</button>
+          <button class="btn-ghost btn-sm" onclick="refreshTeamsList()" title="Reload">&#x21BA;</button>
+          <button class="btn-primary btn-sm" onclick="openTeamEditor()">+ New Team</button>
+        </div>
+      </div>
+      <div class="agent-desc" style="margin-bottom:8px;">
+        Groups of agents that analyse a manuscript tab in round-robin sequence — each agent
+        sees the previous agents' responses as context before adding its own.
+      </div>
+      <div id="teams-list" style="display:flex; flex-direction:column; gap:6px;"></div>
+      <div class="status-box" id="teams-status"></div>
+    </div>
+
+    <!-- Analysis launch -->
+    <div class="agent-card" style="padding:10px; margin-top:8px;">
+      <div class="section-label" style="margin:0 0 8px;">Run Analysis</div>
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <label class="agent-desc" style="margin:0; flex-shrink:0; width:72px;">Team:</label>
+          <select id="team-analysis-team-select" style="flex:1; min-width:120px; font-size:12px; padding:3px 6px;">
+            <option value="">— No teams —</option>
+          </select>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <label class="agent-desc" style="margin:0; flex-shrink:0; width:72px;">Source tab:</label>
+          <select id="team-analysis-tab-select" style="flex:1; min-width:120px; font-size:12px; padding:3px 6px;">
+            <option value="">— Loading —</option>
+          </select>
+          <button class="btn-secondary btn-sm" style="padding:2px 6px; flex-shrink:0;" title="Refresh tab list"
+            onclick="loadTeamTabDropdown()">↺</button>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <label class="agent-desc" style="margin:0; flex-shrink:0; width:72px;">Output tab:</label>
+          <select id="team-analysis-output-tab-select" style="flex:1; min-width:120px; font-size:12px; padding:3px 6px;">
+            <option value="">— Loading —</option>
+          </select>
+          <button class="btn-secondary btn-sm" style="padding:2px 6px; flex-shrink:0;" title="Refresh tab list"
+            onclick="loadTeamTabDropdown()">↺</button>
+        </div>
+        <div class="agent-desc" style="margin:0;">
+          The output tab must already exist — create it manually first.
+          Resumes from the last processed paragraph if execution was cut short.
+          To restart, clear the output tab body and run again.
+        </div>
+        <button class="btn-primary btn-sm" id="team-analysis-start-btn" onclick="startTeamAnalysis()"
+          style="align-self:flex-start;">Start / Continue Analysis</button>
+      </div>
+      <div class="status-box" id="team-analysis-status" style="margin-top:6px;"></div>
+    </div>
+
+    <!-- ── Team editor overlay ───────────────────────────────── -->
+    <div id="team-editor-overlay" class="sweep-overlay" style="display:none;">
+      <div class="sweep-panel" style="max-width:95%; width:560px;">
+        <div class="sweep-title" id="team-editor-title">New Team</div>
+        <input type="hidden" id="team-editor-id">
+
+        <div style="display:flex; flex-direction:column; gap:10px; margin-top:10px;">
+
+          <div>
+            <label class="section-label">Team Name</label>
+            <input type="text" id="team-name" placeholder="e.g. Editorial Review"
+              style="width:100%; margin-top:3px;">
+          </div>
+
+          <div>
+            <label class="section-label">Agents (in analysis order)</label>
+            <div class="agent-desc" style="margin:2px 0 6px;">
+              Check agents in the order you want them to run. Each agent sees prior responses.
+            </div>
+            <div id="team-agent-list" style="display:flex; flex-direction:column; gap:2px; max-height:200px; overflow-y:auto; border:1px solid var(--border); border-radius:4px; padding:8px;">
+            </div>
+          </div>
+
+          <div>
+            <label class="section-label">Storage</label>
+            <div style="display:flex; flex-direction:column; gap:6px; margin-top:4px;">
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                <input type="radio" name="team-storage" id="team-storage-user" value="user" checked style="accent-color:#8AB4F8;">
+                <span class="agent-desc" style="margin:0;">Personal (follows you)</span>
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                <input type="radio" name="team-storage" id="team-storage-doc" value="document" style="accent-color:#8AB4F8;">
+                <span class="agent-desc" style="margin:0;">Shared with document</span>
+              </label>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="overlay-actions" style="margin-top:12px;">
+          <button class="btn-secondary btn-sm" onclick="closeTeamEditor()">Cancel</button>
+          <button class="btn-primary btn-sm" onclick="saveTeamFromEditor()">Save</button>
+        </div>
+        <div class="status-box" id="team-editor-status"></div>
+      </div>
+    </div>
+
+    <!-- ── Team export overlay ──────────────────────────────── -->
+    <div id="team-export-overlay" class="sweep-overlay" style="display:none;">
+      <div class="sweep-panel" style="max-width:95%; width:540px;">
+        <div class="sweep-title">Export Teams</div>
+        <textarea id="team-export-textarea" rows="12"
+          style="width:100%; font-size:11px; font-family:monospace; resize:vertical;" readonly></textarea>
+        <div class="overlay-actions" style="margin-top:10px;">
+          <button class="btn-secondary btn-sm" onclick="closeTeamExportOverlay()">Close</button>
+          <button class="btn-primary btn-sm" onclick="copyTeamExportJson()">Copy JSON</button>
+        </div>
+        <div class="status-box" id="team-export-status"></div>
+      </div>
+    </div>
+
+    <!-- ── Team import overlay ──────────────────────────────── -->
+    <div id="team-import-overlay" class="sweep-overlay" style="display:none;">
+      <div class="sweep-panel" style="max-width:95%; width:540px;">
+        <div class="sweep-title">Import Teams</div>
+        <textarea id="team-import-textarea" rows="12"
+          style="width:100%; font-size:11px; font-family:monospace; resize:vertical;"
+          placeholder="Paste exported JSON here…"></textarea>
+        <div class="overlay-actions" style="margin-top:10px;">
+          <button class="btn-secondary btn-sm" onclick="closeTeamImportOverlay()">Cancel</button>
+          <button class="btn-primary btn-sm" id="team-import-btn" onclick="confirmTeamImport()">Import</button>
+        </div>
+        <div class="status-box" id="team-import-status"></div>
+      </div>
+    </div>
+
+  </div><!-- /#agents-panel -->
 
   <!-- ══════════════════════════════════════════════════════
        LOG SECTION — hidden until toggleLogView() (sidebar or dialog).

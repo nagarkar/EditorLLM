@@ -34,6 +34,25 @@ export function findTextOrFallback_(
   return null;
 }
 
+/**
+ * Returns every RangeElement matching matchText in the body, in document order.
+ * Used when a directive operation has apply_to: 'every_occurrence'.
+ * Returns an empty array (never throws) when the pattern is not found.
+ */
+export function findAllTextOccurrences_(
+  body: GoogleAppsScript.Document.Body,
+  matchText: string
+): GoogleAppsScript.Document.RangeElement[] {
+  const escaped = matchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const results: GoogleAppsScript.Document.RangeElement[] = [];
+  let found = body.findText(escaped);
+  while (found) {
+    results.push(found);
+    found = body.findText(escaped, found);
+  }
+  return results;
+}
+
 // ── Prefix matching ───────────────────────────────────────────────────────────
 
 /**
@@ -67,7 +86,9 @@ export function highlightNamedRange_(
   namedRange: GoogleAppsScript.Document.NamedRange,
   color: string
 ): void {
-  for (const el of namedRange.getRange().getRangeElements()) {
+  const range = namedRange.getRange();
+  if (!range) return;   // text was deleted; nothing to highlight
+  for (const el of range.getRangeElements()) {
     if (el.getElement().getType() !== DocumentApp.ElementType.TEXT) continue;
     const text  = el.getElement().asText();
     const start = el.getStartOffset();
@@ -93,7 +114,9 @@ export function clearNamedRangeHighlights_(
   namedRange: GoogleAppsScript.Document.NamedRange
 ): number {
   let cleared = 0;
-  for (const el of namedRange.getRange().getRangeElements()) {
+  const range = namedRange.getRange();
+  if (!range) return 0;   // text was deleted; nothing to clear
+  for (const el of range.getRangeElements()) {
     if (el.getElement().getType() !== DocumentApp.ElementType.TEXT) continue;
     const text  = el.getElement().asText();
     const start = el.getStartOffset();

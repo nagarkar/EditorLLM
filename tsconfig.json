@@ -11,6 +11,6 @@
     "skipLibCheck": true,
     "noEmitOnError": true
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "client/server-types.d.ts"],
   "exclude": ["node_modules", "dist", "src/__tests__/**/*", "src/experimental/**/*", "jest.setup.ts"]
 }
