@@ -47,5 +47,5 @@ npm run deploy:addon
 
 * listing/listing.json is the single source of truth for metadata. fix-appscript-json.sh reads name from it; deploy_privacy.sh writes privacyUrl and tosUrl back into it; launch-checks.sh reads the URLs from it to do live HTTP checks.
 * deploy:addon swaps appsscript-addon.json into dist/appsscript.json after the build but before clasp push — the regular build pipeline and container-bound deployments are completely unaffected.
-* gcp-for-addon.sh --yes (used in addon:prechecks) skips the interactive "use this project?" confirmation once projectId is already set, making deploy:addon fully non-interactive after the first run.
+* gcp-for-addon.sh --use-existing-project (used in addon:prechecks) skips the interactive "use this project?" confirmation once projectId is already set, making deploy:addon fully non-interactive after the first run.
 * All four shell scripts are reusable in any GAS project following this trajectory — the only EditorLLM-specific content is in listing/listing.json and the prompts' CONTEXT sections.

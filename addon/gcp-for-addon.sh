@@ -9,11 +9,12 @@
 #   screen and GAS↔GCP link in the Apps Script editor).
 #
 # USAGE
-#   bash addon/gcp-for-addon.sh [--clasp <file>] [--yes]
+#   bash addon/gcp-for-addon.sh [--clasp <file>] [--use-existing-project]
 #
 #   --clasp <file>   Path (relative to project root) to the clasp JSON file.
 #                    Default: .clasp.addon.json
-#   --yes            Skip the "Use this project? [Y/n]" confirmation when
+#   --use-existing-project
+#                    Skip the "Use this project? [Y/n]" confirmation when
 #                    projectId is already set. Safe for non-interactive use once
 #                    the project is configured.
 #
@@ -29,14 +30,14 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 CLASP_FILE_REL=".clasp.addon.json"
-AUTO_YES=false
+USE_EXISTING_PROJECT=false
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --clasp) CLASP_FILE_REL="$2"; shift 2 ;;
-    --yes)   AUTO_YES=true;        shift   ;;
-    *) echo "Unknown argument: $1"; echo "Usage: $0 [--clasp <file>] [--yes]"; exit 1 ;;
+    --use-existing-project) USE_EXISTING_PROJECT=true; shift ;;
+    *) echo "Unknown argument: $1"; echo "Usage: $0 [--clasp <file>] [--use-existing-project]"; exit 1 ;;
   esac
 done
 
@@ -139,9 +140,9 @@ SCRIPT_ID="$(jq -r '.scriptId // empty' "$CLASP_FILE")"
 
 if [[ -n "$EXISTING_PROJECT_ID" ]]; then
   echo "GCP project currently set in $CLASP_FILE_REL: $EXISTING_PROJECT_ID"
-  if [[ "$AUTO_YES" == true ]]; then
+  if [[ "$USE_EXISTING_PROJECT" == true ]]; then
     GCP_PROJECT_ID="$EXISTING_PROJECT_ID"
-    echo "  --yes flag set: using existing project ID."
+    echo "  --use-existing-project set: using existing project ID."
   else
     read -rp "  Use this project? [Y/n]: " USE_EXISTING
     USE_EXISTING="${USE_EXISTING:-Y}"
